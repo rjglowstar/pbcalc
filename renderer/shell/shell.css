@@ -1,0 +1,280 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: "Segoe UI", Arial, sans-serif;
+  background: #e8eaf0;
+}
+
+/* Combined height (38 + 38) must match TAB_BAR_HEIGHT in electron/constants.js, or the
+   BrowserView will either leave a gap or be covered by this chrome. */
+.tab-strip {
+  height: 38px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 4px 6px 0;
+  background: #d7dae4;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.tab {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  min-width: 120px;
+  height: 32px;
+  padding: 0 8px 0 12px;
+  border-radius: 8px 8px 0 0;
+  background: #c3c7d6;
+  color: #33364a;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tab.active {
+  background: #ffffff;
+  color: #1b1e3d;
+}
+
+.tab-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-close {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 12px;
+  color: inherit;
+}
+
+.tab-close:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.address-bar {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  background: #ffffff;
+  border-bottom: 1px solid #c3c7d6;
+  box-sizing: border-box;
+}
+
+.nav-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d0d3de;
+  border-radius: 6px;
+  background: #f5f6fa;
+  color: #33364a;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.nav-btn:hover {
+  background: #eceefa;
+}
+
+.nav-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.nav-btn:disabled:hover {
+  background: #f5f6fa;
+}
+
+.new-tab {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.url-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #d0d3de;
+  border-radius: 14px;
+  font-size: 13px;
+  color: #1b1e3d;
+  outline: none;
+}
+
+.url-input:focus {
+  border-color: #7b7fd6;
+}
+
+.star {
+  font-size: 16px;
+}
+
+.star.on {
+  color: #e0a800;
+}
+
+/* Height (28) is part of TAB_BAR_HEIGHT in electron/constants.js: 38 + 38 + 28. */
+.bookmark-bar {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: #f5f6fa;
+  border-bottom: 1px solid #c3c7d6;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.bookmark {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 160px;
+  height: 22px;
+  padding: 0 6px 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #33364a;
+  cursor: pointer;
+  user-select: none;
+}
+
+.bookmark:hover {
+  background: #e3e5ef;
+}
+
+.bookmark-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bookmark-x {
+  flex: 0 0 auto;
+  display: none;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.bookmark:hover .bookmark-x {
+  display: flex;
+}
+
+.bookmark-x:hover {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.bookmark-empty {
+  font-size: 12px;
+  color: #8a8fa8;
+}
+
+/* Height (48) is DOWNLOAD_SHELF_HEIGHT in electron/constants.js. */
+.download-shelf {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  background: #f5f6fa;
+  border-top: 1px solid #c3c7d6;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.download-shelf[hidden] {
+  display: none;
+}
+
+.dl {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 260px;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid #d0d3de;
+  border-radius: 6px;
+  background: #ffffff;
+  font-size: 12px;
+  color: #33364a;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.dl-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dl-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dl-status {
+  font-size: 11px;
+  color: #7a7f99;
+}
+
+.dl-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: #4a6cf7;
+}
+
+.dl-btn {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: #33364a;
+  font-size: 11px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.dl-btn:hover {
+  background: #e3e5ef;
+}

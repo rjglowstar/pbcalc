@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self';" />
+    <title>PBCalc</title>
+    <link rel="stylesheet" href="./shell.css" />
+  </head>
+  <body>
+    <div id="tab-strip" class="tab-strip" role="tablist"></div>
+    <div class="address-bar">
+      <button id="back" class="nav-btn" title="Back">&#8592;</button>
+      <button id="forward" class="nav-btn" title="Forward">&#8594;</button>
+      <button id="reload" class="nav-btn" title="Reload">&#8635;</button>
+      <input id="url-input" class="url-input" type="text" placeholder="Search or type a URL" spellcheck="false" />
+      <button id="bookmark" class="nav-btn star" title="Bookmark this page">&#9734;</button>
+      <button id="new-tab" class="nav-btn new-tab" title="New tab">+</button>
+    </div>
+    <div id="bookmark-bar" class="bookmark-bar"></div>
+    <div id="download-shelf" class="download-shelf" hidden></div>
+    <script src="./shell.js"></script>
+  </body>
+</html>
