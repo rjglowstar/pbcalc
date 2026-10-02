@@ -476,3 +476,11 @@ body.restricted #bookmark,
 body.restricted #site-info { display: none; }
 /* the address bar keeps its space (so the buttons stay put) but shows nothing and takes no input */
 body.restricted .omnibox { visibility: hidden; pointer-events: none; }
+
+/* ── Fullscreen Mode (F11 / HTML5 Video): hides top strip, toolbar & bookmark bar completely ── */
+html.fullscreen body::before,
+html.fullscreen .strip,
+html.fullscreen .toolbar,
+html.fullscreen #bookmark-bar {
+  display: none !important;
+}

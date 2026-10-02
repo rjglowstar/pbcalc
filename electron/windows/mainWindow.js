@@ -66,6 +66,24 @@ function createMainWindow() {
   state.mainWindow.on("maximize", resizeActiveView);
   state.mainWindow.on("unmaximize", resizeActiveView);
 
+  state.mainWindow.on("enter-full-screen", () => {
+    try {
+      if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+        state.mainWindow.webContents.send("fullscreen:changed", true);
+      }
+    } catch (_) {}
+    resizeActiveView();
+  });
+
+  state.mainWindow.on("leave-full-screen", () => {
+    try {
+      if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+        state.mainWindow.webContents.send("fullscreen:changed", false);
+      }
+    } catch (_) {}
+    resizeActiveView();
+  });
+
   state.mainWindow.on("closed", () => {
     state.mainWindow = null;
     state.tabs = [];

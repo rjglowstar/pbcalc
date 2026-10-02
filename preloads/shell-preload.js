@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld("browserAPI", {
   resetZoom: () => ipcRenderer.send("tabs:reset-zoom"),
   onTabsChanged: (cb) => on("tabs:changed", cb),
   onFocusUrl: (cb) => on("shell:focus-url", () => cb()),
+  onFullscreenChanged: (cb) => on("fullscreen:changed", cb),
 
   // Popups (tab search, menu, downloads, site info): the rect is the anchor button's box.
   openPopup: (kind, rect) => ipcRenderer.send("popup:open", kind, rect),

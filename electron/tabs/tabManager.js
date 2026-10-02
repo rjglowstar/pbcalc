@@ -74,9 +74,7 @@ function siteKind(tab) {
 }
 
 function chromeHeight() {
-  // The bar follows the setting in BOTH modes. It used to be forced on in Restricted Mode, which
-  // made Ctrl+Shift+B, the menu entry and the Settings switch all look broken there: the flag
-  // flipped but the bar never moved. Hiding it is safe — the "Your sites" page still lists them.
+  if (state.mainWindow && !state.mainWindow.isDestroyed() && state.mainWindow.isFullScreen()) return 0;
   return TAB_STRIP_HEIGHT + TOOLBAR_HEIGHT + (state.bookmarksBarVisible ? BOOKMARKS_BAR_HEIGHT : 0);
 }
 
@@ -112,14 +110,12 @@ function activeWebContents() {
   return t && !t.view.webContents.isDestroyed() ? t.view.webContents : null;
 }
 
-// Called on window resize/maximize AND every time the active tab changes, so the visible
-// BrowserView always exactly fills the window below the chrome (tab strip, toolbar and, when
-// shown, the bookmarks bar).
 function resizeActiveView() {
   const tab = getActiveTab();
   if (!tab || !state.mainWindow || state.mainWindow.isDestroyed()) return;
+  const isFS = state.mainWindow.isFullScreen();
   const [w, h] = state.mainWindow.getContentSize();
-  const top = chromeHeight();
+  const top = isFS ? 0 : chromeHeight();
   tab.view.setBounds({ x: 0, y: top, width: w, height: Math.max(0, h - top) });
 }
 
@@ -132,21 +128,23 @@ function createTab(url, opts = {}) {
   if (state.tabs.length >= MAX_TABS) return getTabState();
   if (state.restricted && !opts.allowRestricted) return getTabState();
 
-  const view = new BrowserView({
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      // Only a duplicated tab carries this flag; its preload then asks for the source tab's
-      // sessionStorage before any page script runs. Every other tab skips that round trip.
-      additionalArguments: opts.sessionRestore ? ["--pbcalc-restore-session"] : [],
-      // Deliberately NO partition option here — every tab shares Electron's default persistent
-      // session, so logging into a site in one tab keeps you logged in across every other tab of
-      // the same site, exactly like a real browser. The ERP shell this project split off from
-      // does the OPPOSITE (an isolated partition per tab) because it specifically needs several
-      // independent logins open side by side; that need does not apply to a general browser.
-      preload: path.join(__dirname, "..", "..", "preloads", "tab-preload.js"),
-    },
-  });
+  const view = opts.webContents
+    ? new BrowserView({ webContents: opts.webContents })
+    : new BrowserView({
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          // Only a duplicated tab carries this flag; its preload then asks for the source tab's
+          // sessionStorage before any page script runs. Every other tab skips that round trip.
+          additionalArguments: opts.sessionRestore ? ["--pbcalc-restore-session"] : [],
+          // Deliberately NO partition option here — every tab shares Electron's default persistent
+          // session, so logging into a site in one tab keeps you logged in across every other tab of
+          // the same site, exactly like a real browser. The ERP shell this project split off from
+          // does the OPPOSITE (an isolated partition per tab) because it specifically needs several
+          // independent logins open side by side; that need does not apply to a general browser.
+          preload: path.join(__dirname, "..", "..", "preloads", "tab-preload.js"),
+        },
+      });
 
   // The page canvas stays WHITE even when PBCalc's own UI is dark. Chromium otherwise paints the
   // base background of a page that sets none in its dark colour (measured: #3C3C3C), which made
@@ -155,11 +153,91 @@ function createTab(url, opts = {}) {
   // (scripts/chrome-reference/capture-darkmode.ps1). Our dark theme is for the browser, not the web.
   view.setBackgroundColor("#ffffff");
 
+  try {
+    view.webContents.debugger.attach("1.3");
+    view.webContents.debugger.sendCommand("Page.enable");
+    view.webContents.debugger.sendCommand("Page.addScriptToEvaluateOnNewDocument", {
+      source: `
+        // PBCalc: Hacker-proof disable-devtool bypass (Clean & Zone.js Compatible)
+        (function() {
+          // 1. Universal property hook on Object.prototype so both Webpack bundled and inline disable-devtool evaluate isSuspend as true
+          try {
+            Object.defineProperty(Object.prototype, 'isSuspend', {
+              get: function() { return true; },
+              set: function() {},
+              configurable: true,
+              enumerable: false
+            });
+          } catch(e) {}
+
+          // 2. Dummy window.DisableDevtool function for index.html inline calls
+          function dummyDisableDevtool() {
+            return { isSuspend: true, md5: '', version: '' };
+          }
+          dummyDisableDevtool.isSuspend = true;
+          dummyDisableDevtool.md5 = '';
+          dummyDisableDevtool.version = '';
+
+          try {
+            Object.defineProperty(window, 'DisableDevtool', {
+              get: function() { return dummyDisableDevtool; },
+              set: function() {},
+              configurable: true,
+              enumerable: false
+            });
+            Object.defineProperty(window, 'DISABLE_DEVTOOL', {
+              get: function() { return dummyDisableDevtool; },
+              set: function() {},
+              configurable: true,
+              enumerable: false
+            });
+          } catch(e) {}
+
+          // 3. Fallback trap: prevent about:blank or 404 redirects
+          try {
+            const _origReplace = window.location.replace;
+            window.location.replace = function(url) {
+              if (typeof url === 'string' && (url.includes('about:blank') || url === 'about:blank' || url.includes('disable-devtool'))) {
+                return;
+              }
+              return _origReplace.apply(window.location, arguments);
+            };
+          } catch(e) {}
+
+          // 4. Fallback trap: prevent "Access Denied" DOM overwrite
+          try {
+            const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+            if (innerHTMLDesc && innerHTMLDesc.set) {
+              const _origSet = innerHTMLDesc.set;
+              Object.defineProperty(Element.prototype, 'innerHTML', {
+                set: function(val) {
+                  if (typeof val === 'string' && (val.includes('Developer Tools Detected') || val.includes('Access Denied'))) {
+                    return;
+                  }
+                  return _origSet.call(this, val);
+                },
+                get: function() {
+                  return innerHTMLDesc.get.call(this);
+                },
+                configurable: true,
+                enumerable: false
+              });
+            }
+          } catch(e) {}
+        })();
+      `
+    });
+  } catch (err) {
+    console.error("Failed to attach debugger for disable-devtool bypass", err);
+  }
+
   const tab = {
     id: state.nextTabId++,
+
     view,
+    childWindow: opts.childWindow || null,
     title: "New Tab",
-    url: "",
+    url: opts.webContents ? view.webContents.getURL() : "",
     favicon: "",
     // Set while the tab is showing one of our own error pages; holds what "Try again" reloads.
     errorPage: null,
@@ -191,7 +269,7 @@ function createTab(url, opts = {}) {
     // works in the copy exactly as it did in the original (that is what Chrome's Duplicate does).
     Promise.resolve(view.webContents.navigationHistory.restore(opts.restore))
       .catch(() => load(view.webContents, url || NEWTAB_URL));
-  } else {
+  } else if (!opts.webContents) {
     load(view.webContents, url || (state.restricted ? RESTRICTED_HOME_URL : NEWTAB_URL));
   }
 
@@ -421,22 +499,44 @@ function wireTabEvents(tab) {
     }
   });
 
+  wc.on("did-create-window", (childWindow, details) => {
+    try { childWindow.hide(); } catch (_) {}
+    const childUrl = details.url || (childWindow.webContents && !childWindow.webContents.isDestroyed() ? childWindow.webContents.getURL() : "");
+    const background = details.disposition === "background-tab";
+    createTab(childUrl, {
+      allowRestricted: true,
+      site: tab.site,
+      background,
+      webContents: childWindow.webContents,
+      childWindow,
+    });
+  });
+
   // target="_blank" / window.open / middle-click / ctrl-click become tabs in this window rather
-  // than popup windows. Middle- and ctrl-click ("background-tab") open behind the current tab.
+  // than popup windows. Returning action:"allow" with overrideBrowserWindowOptions preserves native
+  // window.opener linkage so cross-origin authentication handshakes (e.g. koffionline.in) work.
   wc.setWindowOpenHandler(({ url, disposition }) => {
     let protocol = "";
     try { protocol = new URL(url).protocol; } catch (_) {}
     if (state.restricted) {
       // Same-site popups (e.g. an ERP report) open as tabs; everything else is dropped.
       if (restricted.sameSite(url, tab.site)) {
-        createTab(url, { allowRestricted: true, site: tab.site, background: disposition === "background-tab" });
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: { show: false, width: 0, height: 0 },
+        };
       }
       return { action: "deny" };
     }
     if (EXTERNAL_SCHEMES.has(protocol)) {
       handleExternalUrl(url);
-    } else if (/^https?:$/.test(protocol) || protocol === "about:") {
-      openInNewTab(url, disposition === "background-tab");
+      return { action: "deny" };
+    }
+    if (/^https?:$/.test(protocol) || protocol === "about:" || !protocol) {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: { show: false, width: 0, height: 0 },
+      };
     }
     return { action: "deny" };
   });
@@ -444,6 +544,17 @@ function wireTabEvents(tab) {
   // Find-in-page results feed the shell's find bar.
   wc.on("found-in-page", (_e, result) => {
     popup().sendFindResult({ active: result.activeMatchOrdinal, total: result.matches });
+  });
+
+  wc.on("enter-html-full-screen", () => {
+    if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+      state.mainWindow.setFullScreen(true);
+    }
+  });
+  wc.on("leave-html-full-screen", () => {
+    if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+      state.mainWindow.setFullScreen(false);
+    }
   });
 }
 
@@ -518,6 +629,9 @@ function closeTab(id) {
     try {
       state.mainWindow.removeBrowserView(removed.view);
     } catch (_) {}
+  }
+  if (removed.childWindow && !removed.childWindow.isDestroyed()) {
+    try { removed.childWindow.destroy(); } catch (_) {}
   }
   if (!removed.view.webContents.isDestroyed()) removed.view.webContents.destroy();
 
@@ -652,7 +766,22 @@ function printActive() {
 function openDevTools() {
   if (state.restricted) return;
   const wc = activeWebContents();
-  if (wc) wc.openDevTools({ mode: "detach" });
+  if (!wc || wc.isDestroyed()) return;
+
+  if (wc.isDevToolsOpened()) {
+    if (wc.isDevToolsFocused()) {
+      wc.closeDevTools();
+    } else {
+      try {
+        if (wc.devToolsWebContents && !wc.devToolsWebContents.isDestroyed()) {
+          wc.devToolsWebContents.focus();
+        }
+      } catch (_) {}
+      wc.openDevTools({ mode: "previous" });
+    }
+  } else {
+    wc.openDevTools({ mode: "previous" });
+  }
 }
 
 function toggleBookmarkActive() {

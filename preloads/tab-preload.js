@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webFrame } = require("electron");
 
 // A DUPLICATED tab restores the original's sessionStorage before any page script runs, so a site
 // that keeps its login there (the PB ERP does) stays logged in in the copy — that is what Chrome's

@@ -553,4 +553,10 @@
       api.omniboxMove(e.key === "ArrowDown" ? 1 : -1).then((r) => { if (r) urlInput.value = r.text; });
     }
   });
+
+  if (api.onFullscreenChanged) {
+    api.onFullscreenChanged((isFullscreen) => {
+      document.documentElement.classList.toggle("fullscreen", !!isFullscreen);
+    });
+  }
 })();
