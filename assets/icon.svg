@@ -1,0 +1,12 @@
+<!-- PBCalc app icon: a calculator whose screen carries the PB diamond.
+     Source of truth — run scripts/make-icons.js to regenerate icon.png / icon.ico / icon-32.png. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="110" fill="#1A73E8"/>
+  <rect x="128" y="96" width="256" height="320" rx="40" fill="#ffffff"/>
+  <rect x="164" y="134" width="184" height="96" rx="18" fill="#1A73E8"/>
+  <path d="M256 150 L300 182 L256 214 L212 182 Z" fill="#ffffff"/>
+  <g fill="#1A73E8">
+    <circle cx="186" cy="282" r="18"/><circle cx="256" cy="282" r="18"/><circle cx="326" cy="282" r="18"/>
+    <circle cx="186" cy="350" r="18"/><circle cx="256" cy="350" r="18"/><circle cx="326" cy="350" r="18"/>
+  </g>
+</svg>

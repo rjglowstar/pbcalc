@@ -2,22 +2,35 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: http: data:;" />
     <title>PBCalc</title>
+    <link rel="stylesheet" href="../common/theme.css" />
     <link rel="stylesheet" href="./shell.css" />
   </head>
   <body>
-    <div id="tab-strip" class="tab-strip" role="tablist"></div>
-    <div class="address-bar">
-      <button id="back" class="nav-btn" title="Back">&#8592;</button>
-      <button id="forward" class="nav-btn" title="Forward">&#8594;</button>
-      <button id="reload" class="nav-btn" title="Reload">&#8635;</button>
-      <input id="url-input" class="url-input" type="text" placeholder="Search or type a URL" spellcheck="false" />
-      <button id="bookmark" class="nav-btn star" title="Bookmark this page">&#9734;</button>
-      <button id="new-tab" class="nav-btn new-tab" title="New tab">+</button>
+    <div class="strip">
+      <div id="tabs" class="tabs" role="tablist"></div>
+      <!-- DOM order matters: later elements win the draggable-region test, so these no-drag buttons
+           come AFTER the tab row that visually overlaps them. The search button is moved first by CSS. -->
+      <button id="tab-search" class="strip-btn search" title="Search tabs (Ctrl+Shift+A)"></button>
+      <button id="new-tab" class="strip-btn plus" title="New tab (Ctrl+T)"></button>
     </div>
-    <div id="bookmark-bar" class="bookmark-bar"></div>
-    <div id="download-shelf" class="download-shelf" hidden></div>
+    <div class="toolbar">
+      <button id="back" class="icon-btn" title="Back (Alt+Left)"></button>
+      <button id="forward" class="icon-btn" title="Forward (Alt+Right)"></button>
+      <button id="reload" class="icon-btn" title="Reload (Ctrl+R)"></button>
+      <div id="omnibox" class="omnibox">
+        <button id="site-info" class="site-info" title="View site information"></button>
+        <input id="url-input" class="url-input" type="text" placeholder="Search Google or type a URL" spellcheck="false" />
+        <button id="zoom" class="zoom-chip" title="Reset zoom" hidden></button>
+        <button id="bookmark" class="star" title="Bookmark this tab (Ctrl+D)"></button>
+      </div>
+      <button id="downloads" class="icon-btn" title="Downloads (Ctrl+J)"></button>
+      <button id="unlock" class="icon-btn" title="Restricted Mode is on" aria-label="Restricted Mode is on" hidden></button>
+      <button id="menu" class="icon-btn" title="Customize and control PBCalc"></button>
+    </div>
+    <div id="bookmark-bar" class="bookmark-bar" hidden></div>
+    <script src="../common/icons.js"></script>
     <script src="./shell.js"></script>
   </body>
 </html>

@@ -4,9 +4,10 @@
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { portableDataDir } = require("../electron/constants");
+const { dataDir } = require("../electron/constants");
 
-app.setPath("userData", portableDataDir());
+app.setPath("userData", dataDir());
+app.on("window-all-closed", () => {}); // closing the last tab closes the window; keep the test process alive
 
 const results = [];
 function check(name, cond) {
@@ -48,11 +49,13 @@ app.whenReady().then(async () => {
   const s4 = tabManager.closeTab(s2.tabs[1].id);
   check("closeTab() removes a tab", s4.tabs.length === beforeClose - 1);
 
-  // Close the very last tab -> should auto-reopen a fresh one, never leave zero tabs.
+  // Close the very last tab -> like Chrome, the window closes (main.js then quits the app).
+  let windowClosed = false;
+  state.mainWindow.on("closed", () => { windowClosed = true; });
   const remaining = tabManager.getTabState().tabs;
   for (const t of remaining) tabManager.closeTab(t.id);
-  const afterAllClosed = tabManager.getTabState();
-  check("closing the last tab reopens a fresh one", afterAllClosed.tabs.length === 1);
+  await new Promise((r) => setTimeout(r, 400));
+  check("closing the last tab closes the window (Chrome behaviour)", tabManager.getTabState().tabs.length === 0 && windowClosed);
 
   // --- Vault round-trip ---
   const origin = "https://verify-test.example";

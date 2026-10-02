@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:;" />
+    <title>Downloads</title>
+    <link rel="stylesheet" href="../common/theme.css" />
+    <link rel="stylesheet" href="./downloads.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Downloads</h1>
+      <div class="search">
+        <span id="search-icon"></span>
+        <input id="search" type="text" placeholder="Search download history" spellcheck="false" autocomplete="off" />
+      </div>
+      <button id="clear-all" class="btn">Clear all</button>
+    </header>
+    <main>
+      <div id="groups"></div>
+      <div id="empty" class="empty" hidden>No downloads</div>
+      <div class="note">Downloads are kept for this session only. PBCalc never records a download history.</div>
+    </main>
+    <script src="../common/icons.js"></script>
+    <script src="./downloads.js"></script>
+  </body>
+</html>

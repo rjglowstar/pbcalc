@@ -25,6 +25,43 @@ app.whenReady().then(async () => {
   const { registerIpcHandlers } = require("../electron/ipc/registerIpcHandlers");
   const dir = app.getPath("userData");
 
+  // ── address-bar text -> URL or search (Chrome's habits) ──
+  const { resolveInput } = require("../electron/urlInput");
+  const S = "https://www.google.com/search?q=";
+  const table = [
+    ["localhost:4200", "http://localhost:4200"], ["localhost", "http://localhost"], ["LocalHost/x", "http://LocalHost/x"],
+    ["192.168.1.5:8080/x", "http://192.168.1.5:8080/x"], ["pb/", "http://pb/"], ["pb:3000", "http://pb:3000"],
+    ["pb", S + "pb"], ["yt", S + "yt"], ["abc def", S + "abc%20def"], ["what is 2+2", S + "what%20is%202%2B2"],
+    ["example.com", "https://example.com"], ["mfg.pb.diamonds/login", "https://mfg.pb.diamonds/login"],
+    ["https://x.test/a", "https://x.test/a"], ["http://pb/", "http://pb/"], ["file:///c:/x.html", "file:///c:/x.html"], ["", ""],
+  ];
+  const bad = table.filter(([input, want]) => resolveInput(input) !== want);
+  check("address bar: URL-or-search rules match Chrome (" + table.length + " cases)" + (bad.length ? " BAD: " + JSON.stringify(bad.map((b) => [b[0], resolveInput(b[0])])) : ""), bad.length === 0);
+
+  // ── address-bar suggestions: row building (Chrome's dropdown minus history) ──
+  const { buildRows } = require("../electron/omnibox");
+  const realReply = ["youtube", ["youtube videos", "https://www.youtube.com/", "youtube studio", "youtube music", "youtube app", "youtube youtube", "youtube app download", "youtube transcript", "youtube premium", "youtube channel", "youtube create", "youtube studio login"], ["", "YouTube", "", "", "", "", "", "", "", "", "", ""], [], { "google:suggesttype": ["QUERY", "NAVIGATION", "QUERY", "QUERY", "QUERY", "QUERY", "QUERY", "QUERY", "QUERY", "QUERY", "QUERY", "QUERY"] }];
+  const bmList = [{ id: "1", title: "YouTube", url: "https://www.youtube.com/", favicon: "" }, { id: "2", title: "Payroll", url: "https://pay.example.com/", favicon: "" }, { id: "3", title: "Other", url: "https://youtu.be/x", favicon: "" }];
+  const tabList = [{ id: 7, title: "YouTube - home", url: "https://www.youtube.com/feed" }, { id: 8, title: "Docs", url: "https://docs.example.com/" }];
+  let rows = buildRows("youtube", { bookmarks: bmList, tabs: tabList, remote: realReply });
+  check("suggestions: the typed text is always the first row, as a Google search", rows[0].kind === "search" && rows[0].text === "youtube");
+  check("suggestions: matching bookmarks come next", rows[1].kind === "bookmark" && rows[1].title === "YouTube");
+  check("suggestions: matching open tabs follow (switch to tab)", rows.some((r) => r.kind === "tab" && r.id === 7) && !rows.some((r) => r.kind === "tab" && r.id === 8));
+  check("suggestions: Google's queries and navigation hits are included", rows.some((r) => r.kind === "query" && r.text === "youtube videos") && rows.some((r) => r.kind === "nav" && r.title === "YouTube" && r.url === "https://www.youtube.com/") === false /* same URL as the bookmark row: not shown twice */);
+  check("suggestions: at most 10 rows", rows.length <= 10);
+  check("suggestions: no history rows, ever (only known kinds)", rows.every((r) => ["search", "url", "bookmark", "tab", "query", "nav"].includes(r.kind)));
+  rows = buildRows("pay", { bookmarks: bmList, tabs: [], remote: null });
+  check("suggestions: bookmarks match on title or address, with no network", rows.some((r) => r.kind === "bookmark" && r.title === "Payroll"));
+  rows = buildRows("example.com/login", { bookmarks: [], tabs: [], remote: null });
+  check("suggestions: an address-like entry gets an 'open' row first, then the search row", rows[0].kind === "url" && rows[0].url === "https://example.com/login" && rows[1].kind === "search");
+  rows = buildRows("localhost:4200", {});
+  check("suggestions: localhost:4200 is an address (http), not a search", rows[0].kind === "url" && rows[0].url === "http://localhost:4200");
+  check("suggestions: empty input gives nothing", buildRows("   ", {}).length === 0);
+  rows = buildRows("youtube", { remote: ["youtube", ["youtube", "Youtube", "youtube x"], [], [], {}] });
+  check("suggestions: a remote suggestion equal to the typed text is not repeated", rows.filter((r) => /^youtube$/i.test(r.text || "")).length === 1);
+  rows = buildRows("a", { remote: ["a", [1, null, "", "ab"], [], [], {}] });
+  check("suggestions: malformed remote entries are ignored, not fatal", rows.some((r) => r.text === "ab") && rows.length >= 2);
+
   // ── local server ──
   const server = http.createServer((req, res) => {
     if (req.url.startsWith("/login")) {
@@ -71,17 +108,19 @@ app.whenReady().then(async () => {
   tabManager.createTab(base + "/login");
   await sleep(1200);
   const wc0 = tabManager.getActiveTab().view.webContents;
+  const heightBefore = tabManager.getActiveTab().view.getBounds().height;
   wc0.downloadURL(base + "/file");
   await sleep(1500);
   const dl = downloads.publicList();
   check("download listed and completed", dl.length === 1 && dl[0].state === "completed" && dl[0].filename === "report.bin");
   check("downloaded file exists with full size", fs.existsSync(path.join(tmp, "saved-report.bin")) && fs.statSync(path.join(tmp, "saved-report.bin")).size === 50000);
-  check("shelf inset reserved while list non-empty", state.bottomInset === 48);
-  const contentH = state.mainWindow.getContentSize()[1];
-  check("view height = content - tabbar - shelf", tabManager.getActiveTab().view.getBounds().height === contentH - 104 - 48);
+  const popup = require("../electron/popup");
+  check("downloads bubble opened by the download", popup.isOpen("downloads"));
+  check("no shelf: page view keeps its full height during a download", tabManager.getActiveTab().view.getBounds().height === heightBefore && tabManager.getActiveTab().view.getBounds().y === 112);
   check("downloads:changed pushed to shell", sent.includes("downloads:changed"));
   downloads.dismiss(dl[0].id);
-  check("dismiss empties list and releases inset", downloads.publicList().length === 0 && state.bottomInset === 0);
+  check("dismiss empties the list", downloads.publicList().length === 0);
+  popup.close();
   check("no download record file on disk", !fs.readdirSync(dir).some((f) => /download/i.test(f)));
 
   // ── bookmarks ──

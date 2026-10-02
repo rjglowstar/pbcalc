@@ -1,34 +1,38 @@
 {
-    "name": "pbcalc",
-    "version": "0.1.0",
-    "main": "electron/main.js",
-    "scripts": {
-        "start": "electron .",
-        "dist": "electron-builder"
+  "name": "pbcalc",
+  "version": "0.1.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^41.7.1",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.pbcalc.browser",
+    "productName": "PBCalc",
+    "directories": {
+      "output": "release"
     },
-    "devDependencies": {
-        "electron": "^41.7.1",
-        "electron-builder": "^26.8.1"
+    "files": [
+      "**/*",
+      "!.dev-userdata"
+    ],
+    "asar": true,
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
     },
-    "build": {
-        "appId": "com.pbcalc.browser",
-        "productName": "PBCalc",
-        "directories": {
-            "output": "release"
-        },
-        "files": [
-            "**/*",
-            "!.dev-userdata"
-        ],
-        "asar": true,
-        "win": {
-            "target": "nsis"
-        },
-        "nsis": {
-            "oneClick": false,
-            "allowToChangeInstallationDirectory": true,
-            "createDesktopShortcut": true,
-            "createStartMenuShortcut": true
-        }
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico"
     }
+  }
 }

@@ -1,0 +1,91 @@
+/* Chrome's classic palette, light by default, dark when Windows is in dark app mode.
+   --frame and --text must match electron/theme.js (they colour the native title-bar buttons). */
+:root {
+  color-scheme: light;
+  --frame: #d3e3fd;        /* tab strip background (Chrome 153 light, measured) */
+  --toolbar: #ffffff;      /* active tab, toolbar, bookmarks bar */
+  /* address bar, measured from Chrome 153: rest / hover fills, and the 2px ring shown while focused */
+  --omnibox: #edf2fa;
+  --omnibox-hover: #e1e6ed;
+  --omnibox-ring: #0b57d0;
+  --text: #202124;
+  --muted: #5f6368;
+  --hover: rgba(32, 33, 36, 0.08);
+  /* tab strip, all measured from real Chrome 153 */
+  --tab-hover: #a8c7fa;        /* hovered inactive tab, hovered + / tab-search */
+  --tab-sep: #a8c7fa;          /* the 2x16 separators */
+  --tab-btn-bg: #ecf3fe;       /* tab-search button at rest */
+  --tab-btn-icon: #041e49;     /* its chevron */
+  --tab-text-active: #1f1f1f;
+  --tab-text: #474747;         /* inactive title / X / + */
+  --tab-icon: #5f6368;         /* default favicon globe */
+  --x-hover: rgba(31, 31, 31, 0.155); /* circle behind a hovered close X */
+  --active: rgba(32, 33, 36, 0.16);
+  --sep: #9aa0a6;
+  --border: #dadce0;
+  --accent: #1a73e8;
+  --accent-text: #ffffff;
+  --popup: #ffffff;
+  --popup-hover: #f1f3f4;
+  --shadow: 0 2px 6px 2px rgba(60, 64, 67, 0.15), 0 1px 2px rgba(60, 64, 67, 0.3);
+  --danger: #d93025;
+  --dl-fresh: #e8f0fe;     /* downloads button right after a file finishes (Chrome's accent chip) */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --frame: #1f2020;
+    --toolbar: #3c3c3c;
+    --omnibox: #282828;
+    --omnibox-hover: #282828; /* Chrome dark does not change on hover */
+    --omnibox-ring: #a8c7fa;
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --hover: rgba(232, 234, 237, 0.1);
+    --tab-hover: #004a77;
+    --tab-sep: #3c3c3c;
+    --tab-btn-bg: #3c3c3c;
+    --tab-btn-icon: #d3e3fd;
+    --tab-text-active: #e3e3e3;
+    --tab-text: #c7c7c7;
+    --tab-icon: #9aa0a6;
+    --x-hover: rgba(255, 255, 255, 0.155);
+    --active: rgba(232, 234, 237, 0.2);
+    --sep: #5f6368;
+    --border: #46484c;
+    --accent: #8ab4f8;
+    --accent-text: #202124;
+    --popup: #292a2d;
+    --popup-hover: #3c4043;
+    --shadow: 0 2px 6px 2px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.6);
+    --danger: #f28b82;
+    --dl-fresh: rgba(138, 180, 248, 0.16);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 12px;
+  color: var(--text);
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.icon {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+  flex: 0 0 auto;
+}

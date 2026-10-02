@@ -1,280 +1,478 @@
-html, body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  font-family: "Segoe UI", Arial, sans-serif;
-  background: #e8eaf0;
+/* Chrome-style chrome. Heights must match TAB_STRIP_HEIGHT / TOOLBAR_HEIGHT /
+   BOOKMARKS_BAR_HEIGHT in electron/constants.js. Colours come from ../common/theme.css. */
+body { background: var(--toolbar); }
+/* frame colour behind the native window buttons at the right end of the strip */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: var(--frame);
+  z-index: -1;
 }
 
-/* Combined height (38 + 38) must match TAB_BAR_HEIGHT in electron/constants.js, or the
-   BrowserView will either leave a gap or be covered by this chrome. */
-.tab-strip {
-  height: 38px;
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  padding: 4px 6px 0;
-  background: #d7dae4;
-  box-sizing: border-box;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.tab {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 220px;
-  min-width: 120px;
-  height: 32px;
-  padding: 0 8px 0 12px;
-  border-radius: 8px 8px 0 0;
-  background: #c3c7d6;
-  color: #33364a;
-  font-size: 12px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.tab.active {
-  background: #ffffff;
-  color: #1b1e3d;
-}
-
-.tab-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tab-close {
+.icon-btn {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  font-size: 12px;
-  color: inherit;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  cursor: default;
+  padding: 0;
+  -webkit-app-region: no-drag;
 }
+.icon-btn:hover:not(:disabled) { background: var(--hover); }
+.icon-btn:active:not(:disabled) { background: var(--active); }
+.icon-btn:disabled { opacity: 0.4; }
+.icon-btn[hidden] { display: none; }
+.icon-btn.small { width: 28px; height: 28px; }
 
-.tab-close:hover {
-  background: rgba(0, 0, 0, 0.12);
+/* Downloads button, Chrome-style: accent while a download is running or newly finished, with a
+   ring around the arrow that fills with the total progress (--p is 0..1, set from shell.js). */
+#downloads { position: relative; }
+#downloads.busy, #downloads.fresh { color: var(--accent); }
+#downloads.fresh { background: var(--dl-fresh); }
+#downloads.busy::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  pointer-events: none;
 }
+#downloads.busy::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--p, 0) * 360deg), transparent 0);
+  -webkit-mask: radial-gradient(circle, transparent 11px, #000 11.5px);
+          mask: radial-gradient(circle, transparent 11px, #000 11.5px);
+  pointer-events: none;
+}
+#downloads.busy.spin::after {
+  background: conic-gradient(transparent 0deg, var(--accent) 90deg, transparent 180deg);
+  animation: dl-spin 1s linear infinite;
+}
+@keyframes dl-spin { to { transform: rotate(360deg); } }
+.icon-btn.small .icon { width: 18px; height: 18px; }
 
-.address-bar {
-  height: 38px;
+/* ── Tab strip ─────────────────────────────────────────────────────────── */
+/* Every number in this section was MEASURED from real Chrome 153 (pixel-sampled screenshots), not
+   guessed. Coordinates are from the window's top-left corner (strip = y 0..40, toolbar from y 40):
+     tab search button  x 14..42, y 6..34, 28x28, radius 8
+     tab slots          pitch 238 max; the visible body is the slot minus 3px each side (232 wide),
+                        so neighbouring bodies are 6px apart; the first body starts at x=48
+     inactive body      y 6..34 (28 tall), radius 10 all round; hover fills it
+     active body        y 6..40 (runs into the toolbar), top radius 10, concave flares radius 12
+     content            favicon box 16 at +8, title from +32, close box 16 at right-8 (+8 gaps)
+     separators         2 x 16, y 12..28, centred on the slot edge
+     new-tab button     28 circle, 3px after the last slot
+   See scripts/chrome-reference/ for how these were captured. */
+.strip {
+  height: 40px;
+  /* stop short of the native window buttons drawn by titleBarOverlay */
+  width: env(titlebar-area-width, calc(100% - 140px));
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  background: #ffffff;
-  border-bottom: 1px solid #c3c7d6;
-  box-sizing: border-box;
+  align-items: flex-start;
+  /* 62px of empty, draggable strip after the + button, as in Chrome (measured: tabs end at x=969 in a 1200px window) */
+  padding: 0 62px 0 14px;
+  background: var(--frame);
+  -webkit-app-region: drag;
 }
 
-.nav-btn {
+.strip-btn {
   flex: 0 0 auto;
   width: 28px;
   height: 28px;
+  margin-top: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #d0d3de;
-  border-radius: 6px;
-  background: #f5f6fa;
-  color: #33364a;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.nav-btn:hover {
-  background: #eceefa;
-}
-
-.nav-btn:disabled {
-  opacity: 0.4;
+  padding: 0;
+  border: none;
+  background: none;
   cursor: default;
 }
+.strip-btn .icon { width: 18px; height: 18px; }
+/* tab-search: rounded square in its own colour; "+": plain until hovered, then a circle */
+.strip-btn.search { order: -1; margin-right: 3px; border-radius: 8px; background: var(--tab-btn-bg); color: var(--tab-btn-icon); }
+.strip-btn.plus { margin-left: 3px; border-radius: 50%; color: var(--tab-text); }
+.strip-btn:hover { background: var(--tab-hover); }
+/* Every other hover fill in the chrome fades with the SAME curve that was measured on the tab
+   hover (175ms ease-out in, 185ms ease-in out). Chrome's toolbar buttons fade too; their own
+   timing was not separately measured, so the measured tab values are reused rather than invented. */
+.strip-btn, .icon-btn, .bookmark, .tab-close { transition: background-color 185ms ease-in; }
+.strip-btn:hover, .icon-btn:hover, .bookmark:hover, .tab-close:hover { transition: background-color 175ms ease-out; }
 
-.nav-btn:disabled:hover {
-  background: #f5f6fa;
+/* The scroller is 12px wider each side (negative margin + padding) purely so the active tab's
+   flares, which reach 9px outside their slot, are not clipped. */
+.tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  align-items: flex-start;
+  /* --n is the tab count (set by shell.js): the row wants n slots but shrinks to fit. */
+  flex: 0 1 calc(var(--n, 1) * 238px + 24px);
+  min-width: 0;
+  height: 40px;
+  margin: 0 -12px;
+  padding: 0 12px;
+}
+.tabs::-webkit-scrollbar { display: none; }
+
+.tab {
+  position: relative;
+  flex: 0 1 238px;
+  /* How far Chrome compresses tabs, MEASURED from a real 82-tab window (scripts/chrome-reference):
+     inactive tabs settle at an 18px pitch, while the ACTIVE tab keeps a ~32px body so its favicon
+     and close button still fit. Below ~30px there is only room for the icon (see the rule further
+     down). Chrome never refuses to open a tab; it just keeps shrinking. */
+  min-width: 18px;
+  height: 40px;
+  cursor: default;
+  font-size: 12px;
+  color: var(--tab-text);
+  /* Children size themselves from the tab's width (cqw units); slot width = body width + 6.
+     The container MUST be .tab itself (which is marked no-drag): a container on a descendant
+     (layout containment) made the real OS clicks on the tab's buttons fall through to the
+     window-drag region. */
+  container: tab / inline-size;
+  /* Chrome's open/close animation, MEASURED from Chrome 153 (README in scripts/chrome-reference):
+     a new tab grows from 0 to full width in ~200ms on an ease-out curve (measured 22%/29%/39% of
+     the time -> 39%/52%/63% of the width, which is exactly CSS ease-out), and the other tabs make
+     room in the same move. shell.js animates flex-basis + min-width because the strip is a flex row. */
+  transition: flex-basis 200ms ease-out, min-width 200ms ease-out;
+}
+/* a tab that has been closed: it keeps its place in the row while it shrinks away */
+.tab.closing { pointer-events: none; }
+.tab.closing .tab-sep { opacity: 0; }
+/* Draggable-region rule: the strip is "drag", so EVERY interactive descendant must opt out
+   explicitly. Setting it on .tab alone is not enough: the buttons inside a tab (its close X) then
+   still swallow real OS clicks as title-bar drags. (sendInputEvent tests can't see this; see
+   scripts/manual-os-click.js.) The .tabs row itself stays draggable so empty gaps drag the window. */
+.tab, .tab *, .strip-btn, .strip-btn * { -webkit-app-region: no-drag; }
+.tab.active { z-index: 1; color: var(--tab-text-active); min-width: 34px; }
+
+
+/* the visible tab shape (see the measurements above) */
+.tab-body {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 6px;
+  bottom: 6px;
+  border-radius: 10px;
+}
+/* Hover fill, MEASURED: D3E3FD -> A8C7FA fades IN over 175ms ease-out and OUT over 185ms ease-in
+   (the two directions really are different curves in Chrome). */
+.tab:not(.active) .tab-body { background: transparent; transition: background-color 185ms ease-in; }
+/* body.no-hover: a native menu has the mouse, so :hover is stale (see suppressHover in shell.js).
+   The hover rules simply do not apply until the pointer really moves again — NEVER as an override
+   on top, which would also out-specify the active-tab rules below. */
+body:not(.no-hover) .tab:not(.active):hover .tab-body {
+  background: var(--tab-hover);
+  transition: background-color 175ms ease-out;
+}
+.tab.active .tab-body {
+  bottom: 0;
+  background: var(--toolbar);
+  border-radius: 10px 10px 0 0;
+}
+/* concave flares where the active tab meets the toolbar: frame colour inside a radius-12 circle */
+.tab.active .tab-body::before,
+.tab.active .tab-body::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+}
+.tab.active .tab-body::before {
+  left: -12px;
+  background: radial-gradient(circle at 0 0, transparent 11.5px, var(--toolbar) 12px);
+}
+.tab.active .tab-body::after {
+  right: -12px;
+  background: radial-gradient(circle at 100% 0, transparent 11.5px, var(--toolbar) 12px);
+}
+.tab.dragging { opacity: 0.5; }
+.tab.drop-before { box-shadow: -2px 0 0 var(--accent); }
+.tab.drop-after { box-shadow: 2px 0 0 var(--accent); }
+
+/* separators: 2 x 16 centred on the slot edge; hidden next to the active or hovered tab */
+.tab-sep {
+  position: absolute;
+  right: -1px;
+  top: 12px;
+  width: 2px;
+  height: 16px;
+  background: var(--tab-sep);
+  pointer-events: none;
+}
+.tab-sep { transition: opacity 175ms ease-out; }
+.tab.active .tab-sep,
+.tab:has(+ .tab.active) .tab-sep { opacity: 0; }
+body:not(.no-hover) .tab:hover .tab-sep,
+body:not(.no-hover) .tab:has(+ .tab:hover) .tab-sep { opacity: 0; }
+
+/* content: all three items are positioned from the body, centred on y=14 inside it (= y 20) */
+.tab-icon {
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  height: 16px;
+  /* a narrow ACTIVE tab squeezes the favicon out: it is clipped where the close box (+8 gap) begins */
+  width: clamp(0px, calc(100cqw - 46px), 16px); /* body width (slot - 6) minus 40 */
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+.tab:not(.active) .tab-icon { width: 16px; }
+.tab-icon img, .tab-icon .icon { flex: 0 0 16px; width: 16px; height: 16px; }
+.tab-icon .icon { color: var(--tab-icon); }
+.tab-icon .spinner {
+  flex: 0 0 auto;
+  margin: 1px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.tab-title {
+  position: absolute;
+  left: 32px;
+  top: 6px;
+  height: 16px;
+  line-height: 16px;
+  /* room up to 8px short of the close box; with no close box, up to 8px short of the edge */
+  width: max(0px, calc(100cqw - 46px));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+}
+.tab.active .tab-title { width: max(0px, calc(100cqw - 70px)); }
+
+.tab-close {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  width: 16px;
+  height: 16px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+.tab-close .icon { width: 14px; height: 14px; }
+.tab-close:hover { background: var(--x-hover); }
+.tab.active .tab-close { display: flex; }
+/* Chrome shows an inactive tab's close button only when the tab is at least 84px wide (measured:
+   present at 84, gone at 83); the title then stops 8px short of it. */
+@container tab (min-width: 90px) { /* slot 90 = body 84 */
+  .tab:not(.active) .tab-close { display: flex; }
+  .tab:not(.active) .tab-title { width: max(0px, calc(100cqw - 70px)); }
+}
+/* Very narrow tabs (many open): the body uses the whole slot and only the favicon is left, centred
+   — the 8px left inset would push a 16px icon straight out of an 18px tab. */
+@container tab (max-width: 40px) {
+  .tab-body { left: 1px; right: 1px; }
+  /* both selectors spelled out: the normal rules are .tab:not(.active) .tab-icon / .tab.active ...,
+     and a bare .tab-icon here would lose on specificity however late it comes */
+  .tab:not(.active) .tab-icon,
+  .tab.active .tab-icon { left: 0; right: 0; width: auto; justify-content: center; }
+  .tab-title { display: none; }
+  /* No separators once a tab is this narrow. Measured in the user's own Chrome (82 tabs, 17px
+     pitch): the pixels between two tabs are pure frame colour, no separator at all. NOTE: a clean
+     Chrome profile launched here DOES draw them even at 15px, so this follows the real-world
+     window rather than the lab one — see scripts/chrome-reference/README.md. */
+  .tab-sep { opacity: 0; }
+  /* Both spelled out: .tab.active .tab-close (0,2,0) would otherwise keep winning. */
+  .tab:not(.active) .tab-close,
+  .tab.active .tab-close { display: none; }
 }
 
-.new-tab {
-  font-size: 16px;
-  font-weight: 600;
+/* The ACTIVE tab, squeezed: Chrome drops its FAVICON and keeps the close button. Measured twice —
+   the reference table in verify-ui (pitch 47 and 39 -> favicon 0, title 0, X 1) and
+   capture-activex.ps1, whose ink map shows a bare X glyph at 37px and at 28px. */
+@container tab (max-width: 48px) {
+  .tab.active .tab-icon { display: none; }
+  /* Centred, but still Chrome's 16px circle (measured: hover circle 16px, ink 8x8). Stretching it
+     across the body — left:1;right:1;width:auto — turned the hover highlight into a 39x16 ellipse. */
+  .tab.active .tab-close { display: flex; left: 50%; right: auto; width: 16px; margin-left: -8px; }
 }
+
+/* ...until it reaches its floor (34px, where it stops shrinking): there the user's own Chrome
+   shows the favicon at rest and reveals the X only on hover (their zoomed screenshots at a 17px
+   inactive pitch). Must come after the block above — same specificity, source order decides. */
+@container tab (max-width: 35px) {
+  .tab.active .tab-icon { display: flex; }
+  .tab.active .tab-close { display: none; }
+  body:not(.no-hover) .tab.active:hover .tab-icon { display: none; }
+  body:not(.no-hover) .tab.active:hover .tab-close { display: flex; left: 50%; right: auto; width: 16px; margin-left: -8px; }
+}
+
+/* ── Toolbar ───────────────────────────────────────────────────────────── */
+.toolbar {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  background: var(--toolbar);
+  border-bottom: 1px solid var(--border);
+}
+
+.omnibox {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  margin: 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  border-radius: 16px;
+  background: var(--omnibox);
+}
+.omnibox:hover { background: var(--omnibox-hover); }
+.omnibox:focus-within {
+  background: var(--toolbar);
+  box-shadow: inset 0 0 0 2px var(--omnibox-ring);
+}
+
+.site-info {
+  flex: 0 0 auto;
+  height: 24px;
+  min-width: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: default;
+}
+.site-info:hover { background: var(--hover); }
+.site-info .icon { width: 16px; height: 16px; }
+.site-info.insecure { color: var(--danger); }
 
 .url-input {
   flex: 1 1 auto;
   min-width: 0;
   height: 28px;
-  padding: 0 10px;
-  border: 1px solid #d0d3de;
-  border-radius: 14px;
-  font-size: 13px;
-  color: #1b1e3d;
+  padding: 0 4px;
+  border: none;
   outline: none;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  user-select: text;
 }
+.url-input::placeholder { color: var(--muted); }
 
-.url-input:focus {
-  border-color: #7b7fd6;
-}
-
-.star {
-  font-size: 16px;
-}
-
-.star.on {
-  color: #e0a800;
-}
-
-/* Height (28) is part of TAB_BAR_HEIGHT in electron/constants.js: 38 + 38 + 28. */
-.bookmark-bar {
-  height: 28px;
+.zoom-chip {
+  flex: 0 0 auto;
+  height: 24px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  padding: 0 6px 0 4px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+.zoom-chip[hidden] { display: none; }
+.zoom-chip:hover { background: var(--hover); }
+.zoom-chip .icon { width: 16px; height: 16px; }
+
+.star {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  padding: 0;
+}
+.star:hover:not(:disabled) { background: var(--hover); }
+.star .icon { width: 18px; height: 18px; }
+.star.on { color: var(--accent); }
+.star:disabled { display: none; }
+
+/* ── Bookmarks bar ─────────────────────────────────────────────────────── */
+.bookmark-bar {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   padding: 0 8px;
-  background: #f5f6fa;
-  border-bottom: 1px solid #c3c7d6;
-  box-sizing: border-box;
+  background: var(--toolbar);
+  border-bottom: 1px solid var(--border);
   overflow-x: auto;
   overflow-y: hidden;
 }
+.bookmark-bar[hidden] { display: none; }
+.bookmark-bar::-webkit-scrollbar { display: none; }
 
 .bookmark {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   max-width: 160px;
-  height: 22px;
-  padding: 0 6px 0 8px;
-  border-radius: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 13px;
+  color: var(--text);
   font-size: 12px;
-  color: #33364a;
-  cursor: pointer;
-  user-select: none;
+  cursor: default;
 }
-
-.bookmark:hover {
-  background: #e3e5ef;
-}
-
+body:not(.no-hover) .bookmark:hover { background: var(--hover); }
+.bookmark img, .bookmark .icon { width: 16px; height: 16px; flex: 0 0 auto; }
+.bookmark .icon { color: var(--muted); }
 .bookmark-title {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.bookmark-empty { color: var(--muted); font-size: 12px; padding: 0 4px; }
 
-.bookmark-x {
-  flex: 0 0 auto;
-  display: none;
-  width: 14px;
-  height: 14px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 3px;
-  font-size: 10px;
-}
-
-.bookmark:hover .bookmark-x {
-  display: flex;
-}
-
-.bookmark-x:hover {
-  background: rgba(0, 0, 0, 0.15);
-}
-
-.bookmark-empty {
-  font-size: 12px;
-  color: #8a8fa8;
-}
-
-/* Height (48) is DOWNLOAD_SHELF_HEIGHT in electron/constants.js. */
-.download-shelf {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 48px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px;
-  background: #f5f6fa;
-  border-top: 1px solid #c3c7d6;
-  box-sizing: border-box;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.download-shelf[hidden] {
-  display: none;
-}
-
-.dl {
-  position: relative;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 260px;
-  height: 36px;
-  padding: 0 8px;
-  border: 1px solid #d0d3de;
-  border-radius: 6px;
-  background: #ffffff;
-  font-size: 12px;
-  color: #33364a;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-
-.dl-info {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.dl-name {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dl-status {
-  font-size: 11px;
-  color: #7a7f99;
-}
-
-.dl-bar {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 3px;
-  background: #4a6cf7;
-}
-
-.dl-btn {
-  flex: 0 0 auto;
-  border: none;
-  background: none;
-  color: #33364a;
-  font-size: 11px;
-  padding: 3px 5px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.dl-btn:hover {
-  background: #e3e5ef;
-}
+/* ── Restricted Mode: ordinary browsing controls stay (back / forward / reload, tabs, + for the
+   sites page, ⋮ menu, downloads); hidden: address bar, tab search, star, site info. The lock is only
+   an indicator — nothing happens when it is clicked. ── */
+#unlock { cursor: default; color: var(--accent); }
+#unlock:hover { background: none; }
+body.restricted #tab-search,
+body.restricted #bookmark,
+body.restricted #site-info { display: none; }
+/* the address bar keeps its space (so the buttons stay put) but shows nothing and takes no input */
+body.restricted .omnibox { visibility: hidden; pointer-events: none; }

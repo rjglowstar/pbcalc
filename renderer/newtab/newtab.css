@@ -1,0 +1,52 @@
+/* Chrome-style new tab page: logo + search box. No most-visited tiles, no history. */
+body {
+  background: var(--toolbar);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+@media (prefers-color-scheme: dark) {
+  body { background: var(--frame); }
+}
+
+main {
+  width: 100%;
+  max-width: 584px;
+  padding: 0 24px;
+  margin-top: -12vh;
+  text-align: center;
+}
+
+.logo {
+  margin: 0 0 32px;
+  font-size: 84px;
+  font-weight: 400;
+  letter-spacing: -2px;
+  color: var(--text);
+  user-select: none;
+}
+.logo span { color: var(--accent); }
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 46px;
+  padding: 0 20px;
+  border: 1px solid var(--border);
+  border-radius: 23px;
+  background: var(--popup);
+}
+.search:hover, .search:focus-within { box-shadow: var(--shadow); border-color: transparent; }
+.search .icon { color: var(--muted); }
+.search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font-size: 16px;
+  user-select: text;
+}
+.search input::placeholder { color: var(--muted); }

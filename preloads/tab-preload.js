@@ -1,5 +1,20 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+// A DUPLICATED tab restores the original's sessionStorage before any page script runs, so a site
+// that keeps its login there (the PB ERP does) stays logged in in the copy — that is what Chrome's
+// Duplicate does. Only views main started with this flag ask, main answers once and only for the
+// origin the data came from, and nothing of this is exposed to the page.
+if (process.argv.includes("--pbcalc-restore-session")) {
+  try {
+    const data = ipcRenderer.sendSync("tabs:session-restore", location.origin);
+    if (data && typeof data === "object") {
+      for (const [k, v] of Object.entries(data)) {
+        try { sessionStorage.setItem(k, v); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
 // This preload runs inside every TAB — i.e. on whatever arbitrary website the user navigates to,
 // not just trusted first-party pages. The exposed surface is deliberately narrow and origin-
 // scoped: the origin is read from `location.origin` HERE, inside the preload's isolated context,
@@ -24,6 +39,50 @@ contextBridge.exposeInMainWorld("vaultAPI", {
   needsSavePrompt: (username, password) =>
     ipcRenderer.invoke("vault:needs-prompt", location.origin, username, password),
 });
+
+// Settings page bridge — exposed ONLY on our own local settings page (a file: URL ending in
+// renderer/settings/settings.html). Websites never see it, and the main process re-checks the
+// sender URL on every call (settings:get / settings:set in registerIpcHandlers.js).
+if (location.protocol === "file:" && /\/renderer\/settings\/settings\.html$/.test(location.pathname)) {
+  contextBridge.exposeInMainWorld("settingsAPI", {
+    chooseDownloadDir: () => ipcRenderer.invoke("settings:choose-download-dir"),
+    get: () => ipcRenderer.invoke("settings:get"),
+    onChanged: (cb) => { ipcRenderer.on("settings:changed", (_e, snap) => cb(snap)); },
+    set: (key, value) => ipcRenderer.send("settings:set", key, value),
+    restrictedStatus: () => ipcRenderer.invoke("settings:restricted-status"),
+    restrictedEnable: () => ipcRenderer.invoke("settings:restricted-enable"),
+    restrictedSetStart: (on) => ipcRenderer.invoke("settings:restricted-set-start", on),
+  });
+}
+
+// Downloads page bridge — only that local file; main re-checks the sender URL on every call.
+if (location.protocol === "file:" && /\/renderer\/downloads\/downloads\.html$/.test(location.pathname)) {
+  contextBridge.exposeInMainWorld("downloadsAPI", {
+    list: () => ipcRenderer.invoke("downloads:page-list"),
+    action: (name, id) => ipcRenderer.send("downloads:page-action", name, id),
+    onChanged: (cb) => { ipcRenderer.on("downloads:changed", (_e, list) => cb(list)); },
+  });
+}
+
+// Bookmark manager bridge — only that local file; main re-checks the sender (and, in Restricted
+// Mode, that it is the PIN-verified admin tab) on every call.
+if (location.protocol === "file:" && /\/renderer\/manager\/manager\.html$/.test(location.pathname)) {
+  contextBridge.exposeInMainWorld("managerAPI", {
+    list: () => ipcRenderer.invoke("manager:list"),
+    add: (title, url) => ipcRenderer.invoke("manager:add", title, url),
+    update: (id, title, url) => ipcRenderer.invoke("manager:update", id, title, url),
+    remove: (id) => ipcRenderer.invoke("manager:remove", id),
+    move: (id, dir) => ipcRenderer.invoke("manager:move", id, dir),
+  });
+}
+
+// Restricted Mode home page bridge — same idea: only that local file, and main re-checks.
+if (location.protocol === "file:" && /\/renderer\/restricted\/home\.html$/.test(location.pathname)) {
+  contextBridge.exposeInMainWorld("restrictedAPI", {
+    list: () => ipcRenderer.invoke("restricted:list"),
+    open: (id) => ipcRenderer.send("restricted:open", id),
+  });
+}
 
 // ===========================================================================
 // Chrome-style password manager UI: "Save password?" card + autofill dropdown.

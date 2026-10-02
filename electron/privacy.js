@@ -10,11 +10,12 @@ const path = require("path");
 // browsing session:
 //   - password-vault.json  the saved-password vault
 //   - bookmarks.json       the bookmarks
+//   - settings.json        UI preferences (e.g. bookmarks bar shown)
 // and one more that looks like junk but is load-bearing:
 //   - Local State          holds the os_crypt key that Electron's safeStorage encrypts with. If it
 //                          is deleted, a new key is generated and the vault above can no longer be
 //                          decrypted. Never remove it.
-const KEEP = new Set(["password-vault.json", "bookmarks.json", "Local State"]);
+const KEEP = new Set(["password-vault.json", "bookmarks.json", "settings.json", "Local State"]);
 
 // Startup sweep: removes leftovers from a crash / forced kill, and anything Chromium wrote during
 // the previous run's shutdown after we could clear it. Runs before app "ready", when nothing

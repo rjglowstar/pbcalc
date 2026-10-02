@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self';" />
+    <title>Settings</title>
+    <link rel="stylesheet" href="../common/theme.css" />
+    <link rel="stylesheet" href="./settings.css" />
+  </head>
+  <body>
+    <header><h1>Settings</h1></header>
+    <main>
+      <section class="card">
+        <h2>Appearance</h2>
+        <div class="row">
+          <div class="text">
+            <div class="label">Mode</div>
+            <div class="desc">Choose how PBCalc looks. “Device” follows your Windows app mode.</div>
+          </div>
+          <div class="seg" id="mode" role="radiogroup" aria-label="Mode">
+            <button type="button" data-mode="system" role="radio">Device</button>
+            <button type="button" data-mode="light" role="radio">Light</button>
+            <button type="button" data-mode="dark" role="radio">Dark</button>
+          </div>
+        </div>
+        <div class="row" id="bar-row">
+          <div class="text">
+            <div class="label">Show bookmarks bar</div>
+            <div class="desc">Shows your bookmarks under the address bar (Ctrl+Shift+B).</div>
+          </div>
+          <button type="button" class="switch" id="bookmarks-bar" role="switch" aria-label="Show bookmarks bar"><span></span></button>
+        </div>
+      </section>
+
+      <section class="card" id="address-bar-card">
+        <h2>Address bar</h2>
+        <div class="row">
+          <div class="text">
+            <div class="label">Show search suggestions from Google</div>
+            <div class="desc">While you type in the address bar, what you typed is sent to Google to fetch suggestions, as in Chrome. No cookies are sent and nothing is saved. Your bookmarks and open tabs are suggested either way. Turn off to keep every keystroke on this computer.</div>
+          </div>
+          <button type="button" class="switch" id="suggest-switch" role="switch" aria-label="Show search suggestions"><span></span></button>
+        </div>
+      </section>
+
+      <section class="card" id="downloads-card">
+        <h2>Downloads</h2>
+        <div class="row">
+          <div class="text">
+            <div class="label">Location</div>
+            <div class="desc" id="dl-dir"></div>
+          </div>
+          <button type="button" class="btn" id="dl-change">Change</button>
+        </div>
+        <div class="row">
+          <div class="text">
+            <div class="label">Ask where to save each file before downloading</div>
+            <div class="desc">Off, as in Chrome: files go straight to the folder above, and an existing name gets "(1)" added instead of being overwritten. Turn on to pick a location every time.</div>
+          </div>
+          <button type="button" class="switch" id="dl-ask" role="switch" aria-label="Ask where to save each file"><span></span></button>
+        </div>
+      </section>
+
+      <section class="card" id="restricted-card">
+        <h2>Restricted Mode</h2>
+        <div class="row">
+          <div class="text">
+            <div class="label">Only open your list of sites</div>
+            <div class="desc">In Restricted Mode people can open only the sites in your bookmarks. There is no address bar and bookmarks cannot be changed. Add the sites you want to allow as bookmarks first.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="text">
+            <div class="label">Default Start Restricted</div>
+            <div class="desc">When on, PBCalc always starts in Restricted Mode, even if an administrator switched it off during the last session. When off, it starts normally.</div>
+          </div>
+          <button type="button" class="switch" id="rm-start" role="switch" aria-label="Default Start Restricted"><span></span></button>
+        </div>
+        <div class="row">
+          <div class="text"><div class="msg" id="rm-msg"></div></div>
+          <button type="button" class="btn primary" id="rm-enable">Turn on Restricted Mode now</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Privacy</h2>
+        <div class="row">
+          <div class="text">
+            <div class="label">Browsing history</div>
+            <div class="desc">PBCalc never records the pages you visit. Cookies, cache and site data are also erased every time you close the browser. Only your bookmarks, saved passwords and these settings are kept.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="text">
+            <div class="label">Version</div>
+            <div class="desc" id="app-version"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="./settings.js"></script>
+  </body>
+</html>

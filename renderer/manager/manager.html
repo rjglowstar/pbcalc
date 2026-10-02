@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src https: http: data:;" />
+    <title>Bookmark manager</title>
+    <link rel="stylesheet" href="../common/theme.css" />
+    <link rel="stylesheet" href="./manager.css" />
+  </head>
+  <body>
+    <header><h1>Bookmark manager</h1></header>
+    <main>
+      <section class="card">
+        <h2>Add a site</h2>
+        <form id="add-form" class="add" autocomplete="off">
+          <input id="add-title" type="text" placeholder="Name (optional)" />
+          <input id="add-url" type="text" placeholder="Address, e.g. mfg.example.com/login" spellcheck="false" />
+          <button type="submit" class="btn primary">Add</button>
+        </form>
+        <div id="add-msg" class="msg"></div>
+      </section>
+
+      <section class="card">
+        <h2>Sites <span id="count" class="count"></span></h2>
+        <div id="list" class="list"></div>
+        <div id="empty" class="empty" hidden>No sites yet. Add one above.</div>
+      </section>
+    </main>
+    <script src="./manager.js"></script>
+  </body>
+</html>
