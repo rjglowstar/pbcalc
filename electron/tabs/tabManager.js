@@ -224,6 +224,47 @@ function createTab(url, opts = {}) {
               });
             }
           } catch(e) {}
+
+          // 5. UserAgent & Client Hints override for WhatsApp Web compatibility
+          try {
+            if (navigator.userAgentData) {
+              Object.defineProperty(navigator, 'userAgentData', {
+                get: function() {
+                  return {
+                    brands: [
+                      { brand: 'Google Chrome', version: '124' },
+                      { brand: 'Chromium', version: '124' },
+                      { brand: 'Not-A.Brand', version: '24' }
+                    ],
+                    mobile: false,
+                    platform: 'Windows',
+                    getHighEntropyValues: function() {
+                      return Promise.resolve({
+                        architecture: 'x86',
+                        bitness: '64',
+                        brands: [
+                          { brand: 'Google Chrome', version: '124' },
+                          { brand: 'Chromium', version: '124' },
+                          { brand: 'Not-A.Brand', version: '24' }
+                        ],
+                        fullVersionList: [
+                          { brand: 'Google Chrome', version: '124.0.6367.207' },
+                          { brand: 'Chromium', version: '124.0.6367.207' }
+                        ],
+                        mobile: false,
+                        model: '',
+                        platform: 'Windows',
+                        platformVersion: '15.0.0',
+                        uaFullVersion: '124.0.6367.207'
+                      });
+                    }
+                  };
+                },
+                configurable: true,
+                enumerable: false
+              });
+            }
+          } catch(e) {}
         })();
       `
     });

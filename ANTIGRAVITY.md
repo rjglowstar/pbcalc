@@ -89,6 +89,14 @@ if (innerHTMLDesc && innerHTMLDesc.set) {
 
 ---
 
+### 💬 WhatsApp Web & Modern Web App Compatibility (Chrome 124+ UserAgent)
+- **Problem:** WhatsApp Web (`https://web.whatsapp.com/`) showed `"WhatsApp works with Google Chrome 100+ / Update Google Chrome"` because Electron's default User-Agent contained `Electron/28.x` and `PBCalc/0.1.0` tokens.
+- **Solution:**
+  1. `electron/main.js`: Configured `session.defaultSession.setUserAgent(...)` with a clean, standard Google Chrome 124 User-Agent string (`Chrome/124.0.0.0`).
+  2. `electron/tabs/tabManager.js`: Mocked `navigator.userAgentData` (Sec-CH-UA Client Hints) to report standard Google Chrome 124 brand values.
+
+---
+
 ## ⚠️ Maintenance Guidelines & Rules
 
 1. **NEVER globally wrap `Object.defineProperty`:**

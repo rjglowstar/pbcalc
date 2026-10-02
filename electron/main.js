@@ -62,6 +62,12 @@ const { registerIpcHandlers } = require("./ipc/registerIpcHandlers");
 registerIpcHandlers();
 
 app.whenReady().then(() => {
+  const cleanUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+  try {
+    const { session } = require("electron");
+    session.defaultSession.setUserAgent(cleanUA);
+  } catch (_) {}
+
   warnIfDataFolderUnwritable();
   require("./downloads/downloadManager").init();
   createMainWindow();
