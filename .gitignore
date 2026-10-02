@@ -3,3 +3,4 @@ release/
 .dev-userdata/
 *.log
 .claude
+build-dist/

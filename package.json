@@ -4,16 +4,19 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder"
+    "obfuscate": "node scripts/obfuscate.js",
+    "dist": "node scripts/obfuscate.js && electron-builder"
   },
   "devDependencies": {
     "electron": "^41.7.1",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "javascript-obfuscator": "^5.8.1"
   },
   "build": {
     "appId": "com.pbcalc.browser",
     "productName": "PBCalc",
     "directories": {
+      "app": "build-dist",
       "output": "release"
     },
     "files": [
