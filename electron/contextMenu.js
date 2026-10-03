@@ -1,6 +1,15 @@
 const { Menu, clipboard } = require("electron");
 const state = require("./state");
 
+function isInspectable(wc) {
+  try {
+    const p = new URL(wc.getURL()).protocol;
+    return p === "http:" || p === "https:";
+  } catch (_) {
+    return false;
+  }
+}
+
 // Electron gives no right-click menu by default, so build one from the context-menu event's
 // params. `openInNewTab` is passed in (rather than required) so this module stays free of a
 // circular dependency on tabManager.
@@ -46,9 +55,14 @@ function attachContextMenu(wc, { openInNewTab, isShell = false } = {}) {
       t.push({ label: "Print…", click: () => wc.print({ printBackground: true }) });
     }
 
-    if (!isShell && !locked) {
+    if (!isShell && !locked && isInspectable(wc)) {
       sep();
-      t.push({ label: "Inspect", click: () => wc.inspectElement(p.x, p.y) });
+      t.push({ label: "Inspect", click: () => {
+        if (!wc.isDevToolsOpened()) {
+          wc.openDevTools({ mode: "detach" });
+        }
+        wc.inspectElement(p.x, p.y);
+      } });
     }
 
     while (t.length && t[t.length - 1].type === "separator") t.pop();

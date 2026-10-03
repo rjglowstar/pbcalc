@@ -48,9 +48,46 @@ Two things define this browser against every mainstream one:
 
 ## Commands
 
-- `npm start` — run the app (`electron .`).
-- `npm run dist` — package a Windows installer via `electron-builder` (NSIS, output to `release/`).
+- `npm start` — run the app in dev mode (`electron .`).
+- `npm run obfuscate` — run obfuscation script (`node scripts/obfuscate.js`) to generate `build-dist/`.
+- `npm run dist` — package a Windows installer via `electron-builder` (runs obfuscation automatically, outputs NSIS installer to `release/`).
 - No test suite or linter is configured yet.
+
+## Key Anti-Detection & Compatibility Systems
+
+### 1. Buketo / `disable-devtool` Bypass & Inspect Element Compatibility
+- **Target File:** [tab-preload.js](file:///d:/Project/PBCalc/preloads/tab-preload.js)
+- **Mechanism:** Injects non-enumerable prototype traps into the main world before page scripts run via `webFrame.executeJavaScript()`.
+- **Key Hooks:**
+  - `Object.defineProperty(Object.prototype, 'isSuspend', { get: () => true, enumerable: false })`: Neutralizes `disable-devtool`'s internal inspection loops. `enumerable: false` is required so `Object.keys()` and `for...in` loops in third-party frameworks (React, Angular) do not break.
+  - `DisableDevtool` & `DISABLE_DEVTOOL` window getters returning a dummy object `{ isSuspend: true, md5: '', version: '' }`.
+  - `location.replace` trap to ignore redirects to `about:blank` or `disable-devtool`.
+  - `Element.prototype.innerHTML` setter trap targeting `"Developer Tools Detected"` to prevent page blanking when DevTools are opened.
+- **Result:** Allows Inspect Element to function on all sites (including Buketo-protected pages) without breaking site functionality or triggering DevTools traps.
+
+### 2. Akamai EdgeSuite WAF & Meesho.com Compatibility
+- **Target Files:** [main.js](file:///d:/Project/PBCalc/electron/main.js), [tab-preload.js](file:///d:/Project/PBCalc/preloads/tab-preload.js)
+- **Problem & Root Cause:** Meesho.com and other Akamai WAF-protected sites returned `403 Access Denied`. Akamai's bot sensor scripts check if `navigator.hasOwnProperty('userAgentData') === true`. Overriding `navigator.userAgentData` via `Object.defineProperty` created an own property on the `navigator` instance, triggering Akamai's DOM-tampering bot detector.
+- **Solution:**
+  - Standard Chrome User-Agent set via `session.defaultSession.setUserAgent(cleanUA)` in `main.js`.
+  - Removed manual `navigator.userAgentData` property overrides in `tab-preload.js` so Chromium's native `Navigator.prototype.userAgentData` is preserved without own-property detection (`navigator.hasOwnProperty('userAgentData') === false`).
+- **Result:** Meesho.com, WhatsApp Web, and all Akamai-protected web apps load normally (HTTP 200).
+
+### 3. Source Code Obfuscation & Build Security Pipeline
+- **Target Script:** [obfuscate.js](file:///d:/Project/PBCalc/scripts/obfuscate.js)
+- **Config:** [package.json](file:///d:/Project/PBCalc/package.json)
+- **Workflow:**
+  1. Running `npm run dist` executes `obfuscate.js`.
+  2. Copies source files from `electron/`, `preloads/`, `renderer/` to `build-dist/`.
+  3. Obfuscates all `.js` files using `javascript-obfuscator` with hexadecimal variable mangling and Base64 string encoding while preserving global IPC bindings (`renameGlobals: false`).
+  4. Modifies `build-dist/package.json` to remove the `"build"` block (preventing `electron-builder` v26+ schema errors) and sets `build.directories.app = "build-dist"`.
+  5. `electron-builder` packages `build-dist/` into `release/PBCalc Setup <version>.exe`.
+  6. All sensitive developer files (`CLAUDE.md`, `ANTIGRAVITY.md`, `.git`, `.claude`, `scripts`, `.dev-userdata`) are strictly excluded from `app.asar`.
+
+### 4. Disk Cache & Startup Error Prevention
+- **Target File:** [main.js](file:///d:/Project/PBCalc/electron/main.js)
+- **Switches:** `app.commandLine.appendSwitch("disable-gpu-shader-disk-cache")` and `app.commandLine.appendSwitch("disable-http-cache")`.
+- **Purpose:** Prevents Windows file locking collisions on Chromium cache files (`net\disk_cache` / `gpu_disk_cache` Access is denied console errors) during app launches or rapid restarts.
 
 ## Architecture
 

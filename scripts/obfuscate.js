@@ -56,7 +56,11 @@ function obfuscateJsFilesInDir(dir) {
     } else if (entry.isFile() && entry.name.endsWith('.js')) {
       const code = fs.readFileSync(fullPath, 'utf8');
       try {
-        const obfuscatedResult = JavaScriptObfuscator.obfuscate(code, obfuscatorOptions);
+        const isPreload = entry.name === 'tab-preload.js';
+        const opts = isPreload
+          ? { ...obfuscatorOptions, stringArray: false }
+          : obfuscatorOptions;
+        const obfuscatedResult = JavaScriptObfuscator.obfuscate(code, opts);
         fs.writeFileSync(fullPath, obfuscatedResult.getObfuscatedCode(), 'utf8');
         console.log(`[Obfuscated] ${path.relative(distDir, fullPath)}`);
       } catch (err) {
@@ -87,10 +91,13 @@ for (const folder of foldersToCopy) {
   }
 }
 
-// Copy package.json
+// Copy package.json and strip "build" and "devDependencies" for the app package
 const pkgSrc = path.join(projectRoot, 'package.json');
 const pkgDest = path.join(distDir, 'package.json');
-fs.copyFileSync(pkgSrc, pkgDest);
+const pkgData = JSON.parse(fs.readFileSync(pkgSrc, 'utf8'));
+delete pkgData.build;
+delete pkgData.devDependencies;
+fs.writeFileSync(pkgDest, JSON.stringify(pkgData, null, 2), 'utf8');
 
 console.log('Obfuscating JavaScript files...');
 for (const folder of ['electron', 'preloads', 'renderer']) {

@@ -9,6 +9,10 @@ const { dataDir } = require("./constants");
 // app.getPath("userData") — they simply inherit it.
 app.setPath("userData", dataDir());
 
+// Disable HTTP and GPU disk caches to prevent Windows file-locking collisions and console warnings.
+app.commandLine.appendSwitch("disable-http-cache");
+app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
+
 // No-history policy: sweep whatever a previous run (or a crash) left behind, before Chromium
 // opens any of it, and wipe the session again on quit. See electron/privacy.js.
 const { wipeLeftoversOnDisk, installQuitWipe } = require("./privacy");
@@ -62,10 +66,18 @@ const { registerIpcHandlers } = require("./ipc/registerIpcHandlers");
 registerIpcHandlers();
 
 app.whenReady().then(() => {
-  const cleanUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+  const chromeVersion = process.versions.chrome || "128.0.6613.138";
+  const cleanUA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
   try {
     const { session } = require("electron");
     session.defaultSession.setUserAgent(cleanUA);
+    session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+      if (details.resourceType === "mainFrame") {
+        details.requestHeaders["Upgrade-Insecure-Requests"] = "1";
+        details.requestHeaders["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
+      }
+      callback({ requestHeaders: details.requestHeaders });
+    });
   } catch (_) {}
 
   warnIfDataFolderUnwritable();

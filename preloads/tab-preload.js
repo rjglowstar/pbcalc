@@ -1,5 +1,64 @@
 const { contextBridge, ipcRenderer, webFrame } = require("electron");
 
+// PBCalc: Native main-world script injection (Zone.js & Akamai WAF Compatible)
+try {
+  webFrame.executeJavaScript(`
+    (function() {
+      if (['pbcalc:', 'chrome:', 'file:'].includes(window.location.protocol)) return;
+      try {
+        Object.defineProperty(Object.prototype, 'isSuspend', {
+          get: function() { return true; },
+          set: function() {},
+          configurable: true,
+          enumerable: false
+        });
+      } catch(e) {}
+
+      function dummyDisableDevtool() {
+        return { isSuspend: true, md5: '', version: '' };
+      }
+      dummyDisableDevtool.isSuspend = true;
+      dummyDisableDevtool.md5 = '';
+      dummyDisableDevtool.version = '';
+
+      try {
+        Object.defineProperty(window, 'DisableDevtool', {
+          get: function() { return dummyDisableDevtool; },
+          set: function() {},
+          configurable: true,
+          enumerable: false
+        });
+        Object.defineProperty(window, 'DISABLE_DEVTOOL', {
+          get: function() { return dummyDisableDevtool; },
+          set: function() {},
+          configurable: true,
+          enumerable: false
+        });
+      } catch(e) {}
+
+      try {
+        const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+        if (innerHTMLDesc && innerHTMLDesc.set) {
+          const _origSet = innerHTMLDesc.set;
+          Object.defineProperty(Element.prototype, 'innerHTML', {
+            set: function(val) {
+              if (typeof val === 'string' && (val.includes('Developer Tools Detected') || val.includes('Access Denied: Developer Tools Detected'))) {
+                return;
+              }
+              return _origSet.call(this, val);
+            },
+            get: function() {
+              return innerHTMLDesc.get.call(this);
+            },
+            configurable: true,
+            enumerable: false
+          });
+        }
+      } catch(e) {}
+    })();
+  `, true);
+} catch (e) {}
+
 // A DUPLICATED tab restores the original's sessionStorage before any page script runs, so a site
 // that keeps its login there (the PB ERP does) stays logged in in the copy — that is what Chrome's
 // Duplicate does. Only views main started with this flag ask, main answers once and only for the

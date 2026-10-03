@@ -153,124 +153,7 @@ function createTab(url, opts = {}) {
   // (scripts/chrome-reference/capture-darkmode.ps1). Our dark theme is for the browser, not the web.
   view.setBackgroundColor("#ffffff");
 
-  try {
-    view.webContents.debugger.attach("1.3");
-    view.webContents.debugger.sendCommand("Page.enable");
-    view.webContents.debugger.sendCommand("Page.addScriptToEvaluateOnNewDocument", {
-      source: `
-        // PBCalc: Hacker-proof disable-devtool bypass (Clean & Zone.js Compatible)
-        (function() {
-          // 1. Universal property hook on Object.prototype so both Webpack bundled and inline disable-devtool evaluate isSuspend as true
-          try {
-            Object.defineProperty(Object.prototype, 'isSuspend', {
-              get: function() { return true; },
-              set: function() {},
-              configurable: true,
-              enumerable: false
-            });
-          } catch(e) {}
 
-          // 2. Dummy window.DisableDevtool function for index.html inline calls
-          function dummyDisableDevtool() {
-            return { isSuspend: true, md5: '', version: '' };
-          }
-          dummyDisableDevtool.isSuspend = true;
-          dummyDisableDevtool.md5 = '';
-          dummyDisableDevtool.version = '';
-
-          try {
-            Object.defineProperty(window, 'DisableDevtool', {
-              get: function() { return dummyDisableDevtool; },
-              set: function() {},
-              configurable: true,
-              enumerable: false
-            });
-            Object.defineProperty(window, 'DISABLE_DEVTOOL', {
-              get: function() { return dummyDisableDevtool; },
-              set: function() {},
-              configurable: true,
-              enumerable: false
-            });
-          } catch(e) {}
-
-          // 3. Fallback trap: prevent about:blank or 404 redirects
-          try {
-            const _origReplace = window.location.replace;
-            window.location.replace = function(url) {
-              if (typeof url === 'string' && (url.includes('about:blank') || url === 'about:blank' || url.includes('disable-devtool'))) {
-                return;
-              }
-              return _origReplace.apply(window.location, arguments);
-            };
-          } catch(e) {}
-
-          // 4. Fallback trap: prevent "Access Denied" DOM overwrite
-          try {
-            const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
-            if (innerHTMLDesc && innerHTMLDesc.set) {
-              const _origSet = innerHTMLDesc.set;
-              Object.defineProperty(Element.prototype, 'innerHTML', {
-                set: function(val) {
-                  if (typeof val === 'string' && (val.includes('Developer Tools Detected') || val.includes('Access Denied'))) {
-                    return;
-                  }
-                  return _origSet.call(this, val);
-                },
-                get: function() {
-                  return innerHTMLDesc.get.call(this);
-                },
-                configurable: true,
-                enumerable: false
-              });
-            }
-          } catch(e) {}
-
-          // 5. UserAgent & Client Hints override for WhatsApp Web compatibility
-          try {
-            if (navigator.userAgentData) {
-              Object.defineProperty(navigator, 'userAgentData', {
-                get: function() {
-                  return {
-                    brands: [
-                      { brand: 'Google Chrome', version: '124' },
-                      { brand: 'Chromium', version: '124' },
-                      { brand: 'Not-A.Brand', version: '24' }
-                    ],
-                    mobile: false,
-                    platform: 'Windows',
-                    getHighEntropyValues: function() {
-                      return Promise.resolve({
-                        architecture: 'x86',
-                        bitness: '64',
-                        brands: [
-                          { brand: 'Google Chrome', version: '124' },
-                          { brand: 'Chromium', version: '124' },
-                          { brand: 'Not-A.Brand', version: '24' }
-                        ],
-                        fullVersionList: [
-                          { brand: 'Google Chrome', version: '124.0.6367.207' },
-                          { brand: 'Chromium', version: '124.0.6367.207' }
-                        ],
-                        mobile: false,
-                        model: '',
-                        platform: 'Windows',
-                        platformVersion: '15.0.0',
-                        uaFullVersion: '124.0.6367.207'
-                      });
-                    }
-                  };
-                },
-                configurable: true,
-                enumerable: false
-              });
-            }
-          } catch(e) {}
-        })();
-      `
-    });
-  } catch (err) {
-    console.error("Failed to attach debugger for disable-devtool bypass", err);
-  }
 
   const tab = {
     id: state.nextTabId++,
@@ -507,6 +390,7 @@ function wireTabEvents(tab) {
   // touched, so the site's own CDNs / fonts / embeds keep working. If the very first load is
   // bounced (nothing on screen yet) the tab shows a "blocked" page instead of staying blank.
   const blockIfOutside = (event, url) => {
+    // Restricted Mode checks
     if (!state.restricted) return false;
     if (restricted.sameSite(url, tab.site)) return false;
     event.preventDefault();
@@ -538,6 +422,14 @@ function wireTabEvents(tab) {
       event.preventDefault();
       handleExternalUrl(url);
     }
+  });
+
+  // Belt-and-suspenders: close DevTools if opened/navigated on an internal page
+  wc.on("devtools-opened", () => {
+    if (!isInspectable(wc)) wc.closeDevTools();
+  });
+  wc.on("did-navigate", () => {
+    if (wc.isDevToolsOpened() && !isInspectable(wc)) wc.closeDevTools();
   });
 
   wc.on("did-create-window", (childWindow, details) => {
@@ -804,10 +696,20 @@ function printActive() {
   if (wc) wc.print({ printBackground: true });
 }
 
+function isInspectable(wc) {
+  if (!wc || wc.isDestroyed()) return false;
+  try {
+    const p = new URL(wc.getURL()).protocol;
+    return p === "http:" || p === "https:";
+  } catch (_) {
+    return false;
+  }
+}
+
 function openDevTools() {
   if (state.restricted) return;
   const wc = activeWebContents();
-  if (!wc || wc.isDestroyed()) return;
+  if (!wc || wc.isDestroyed() || !isInspectable(wc)) return;
 
   if (wc.isDevToolsOpened()) {
     if (wc.isDevToolsFocused()) {
@@ -818,10 +720,10 @@ function openDevTools() {
           wc.devToolsWebContents.focus();
         }
       } catch (_) {}
-      wc.openDevTools({ mode: "previous" });
+      wc.openDevTools({ mode: "detach" });
     }
   } else {
-    wc.openDevTools({ mode: "previous" });
+    wc.openDevTools({ mode: "detach" });
   }
 }
 
