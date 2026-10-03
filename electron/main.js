@@ -1,4 +1,14 @@
 const { app, BrowserWindow } = require("electron");
+
+// Electron throws a Node warning into the terminal for every loadURL() that fails, even if we
+// explicitly catch() the promise. This silences that specific noise so the terminal stays clean.
+const originalEmitWarning = process.emitWarning;
+process.emitWarning = function (warning, ...args) {
+  if (typeof warning === "string" && warning.includes("Failed to load URL:")) return;
+  if (warning instanceof Error && warning.message.includes("Failed to load URL:")) return;
+  return originalEmitWarning.call(this, warning, ...args);
+};
+
 const { dataDir } = require("./constants");
 
 // MUST run before anything else touches storage, and before the app is ready — Electron only
@@ -9,8 +19,7 @@ const { dataDir } = require("./constants");
 // app.getPath("userData") — they simply inherit it.
 app.setPath("userData", dataDir());
 
-// Disable HTTP and GPU disk caches to prevent Windows file-locking collisions and console warnings.
-app.commandLine.appendSwitch("disable-http-cache");
+// Disable GPU disk cache to prevent Windows file-locking collisions and console warnings.
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
 
 // No-history policy: sweep whatever a previous run (or a crash) left behind, before Chromium

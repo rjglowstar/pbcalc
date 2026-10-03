@@ -62,7 +62,7 @@ function secretSequence(event, input) {
 // (preventDefault) so the page never sees them. Shortcuts where repeating is the point — zoom,
 // cycling tabs, back/forward — are left alone.
 const NO_AUTO_REPEAT = new Set([
-  "new-tab", "close-tab", "duplicate-tab", "find", "downloads", "print", "devtools", "settings",
+  "new-tab", "close-tab", "reopen-tab", "duplicate-tab", "find", "downloads", "print", "devtools", "settings",
   "bookmark", "bookmarks-bar", "bookmark-manager", "tab-search", "fullscreen", "find-close",
   "address-bar",
 ]);
@@ -79,7 +79,7 @@ function handleInput(event, input) {
     event.preventDefault();
     if (input.isAutoRepeat && NO_AUTO_REPEAT.has(name)) return; // held key: one action per press
     if (state.restricted && !RESTRICTED_OK.has(name)) return;
-    fn();
+    setImmediate(fn);
   };
 
   if (alt && !ctrl && key === "ArrowLeft") return claim("back", tabManager.goBack);
@@ -92,7 +92,10 @@ function handleInput(event, input) {
   if (!ctrl || alt) return;
   const k = key.length === 1 ? key.toLowerCase() : key;
 
-  if (k === "t" && !shift) {
+  if (k === "t") {
+    if (shift) {
+      return claim("reopen-tab", tabManager.reopenClosedTab);
+    }
     return claim("new-tab", () => {
       // Restricted Mode: a new tab is the "Your sites" tiles page (createTab enforces that).
       if (state.restricted) return tabManager.createTab(undefined, { allowRestricted: true });
@@ -110,7 +113,16 @@ function handleInput(event, input) {
   if (k === "a" && shift) return claim("tab-search", () => popup.open("tabsearch", null));
   if (k === "b" && shift) return claim("bookmarks-bar", tabManager.toggleBookmarksBar);
   if (k === "o" && shift) return claim("bookmark-manager", () => tabManager.openManager());
-  if (k === "j") return claim("downloads", () => tabManager.openDownloadsPage()); // Chrome: Ctrl+J opens the page
+  if (k === "j" && !shift) {
+    return claim("downloads", () => {
+      if (popup.isOpen("downloads")) {
+        popup.close();
+        tabManager.openDownloadsPage();
+      } else {
+        popup.open("downloads", null);
+      }
+    });
+  }
   if (k === "Tab") return claim("cycle-tab", () => tabManager.cycleTab(shift ? -1 : 1));
   if (k === "PageDown") return claim("cycle-tab", () => tabManager.cycleTab(1));
   if (k === "PageUp") return claim("cycle-tab", () => tabManager.cycleTab(-1));

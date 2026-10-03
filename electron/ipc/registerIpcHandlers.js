@@ -179,7 +179,7 @@ function registerIpcHandlers() {
     return l;
   });
 
-  ipcMain.on("bookmarks:open", (e, id) => { if (fromShell(e)) tabManager.openBookmark(String(id)); });
+  ipcMain.on("bookmarks:open", (e, id, newTab) => { if (fromShell(e)) tabManager.openBookmark(String(id), newTab); });
   ipcMain.on("bookmarks:context-menu", (_e, id) => tabManager.bookmarkContextMenu(String(id)));
   ipcMain.handle("bookmarks:remove", (_e, id) => {
     if (state.restricted) return bookmarks.list(); // read-only in Restricted Mode

@@ -13,6 +13,9 @@ const bookmarks = require("../bookmarks/bookmarkStore");
 // gone when the app closes, and never written anywhere (no-history rule).
 const allowedCertHosts = new Set();
 
+// Tracks the last 20 closed tab URLs (in memory only) for Ctrl+Shift+T.
+const closedTabsHistory = [];
+
 // Only these external schemes may be handed to the OS, and only after the user confirms. Anything
 // else (file:, javascript:, custom app schemes...) is dropped rather than launched.
 const EXTERNAL_SCHEMES = new Set(["mailto:", "tel:", "sms:"]);
@@ -137,11 +140,9 @@ function createTab(url, opts = {}) {
           // Only a duplicated tab carries this flag; its preload then asks for the source tab's
           // sessionStorage before any page script runs. Every other tab skips that round trip.
           additionalArguments: opts.sessionRestore ? ["--pbcalc-restore-session"] : [],
-          // Deliberately NO partition option here — every tab shares Electron's default persistent
-          // session, so logging into a site in one tab keeps you logged in across every other tab of
-          // the same site, exactly like a real browser. The ERP shell this project split off from
-          // does the OPPOSITE (an isolated partition per tab) because it specifically needs several
-          // independent logins open side by side; that need does not apply to a general browser.
+          // The user specifically requested that cache is kept in memory to speed up page loads, but 
+          // never touches the disk and is wiped completely on close. An ephemeral partition does exactly this.
+          partition: "pbcalc",
           preload: path.join(__dirname, "..", "..", "preloads", "tab-preload.js"),
         },
       });
@@ -180,7 +181,11 @@ function createTab(url, opts = {}) {
     });
   }
 
-  state.tabs.push(tab);
+  if (typeof opts.index === "number" && opts.index >= 0 && opts.index <= state.tabs.length) {
+    state.tabs.splice(opts.index, 0, tab);
+  } else {
+    state.tabs.push(tab);
+  }
   wireTabEvents(tab);
 
   if (opts.background && state.activeTabId != null) {
@@ -557,6 +562,16 @@ function closeTab(id) {
 
   require("../hovercard").hide();
   const [removed] = state.tabs.splice(idx, 1);
+
+  // Push to history (skipping error pages or local pbcalc:/file: pages) before webContents is destroyed
+  try {
+    const url = removed.url || removed.view.webContents.getURL();
+    if (url && url !== "about:blank" && !url.startsWith("pbcalc:") && !url.startsWith("chrome:") && !url.startsWith("file:") && !url.startsWith("data:")) {
+      closedTabsHistory.push({ url, index: idx });
+      if (closedTabsHistory.length > 20) closedTabsHistory.shift();
+    }
+  } catch (_) {}
+
   if (state.adminTabId === removed.id) state.adminTabId = null; // admin session ends with its tab
   if (state.mainWindow && !state.mainWindow.isDestroyed()) {
     try {
@@ -583,6 +598,16 @@ function closeTab(id) {
 
   notifyTabs();
   return getTabState();
+}
+
+function reopenClosedTab() {
+  if (closedTabsHistory.length === 0) return;
+  const entry = closedTabsHistory.pop();
+  if (state.restricted) {
+    createTab(entry.url, { allowRestricted: true, index: entry.index });
+  } else {
+    createTab(entry.url, { index: entry.index });
+  }
 }
 
 function cycleTab(dir) {
@@ -844,12 +869,24 @@ function setBookmarksBarVisible(visible) {
 // Clicking a bookmark. Normal mode: load it in the current tab (as before). Restricted Mode: open
 // it as its own tab confined to that site — or switch to the tab already showing it; from the
 // home page it loads in place, like a new-tab tile.
-function openBookmark(id) {
+function openBookmark(id, newTab = false) {
   const b = bookmarks.list().find((x) => x.id === String(id));
   if (!b) return;
-  if (!state.restricted) return navigate(b.url);
+  if (!state.restricted) {
+    if (newTab) {
+      // In Chrome, Ctrl+Click on a bookmark opens it in a new background tab
+      return createTab(b.url, { background: true });
+    }
+    return navigate(b.url);
+  }
   const site = restricted.siteOf(b.url);
   if (!site) return;
+  
+  if (newTab) {
+    // Even in Restricted Mode, Ctrl+Click opens a new tab for the same site
+    return createTab(b.url, { allowRestricted: true, site, bookmarkId: b.id, background: true });
+  }
+  
   const existing = state.tabs.find((t) => t.bookmarkId === b.id);
   if (existing) return switchTab(existing.id);
   const active = getActiveTab();
@@ -1046,4 +1083,5 @@ module.exports = {
   bookmarkContextMenu,
   chromeHeight,
   siteKind,
+  reopenClosedTab,
 };

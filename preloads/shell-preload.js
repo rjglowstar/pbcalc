@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld("browserAPI", {
   // Bookmarks
   getBookmarks: () => ipcRenderer.invoke("bookmarks:list"),
   toggleBookmark: () => ipcRenderer.invoke("bookmarks:toggle-active"),
-  openBookmark: (id) => ipcRenderer.send("bookmarks:open", id),
+  openBookmark: (id, newTab) => ipcRenderer.send("bookmarks:open", id, newTab),
   bookmarkContextMenu: (id) => ipcRenderer.send("bookmarks:context-menu", id),
   onBookmarksChanged: (cb) => on("bookmarks:changed", cb),
 

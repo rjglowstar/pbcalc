@@ -441,7 +441,10 @@
       t.textContent = b.title;
       el.appendChild(t);
       // Main decides what opening means: current tab (normal) or a confined tab (Restricted).
-      el.addEventListener("click", () => api.openBookmark(b.id));
+      el.addEventListener("click", (e) => {
+        const newTab = e.ctrlKey || e.metaKey;
+        api.openBookmark(b.id, newTab);
+      });
       el.addEventListener("auxclick", (e) => { if (e.button === 1 && !tabState.restricted) api.newTab(b.url); });
       el.addEventListener("contextmenu", (e) => { e.preventDefault(); if (!tabState.restricted) { suppressHover(); api.bookmarkContextMenu(b.id); } });
       bookmarkBar.appendChild(el);
