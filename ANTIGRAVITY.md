@@ -155,6 +155,39 @@ if (innerHTMLDesc && innerHTMLDesc.set) {
 
 ---
 
+### 6. 🧠 Ephemeral In-Memory Session & Cache Partitioning
+- **Target Component:** `electron/tabs/tabManager.js`
+- **Method:** `partition: "pbcalc"` (without a `persist:` prefix)
+- **Problem Solved:** Need for rapid, persistent intra-session caching for heavy web apps (like Buketo), but with a strict requirement to leave zero trace on disk after the browser closes.
+- **Implementation:** All `BrowserView` tabs are explicitly assigned to the `pbcalc` memory partition. This aggregates cookies, localStorage, and HTTP caching in RAM so subsequent tabs load instantly. When the app exits, the OS natively reclaims the memory, guaranteeing no disk writes.
+
+---
+
+### 7. ⌨️ Native Electron Input Focus Drop (The `setImmediate` Fix)
+- **Target Component:** `electron/shortcuts.js`
+- **Problem:** Keystrokes like `Ctrl+W` and `Ctrl+Shift+T` executed synchronously inside `before-input-event` listeners. Tearing down the active `WebContents` or shifting focus synchronously *while* the native OS window manager was actively routing the input hook caused the Windows message queue to drop keyboard focus entirely. This manifested as shortcuts "only working once" and the browser freezing until a mouse click restored focus.
+- **Solution:** 
+  ```javascript
+  const claim = (name, fn) => {
+    event.preventDefault(); // 1. Synchronously block the keystroke
+    if (input.isAutoRepeat && NO_AUTO_REPEAT.has(name)) return;
+    if (state.restricted && !RESTRICTED_OK.has(name)) return;
+    
+    // 2. Execute DOM/Focus mutations on the next tick
+    setImmediate(fn);
+  };
+  ```
+  Decoupling the structural `BrowserView` teardowns and focus mutations to the subsequent event loop tick ensures the native OS finishes processing the keyboard event cleanly.
+
+---
+
+### 8. 🔄 Precision Tab Restoration (`Ctrl+Shift+T`)
+- **Target Component:** `electron/tabs/tabManager.js`
+- **Problem:** Restored tabs were naively pushed to the end of the `state.tabs` array (`state.tabs.push()`), ignoring their original geometric position when closed.
+- **Solution:** `closedTabsHistory` now captures the exact index (`idx`) upon closure. `createTab` natively handles `opts.index`, invoking `state.tabs.splice(opts.index, 0, tab)` to seamlessly re-insert tabs natively, retaining Chrome parity.
+
+---
+
 ## 🛠️ Command Reference
 
 - `npm start` — Run PBCalc in local development mode (uses `.dev-userdata/` profile).
