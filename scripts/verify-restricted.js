@@ -62,6 +62,7 @@ app.whenReady().then(async () => {
   const tm = require("../electron/tabs/tabManager");
   const popup = require("../electron/popup");
   const bookmarks = require("../electron/bookmarks/bookmarkStore");
+  bookmarks.setMode("real");   // these tests are about the owner's real list; a fresh launch starts on the dummy one
   const restricted = require("../electron/restricted");
   const cfg = () => JSON.parse(fs.readFileSync(path.join(tmp, "UserData", "settings.json"), "utf8"));
   let prompts = 0;
@@ -462,7 +463,10 @@ app.whenReady().then(async () => {
   await sleep(300);
   launch("switch ON, mode was left last session -> starts Restricted", "restricted");
   launch("switch OFF -> starts normally", "normal", (ud) => setStart(ud, false));
-  launch("switch ON but no bookmarks -> starts normally (nothing to allow)", "normal", (ud) => { try { fs.rmSync(path.join(ud, "UserData", "bookmarks.json")); } catch (_) {} });
+  launch("switch ON but no bookmarks -> starts normally (nothing to allow)", "normal", (ud) => {
+    try { fs.rmSync(path.join(ud, "UserData", "bookmarks.json")); } catch (_) {}
+    fs.writeFileSync(path.join(ud, "UserData", "bookmarks-dummy.json"), "[]");   // a launch starts on the dummy list: it must be empty too
+  });
   launch("upgrade: old PIN-version settings (enabled:true) stay locked", "restricted", (ud) => fs.writeFileSync(path.join(ud, "UserData", "settings.json"), JSON.stringify({ restricted: { enabled: true, salt: "00", hash: "00" } })));
 
   servers.forEach((s) => s.close());

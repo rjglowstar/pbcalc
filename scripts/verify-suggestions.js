@@ -48,6 +48,7 @@ app.whenReady().then(async () => {
   const tm = require("../electron/tabs/tabManager");
   const omnibox = require("../electron/omnibox");
   const bmStore = require("../electron/bookmarks/bookmarkStore");
+  bmStore.setMode("real");   // these tests are about the owner's real list; a fresh launch starts on the dummy one
   const win = state.mainWindow;
   const sh = win.webContents;
   const js = (c) => sh.executeJavaScript(c);

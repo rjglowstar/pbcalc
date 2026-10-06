@@ -205,7 +205,7 @@
   // <img> is never re-created while it is already showing the right icon.
   function patchTabEl(el, tab, index) {
     el.classList.toggle("active", tab.id === tabState.activeTabId);
-    el.draggable = !tabState.restricted;
+    el.draggable = true;   // reordering tabs reveals no address and changes no bookmark: same in every mode
     if (el.style.order !== String(index)) el.style.order = String(index); // reorder without moving nodes
     const title = tab.title || "New Tab";
     if (el._title.textContent !== title) el._title.textContent = title;
@@ -462,8 +462,8 @@
         api.openBookmark(b.id, newTab);
       });
       el.addEventListener("auxclick", (e) => { if (e.button === 1 && !tabState.restricted) api.newTab(b.url); });
-      // drag to reorder (Chrome): a line shows where it will land. Normal mode only - main refuses it in Restricted Mode too.
-      el.draggable = !tabState.restricted;
+      // drag to reorder (Chrome): a line shows where it will land. Works in Restricted Mode too (order only).
+      el.draggable = true;   // also in Restricted Mode (the owner's decision); edit / delete / add stay blocked there
       el.addEventListener("dragstart", (e) => {
         bmDragId = b.id;
         el.classList.add("dragging");
@@ -529,13 +529,13 @@
     const tab = activeTab();
     if (tab && tab.loading) api.stop(); else api.reload();
   });
-  // Right-click on Reload: Chrome shows Normal / Hard / Empty Cache and Hard Reload, but only while DevTools is open.
-  // Main decides (it knows about DevTools); the native menu takes the pointer away from the page, so hover is
+  // Right-click on Reload: Normal / Hard / Empty Cache and Hard Reload, always (Chrome shows it only with DevTools open;
+  // the owner wants it without). Main decides (it knows whether the page is loading); the native menu takes the pointer away from the page, so hover is
   // suppressed afterwards like for the other native menus.
   reloadBtn.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     const tab = activeTab();
-    if (tabState.restricted || (tab && tab.loading)) return;
+    if (tab && tab.loading) return;   // the button is Stop then
     const r = reloadBtn.getBoundingClientRect();
     api.reloadMenu({ left: r.left, bottom: r.bottom }).then((shown) => { if (shown) suppressHover(); }).catch(() => {});
   });

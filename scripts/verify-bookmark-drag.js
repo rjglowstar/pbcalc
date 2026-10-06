@@ -1,7 +1,6 @@
-// Drag-to-reorder on the bookmarks bar (Chrome behaviour), and Restricted Mode staying read/open only.
+// Drag-to-reorder on the bookmarks bar (Chrome behaviour), in normal AND Restricted Mode (where edit/delete/add stay blocked).
 // Run: env -u ELECTRON_RUN_AS_NODE ./node_modules/electron/dist/electron.exe scripts/verify-bookmark-drag.js
-// If the PC has a second display the window is moved there first, so the owner can keep working on the main one.
-const { app, screen, ipcMain } = require("electron");
+const { app, ipcMain } = require("electron");
 const http = require("http");
 const path = require("path"), fs = require("fs"), os = require("os");
 app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
@@ -20,16 +19,10 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     const state = require("../electron/state");
     const tm = require("../electron/tabs/tabManager");
     const bm = require("../electron/bookmarks/bookmarkStore");
+    bm.setMode("real");   // these tests are about the owner's real list; a fresh launch starts on the dummy one
     const win = state.mainWindow;
     const shell = win.webContents;
 
-    // second display, if any
-    const displays = screen.getAllDisplays();
-    const primary = screen.getPrimaryDisplay();
-    const other = displays.find((d) => d.id !== primary.id);
-    win.unmaximize(); await sleep(300);
-    if (other) win.setBounds({ x: other.workArea.x + 40, y: other.workArea.y + 40, width: 1400, height: 800 });
-    console.log("displays: " + displays.length + (other ? " - test window is on the second one" : " - only one display, test window stays on it"));
     win.setAlwaysOnTop(true); win.show(); win.focus(); await sleep(500);
 
     const srv = http.createServer((q, res) => { res.setHeader("content-type", "text/html"); res.end("<title>" + q.url + "</title>page " + q.url); });
@@ -144,18 +137,32 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     check("the shell can", order() === "BCDA");
     await reset();
 
-    console.log("\n-- Restricted Mode: read and open only");
+    console.log("\n-- Restricted Mode: the bookmarks can be DRAGGED to a new order (the owner's decision); nothing else is editable");
     tm.secretToggle(); await sleep(2800);
     check("Restricted Mode is on", state.restricted === true);
-    check("bookmarks on the bar are not draggable", await shell.executeJavaScript('[...document.querySelectorAll(".bookmark")].length === 4 && [...document.querySelectorAll(".bookmark")].every(e => e.draggable === false)'));
+    check("bookmarks on the bar ARE draggable", await shell.executeJavaScript('[...document.querySelectorAll(".bookmark")].length === 4 && [...document.querySelectorAll(".bookmark")].every(e => e.draggable === true)'));
+    await reset();
+    await fire("A", "C", 0.9); await sleep(900);
+    check("dragging A after C reorders the bar (BCAD)", order() === "BCAD" && (await bar()) === "BCAD");
+    check("...and it is saved", onDisk() === "BCAD");
+    await reset();
+    ipcMain.emit("bookmarks:move", { sender: shell }, id("A"), 3); await sleep(600);
+    check("the move request from the shell works there (BCDA)", order() === "BCDA");
     const b4 = order();
-    ipcMain.emit("bookmarks:move", { sender: shell }, id("A"), 3); await sleep(500);
-    check("main refuses the move even if asked", order() === b4);
-    await fire("A", "C", 0.9); await sleep(800);
-    check("dispatching drag events there changes nothing either", order() === b4 && onDisk() === b4);
-    check("the bar still lists all four (read)", (await bar()) === b4);
+    ipcMain.emit("bookmarks:move", { sender: state.tabs.find((x) => x.id === state.activeTabId).view.webContents }, id("B"), 0); await sleep(400);
+    check("a web page still cannot reorder over IPC", order() === b4);
+    // everything else stays read-only
+    const { Menu } = require("electron");
+    const realBuild = Menu.buildFromTemplate; let built = 0;
+    Menu.buildFromTemplate = (tpl) => { built++; return { popup() {} }; };
+    ipcMain.emit("bookmarks:context-menu", { sender: shell }, id("A")); await sleep(300);
+    check("the bookmark right-click menu (edit / delete) is still NOT offered", built === 0);
+    tm.openBookmarkEdit(id("A")); await sleep(400);
+    check("the edit box still cannot be opened", !require("../electron/popup").isOpen("bookmark-edit"));
+    Menu.buildFromTemplate = realBuild;
+    check("no bookmark was added, removed or renamed", bm.list().length === 4 && ["A", "B", "C", "D"].every((t) => bm.list().some((x) => x.title === t)));
     tm.leaveRestricted(); await sleep(800);
-    check("back in normal mode they are draggable again", await shell.executeJavaScript('[...document.querySelectorAll(".bookmark")].every(e => e.draggable === true)'));
+    check("back in normal mode they are draggable as well", await shell.executeJavaScript('[...document.querySelectorAll(".bookmark")].every(e => e.draggable === true)'));
     srv.close();
   } catch (e) { check("no crash: " + (e && e.stack), false); }
   const failed = results.filter((r) => !r.pass).length;

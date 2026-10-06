@@ -240,6 +240,7 @@ app.whenReady().then(async () => {
   const popup = require("../electron/popup");
   const dm = require("../electron/downloads/downloadManager");
   const bm = require("../electron/bookmarks/bookmarkStore");
+  bm.setMode("real");   // these tests are about the owner's real list; a fresh launch starts on the dummy one
   const win = state.mainWindow;
   win.show(); win.focus(); await sleep(400);
   session.fromPartition(constants.TAB_PARTITION).on("will-download", (_e, item) => item.setSavePath(path.join(tmp, "dl-" + Date.now() + "-" + item.getFilename())));

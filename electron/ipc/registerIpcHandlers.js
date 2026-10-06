@@ -185,9 +185,10 @@ function registerIpcHandlers() {
   });
 
   ipcMain.on("bookmarks:open", (e, id, newTab) => { if (fromShell(e)) tabManager.openBookmark(String(id), newTab); });
-  // Drag to reorder on the bar: the shell only, and never in Restricted Mode (read and open only there).
+  // Drag to reorder on the bar: the shell only. Also in Restricted Mode (the owner's decision): it changes the ORDER of the
+  // active list and nothing else - adding, editing and deleting stay refused there.
   ipcMain.on("bookmarks:move", (e, id, index) => {
-    if (!fromShell(e) || state.restricted) return;
+    if (!fromShell(e)) return;
     bookmarks.moveTo(String(id), Number(index));
     tabManager.broadcastBookmarks();
   });

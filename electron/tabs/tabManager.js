@@ -222,8 +222,18 @@ function load(wc, url) {
   wc.loadURL(url).catch(() => {});
 }
 
-function openInNewTab(url, background = false) {
-  createTab(url, { background });
+// Where a tab opened FROM another tab goes, like Chrome: right after its opener, behind the tabs that same opener opened
+// before (so three links from A give A, A1, A2, A3 - not the end of the strip). Ctrl+T / the + button still append.
+function indexAfterOpener(opener) {
+  const i = opener ? state.tabs.indexOf(opener) : -1;
+  if (i < 0) return undefined;
+  let j = i + 1;
+  while (j < state.tabs.length && state.tabs[j].openerId === opener.id) j++;
+  return j;
+}
+
+function openInNewTab(url, background = false, opener = null) {
+  createTab(url, { background, openerId: opener ? opener.id : null, index: indexAfterOpener(opener) });
 }
 
 function handleExternalUrl(url) {
@@ -248,6 +258,21 @@ function handleExternalUrl(url) {
     })
     .then((r) => { if (r.response === 0) shell.openExternal(url); })
     .catch(() => {});
+}
+
+// Chromium asks THIS before handing a link such as whatsapp://, steam:// or ms-settings: to Windows ("openExternal"). With no
+// handler Electron grants it: any page could launch any registered application, and a scheme nobody handles (the
+// api.whatsapp.com "open the app" redirect) made Windows show "You'll need a new app to open this whatsapp link - Look for an
+// app in the Microsoft Store" (found by probing: a page navigating to whatsapp:// raised exactly this request). Now the
+// request goes through PBCalc's own policy (handleExternalUrl: mailto/tel/sms after a confirm, nothing else, nothing in
+// Restricted Mode) and Chromium is never allowed to launch it itself. EVERY OTHER permission is granted exactly as before
+// (Electron's default), so nothing else changes.
+function permissionRequestHandler(_wc, permission, callback, details) {
+  if (permission === "openExternal") {
+    try { handleExternalUrl(details && details.externalURL); } catch (_) {}
+    return callback(false);
+  }
+  callback(true);
 }
 
 function showError(tab, info) {
@@ -329,7 +354,7 @@ function wireTabEvents(tab) {
   const wc = tab.view.webContents;
   // Lazy: shortcuts.js requires this module, so requiring it at the top would be circular.
   require("../shortcuts").attachShortcuts(wc);
-  require("../contextMenu").attachContextMenu(wc, { openInNewTab: (u) => openInNewTab(u, true) });
+  require("../contextMenu").attachContextMenu(wc, { openInNewTab: (u) => openInNewTab(u, true, tab) });
   // No developer tools in Restricted Mode, however they were opened.
   wc.on("devtools-opened", () => { if (state.restricted) wc.closeDevTools(); });
 
@@ -466,6 +491,7 @@ function wireTabEvents(tab) {
       webContents: childWindow.webContents,
       childWindow,
       openerId: tab.id,
+      index: indexAfterOpener(tab),   // next to the page that opened it (Chrome), not at the end of the strip
     });
   });
 
@@ -803,14 +829,15 @@ function reload(mode) {
   if (mode === "empty-cache") wc.session.clearCache().then(go, go); else go();
 }
 
-// Chrome's menu on the reload button: Normal Reload / Hard Reload / Empty Cache and Hard Reload. Measured in a real
-// Chrome (scripts/chrome-reference/README.md): it exists ONLY while DevTools is open for the page (with DevTools
-// closed, right-clicking Reload does nothing) and it hangs under the button, left edges aligned. Not while the
-// button is Stop (the page is loading), and never in Restricted Mode (no DevTools there). Returns whether it showed.
+// The menu on the reload button: Normal Reload / Hard Reload / Empty Cache and Hard Reload; it hangs under the button, left
+// edges aligned. DELIBERATE DIFFERENCE FROM CHROME (the owner's decision): measured in a real Chrome
+// (scripts/chrome-reference/README.md) it exists only while DevTools is open, but here a right-click on Reload ALWAYS
+// shows it - in normal and in Restricted Mode (which has no DevTools, and they stay blocked). Only not while the button is
+// Stop (the page is loading). Returns whether it showed.
 function reloadMenu(rect) {
-  if (state.restricted || !state.mainWindow || state.mainWindow.isDestroyed()) return false;
+  if (!state.mainWindow || state.mainWindow.isDestroyed()) return false;
   const wc = activeWebContents();
-  if (!wc || !wc.isDevToolsOpened() || wc.isLoading()) return false;
+  if (!wc || wc.isLoading()) return false;
   const at = rect && Number.isFinite(rect.left) && Number.isFinite(rect.bottom) ? { x: Math.round(rect.left), y: Math.round(rect.bottom) } : {};
   Menu.buildFromTemplate([
     { label: "Normal Reload", accelerator: "CmdOrCtrl+R", registerAccelerator: false, click: () => reload() },
@@ -997,7 +1024,34 @@ function isManagerSender(wc) {
   }
 }
 
+// The hidden switch between the two bookmark lists (see bookmarkStore): popup.js calls it after three quick clicks on
+// the zoom value in the menu - in Restricted Mode too (the owner's decision), and only while the bookmarks bar is shown
+// - and it leaves no sign except the bookmarks themselves changing. Returns whether the list changed.
+function toggleBookmarkMode() {
+  // Only while the bookmarks bar is SHOWN (the owner's condition): with the bar hidden the clicks only reset the zoom.
+  if (!state.bookmarksBarVisible) return false;
+  if (!bookmarks.setMode(bookmarks.getMode() === "real" ? "dummy" : "real")) return false;
+  // whatever still shows the other list: an open edit box, a bookmark manager tab, and in Restricted Mode the "Your sites"
+  // page (its tiles are the active list). Open tabs are NOT touched: the switch changes the bookmarks, nothing else, in
+  // normal and Restricted Mode alike.
+  try { if (popup().isOpen("bookmark-edit")) popup().close(); } catch (_) {}
+  for (const t of state.tabs) {
+    try { if ((isManagerUrl(t.url) || t.isHome) && !t.view.webContents.isDestroyed()) t.view.webContents.reload(); } catch (_) {}
+  }
+  broadcastBookmarks();
+  notifyTabs();
+  return true;
+}
+
 function broadcastBookmarks() {
+  // A bookmark just added or edited to a site that is open RIGHT NOW gets that site's icon at once (no reload needed).
+  // Not in Restricted Mode: the list is read-only there.
+  if (!state.restricted) {
+    for (const t of state.tabs) {
+      if (!t.favicon || !t.url) continue;
+      try { bookmarks.learnIcon(t.url, t.favicon); } catch (_) {}
+    }
+  }
   sendToShell("bookmarks:changed", bookmarks.list());
 }
 
@@ -1118,7 +1172,7 @@ function stop() {
 
 // ── Tab management (drag-reorder, context menu) ─────────────────────────
 function moveTab(id, index) {
-  if (state.restricted) return;
+  // Allowed in Restricted Mode too (the owner's decision): moving a tab changes nothing but the order of the strip.
   const from = state.tabs.findIndex((t) => t.id === Number(id));
   if (from === -1) return;
   const [t] = state.tabs.splice(from, 1);
@@ -1279,6 +1333,8 @@ module.exports = {
   bookmarkContextMenu,
   openBookmarkEdit,
   reloadMenu,
+  toggleBookmarkMode,
+  permissionRequestHandler,
   chromeHeight,
   siteKind,
   reopenClosedTab,

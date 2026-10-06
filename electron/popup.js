@@ -107,6 +107,7 @@ function close() {
   autoTimer = null;
   hovered = false;
   partial = false;
+  zoomClicks = [];
   editId = null;
   editBubble = null;
   if (!view) return;
@@ -137,7 +138,7 @@ const RESTRICTED_KINDS = new Set(["menu", "downloads", "find", "unlock"]);
 // does not even draw those entries.
 const RESTRICTED_ACTIONS = new Set([
   "close", "hover", "dl-open", "dl-show", "dl-cancel", "dl-pause", "dl-retry", "dl-dismiss", "find-text", "find-close",
-  "print", "zoom", "new-tab", "fullscreen", "settings", "downloads", "downloads-page", "find", "exit",
+  "print", "zoom", "zoom-reset", "new-tab", "fullscreen", "settings", "downloads", "downloads-page", "find", "exit",
   "toggle-bookmarks-bar", // a view preference only: it edits no bookmark and shows no address
 ]);
 
@@ -238,6 +239,20 @@ function removeBookmark() {
   return { ok: true };
 }
 
+// The hidden bookmark-list switch: three clicks on the "100%" in the menu within 2 seconds, in ONE menu session (closing
+// the menu forgets the count). Counted here, in the main process; works in Restricted Mode as well. When the third click
+// switches the list (either way) the menu closes at once.
+const SWITCH_CLICKS = 3, SWITCH_WINDOW_MS = 2000;
+let zoomClicks = [];
+function countZoomClick() {
+  const now = Date.now();
+  zoomClicks = zoomClicks.filter((t) => now - t < SWITCH_WINDOW_MS);
+  zoomClicks.push(now);
+  if (zoomClicks.length < SWITCH_CLICKS) return;
+  zoomClicks = [];
+  if (tabManager().toggleBookmarkMode()) close();
+}
+
 function handleAction(name, arg) {
   if (state.restricted && !RESTRICTED_ACTIONS.has(name)) return;
   const tm = tabManager();
@@ -257,6 +272,7 @@ function handleAction(name, arg) {
     case "toggle-bookmarks-bar": tm.toggleBookmarksBar(); return refresh();
     case "bookmark-active": close(); return tm.toggleBookmarkActive();
     case "zoom": tm.zoom(arg); return refresh();
+    case "zoom-reset": tm.zoom(0); countZoomClick(); return refresh();   // the "100%" button: Reset zoom (+ the hidden switch)
     case "fullscreen":
       close();
       state.mainWindow.setFullScreen(!state.mainWindow.isFullScreen());

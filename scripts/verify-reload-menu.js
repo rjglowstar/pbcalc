@@ -3,7 +3,7 @@
 // The reloads are measured from what the browser really sends to a local server: a normal reload revalidates the page
 // (If-None-Match), a hard reload bypasses the cache (Cache-Control: no-cache, no validator) and fetches the cacheable
 // script again, "empty cache" also empties the cache first. The native menu is captured (Menu.buildFromTemplate stubbed).
-const { app, Menu, ipcMain, screen } = require("electron");
+const { app, Menu, ipcMain } = require("electron");
 const http = require("http");
 const path = require("path"), fs = require("fs"), os = require("os");
 app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
@@ -23,9 +23,6 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     const state = require("../electron/state");
     const tm = require("../electron/tabs/tabManager");
     const win = state.mainWindow, shell = win.webContents;
-    // second display if there is one (the owner uses the main one); DevTools opens its own window
-    const other = screen.getAllDisplays().find((d) => d.id !== screen.getPrimaryDisplay().id);
-    if (other) { win.unmaximize(); await sleep(300); win.setBounds({ x: other.workArea.x + 40, y: other.workArea.y + 40, width: 1400, height: 800 }); }
     win.setAlwaysOnTop(true); win.show(); win.focus(); await sleep(500);
 
     // ── a server that records every request ─────────────────────────────────────────────────────
@@ -62,10 +59,11 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     const rect = { left: 90, bottom: 80 };
     const ask = (sender, r) => new Promise((ok) => { const e = { sender, reply() {} }; const h = ipcMain._invokeHandlers && ipcMain._invokeHandlers.get("tabs:reload-menu"); Promise.resolve(h ? h(e, r) : false).then(ok, () => ok("threw")); });
 
-    console.log("\n-- the menu exists only while DevTools is open (measured in real Chrome)");
+    console.log("\n-- the menu: always available (Chrome shows it only with DevTools open; the owner wants it without)");
     menus = [];
     const shownClosed = await ask(shell, rect);
-    check("DevTools closed: right-click on Reload shows nothing", shownClosed === false && menus.length === 0);
+    check("DevTools CLOSED: a right-click on Reload shows the menu (no Inspect needed)", shownClosed === true && menus.length === 1);
+    check("...with the three items", menus[0] && menus[0].tpl.map((x) => x.label).join("|") === "Normal Reload|Hard Reload|Empty Cache and Hard Reload");
 
     tm.openDevTools(); for (let i = 0; i < 40 && !wcOf().isDevToolsOpened(); i++) await sleep(250);
     check("setup: DevTools is open for the page", wcOf().isDevToolsOpened());
@@ -74,7 +72,7 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     const shownOpen = await ask(shell, rect);
     const menu = menus[0];
     const labels = menu ? menu.tpl.map((x) => x.label) : [];
-    check("DevTools open: the menu shows", shownOpen === true && !!menu);
+    check("DevTools open: the menu shows as well", shownOpen === true && !!menu);
     check("it has exactly Normal Reload, Hard Reload, Empty Cache and Hard Reload, in that order", labels.join("|") === "Normal Reload|Hard Reload|Empty Cache and Hard Reload");
     check("shortcut hints Ctrl+R and Ctrl+Shift+R (Chrome's wording), none for the third", menu && menu.tpl[0].accelerator === "CmdOrCtrl+R" && menu.tpl[1].accelerator === "CmdOrCtrl+Shift+R" && !menu.tpl[2].accelerator);
     check("the hints are only hints (they register no app-wide accelerator)", menu && menu.tpl.slice(0, 2).every((x) => x.registerAccelerator === false));
@@ -120,7 +118,7 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     menus = [];
     await shell.executeJavaScript('document.getElementById("reload").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 90, clientY: 60 })); 0');
     await sleep(500);
-    check("a right-click on the real Reload button opens the menu (DevTools open)", menus.length === 1 && menus[0].tpl.length === 3);
+    check("a right-click on the real Reload button opens the menu", menus.length === 1 && menus[0].tpl.length === 3);
     check("...anchored at the button's real rectangle", menus[0] && menus[0].opts && Math.abs(menus[0].opts.x - Math.round(await shell.executeJavaScript('document.getElementById("reload").getBoundingClientRect().left'))) <= 1);
     // a plain click still reloads
     log = [];
@@ -136,14 +134,25 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     check("loading: no menu from the button either", menus.length === 0);
     await sleep(3000); slow = false;
 
-    console.log("\n-- Restricted Mode: nothing changes there");
+    console.log("\n-- Restricted Mode: no DevTools, and the reload menu is there too");
     wcOf().closeDevTools(); await sleep(500);
-    require("../electron/bookmarks/bookmarkStore").toggle({ url: base + "/page", title: "Probe", favicon: "" });
+    const store = require("../electron/bookmarks/bookmarkStore"); store.setMode("real"); store.toggle({ url: base + "/page", title: "Probe", favicon: "" });
     tm.secretToggle(); await sleep(2800);
     check("Restricted Mode is on", state.restricted === true);
+    tm.openDevTools(); await sleep(700);
+    check("DevTools still cannot be opened in Restricted Mode", !wcOf().isDevToolsOpened());
     menus = [];
-    check("no reload menu in Restricted Mode", (await ask(shell, rect)) === false && menus.length === 0);
-    check("...and the Reload button's right-click does nothing there", await (async () => { menus = []; await shell.executeJavaScript('document.getElementById("reload").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); 0'); await sleep(400); return menus.length === 0; })());
+    const shownR = await ask(shell, rect);
+    check("the reload menu shows although DevTools is closed (and cannot be opened)", shownR === true && menus.length === 1);
+    check("...with the same three items", menus[0] && menus[0].tpl.map((x) => x.label).join("|") === "Normal Reload|Hard Reload|Empty Cache and Hard Reload");
+    menus = [];
+    await shell.executeJavaScript('document.getElementById("reload").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); 0'); await sleep(500);
+    check("...and the Reload button's right-click opens it there", menus.length === 1);
+    const rm = menus[0];
+    for (const i of [0, 1, 2]) { if (rm) rm.tpl[i].click(); await sleep(1200); }
+    check("all three items work in Restricted Mode (no error, still Restricted)", errors.length === 0 && state.restricted === true);
+    menus = [];
+    check("only the shell can ask in Restricted Mode too", (await ask(wcOf(), rect)) === false && menus.length === 0);
     tm.leaveRestricted(); await sleep(800);
     Menu.buildFromTemplate = realBuild;
     check("no uncaught error in the main process", errors.length === 0);

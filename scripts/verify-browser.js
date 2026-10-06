@@ -29,6 +29,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 app.whenReady().then(async () => {
   const state = require("../electron/state");
   const tabManager = require("../electron/tabs/tabManager");
+  require("../electron/bookmarks/bookmarkStore").setMode("real");   // starts empty here; a fresh launch is on the seeded dummy list
   const { registerIpcHandlers } = require("../electron/ipc/registerIpcHandlers");
 
   state.mainWindow = new BrowserWindow({ width: 1280, height: 800, show: false, webPreferences: { contextIsolation: true } });

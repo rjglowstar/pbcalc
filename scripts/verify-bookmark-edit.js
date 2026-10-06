@@ -22,6 +22,7 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     const tm = require("../electron/tabs/tabManager");
     const popup = require("../electron/popup");
     const bm = require("../electron/bookmarks/bookmarkStore");
+    bm.setMode("real");   // these tests are about the owner's real list; a fresh launch starts on the dummy one
     const win = state.mainWindow; win.setAlwaysOnTop(true); win.show(); win.focus(); await sleep(300);   // stay in front: a popup closes on blur, and the PC may be in use
     const shell = win.webContents;
     const file = path.join(tmp, "UserData", "bookmarks.json");
@@ -170,6 +171,17 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     tm.createTab(inlineUrl); await sleep(2000);
     check("opening that page gives the bookmark its icon", bm.list().find((b) => b.url === inlineUrl).favicon.startsWith("data:image/png"));
     check("an address that is NOT bookmarked is never recorded", bm.list().every((b) => b.url !== pageUrl));
+    // the SAME SITE, another page: a bookmark added/edited to a page of the site that is open gets the site's icon at once
+    // (it used to stay a globe for ever: only an identical address matched)
+    const otherPage = inlineUrl.replace("/inline", "/some-other-page"), elsewhere = inlineUrl.replace("/inline", "/elsewhere");
+    bm.add({ title: "Same site", url: otherPage }); tm.broadcastBookmarks(); await sleep(300);
+    check("a bookmark for ANOTHER page of the open site gets the site's icon at once", bm.list().find((b) => b.url === otherPage).favicon !== "");   // (this test server's pages have different icons, so only "has one")
+    bm.add({ title: "Far away", url: "https://example.invalid/" }); tm.broadcastBookmarks(); await sleep(300);
+    const far = bm.list().find((b) => b.url === "https://example.invalid/");
+    check("a bookmark of a DIFFERENT site is not given it", far.favicon === "");
+    bm.update(far.id, { url: elsewhere }); tm.broadcastBookmarks(); await sleep(300);
+    check("editing that bookmark to a page of the open site gives it the icon right away (no reload)", bm.list().find((b) => b.id === far.id).favicon !== "");
+    for (const u of [otherPage, elsewhere]) { const x = bm.list().find((b) => b.url === u); if (x) bm.remove(x.id); }
     bm.remove(bm.list().find((b) => b.url === inlineUrl).id); tm.broadcastBookmarks();
     srv.close();
 

@@ -20,6 +20,7 @@ app.whenReady().then(async () => {
   const tabManager = require("../electron/tabs/tabManager");
   const vault = require("../electron/vault/passwordVault");
   const bookmarks = require("../electron/bookmarks/bookmarkStore");
+  bookmarks.setMode("real");   // these tests are about the owner's real list; a fresh launch starts on the dummy one
   const downloads = require("../electron/downloads/downloadManager");
   const privacy = require("../electron/privacy");
   const { registerIpcHandlers } = require("../electron/ipc/registerIpcHandlers");

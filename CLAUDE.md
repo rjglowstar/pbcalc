@@ -161,12 +161,47 @@ Two things define this browser against every mainstream one:
 - **Wipe on exit** (`electron/privacy.js`): the user chose the strict policy — cookies, cache,
   localStorage, IndexedDB etc. never survive a restart, so logins do not persist either. On quit
   the session is cleared, then a detached helper process deletes everything in `userData` except
-  `password-vault.json`, `bookmarks.json`, `settings.json` and `Local State` once our PID is gone
-  (the `KEEP` set in privacy.js — four files, not three); the same sweep
+  `password-vault.json`, `bookmarks.json`, `bookmarks-dummy.json`, `settings.json` and `Local State` once our PID is
+  gone (the `KEEP` set in privacy.js — five files); the same sweep
   runs at startup for crash leftovers. **`Local State` must stay in the keep list** — it holds the
   `safeStorage` key; deleting it makes the vault undecryptable.
 - **Bookmarks** (`electron/bookmarks/`): user-curated, persisted in `bookmarks.json`; bar + star
   button in the shell. Stores only what was explicitly bookmarked (no visit data).
+  **TWO bookmark lists (the owner's privacy requirement) - read this before touching bookmarks.** Whoever opens the
+  browser must see ordinary bookmarks, not the owner's real ones (`scripts/verify-bookmark-modes.js`, 46 checks):
+  - `bookmarkStore` holds a **dummy** list (`bookmarks-dummy.json`, seeded ONCE with the five diamond-trade sites the
+    owner chose - GIA, GJEPC, Surat Diamond Bourse, BDB India, Surat Diamond Trade (`DUMMY_DEFAULTS`) - when the file is
+    missing; a list the user emptied stays empty) and the **real** list
+    (`bookmarks.json`, the owner's existing bookmarks). One is ACTIVE; every store function works on the active
+    list, so the bar, star, bubble, manager, omnibox, right-click menu, drag and Restricted Mode all follow it with no
+    logic of their own. **Never read a bookmarks file directly** - go through the store.
+  - **The mode is in MEMORY ONLY and starts as dummy on every launch** (= "reset when the browser closes"); nothing
+    on disk says the real list was ever shown. Persisting it would defeat the purpose.
+  - **The hidden switch:** three clicks within 2 seconds on the "100%" in the ⋮ menu's zoom row, in ONE menu session
+    (closing the menu forgets the count). The button still resets the zoom. Counted in the MAIN process
+    (`countZoomClick` in popup.js, action `zoom-reset`), so the page cannot fake it; three more clicks switch back.
+    The menu CLOSES at the moment the list switches (either way); where nothing switches (Restricted Mode) it stays open. `toggleBookmarkMode` also closes an open edit
+    box and reloads an open bookmark-manager tab so nothing keeps showing the other list.
+  - **Restricted Mode FOLLOWS the active list AND the switch works inside it** (the owner's choices): three clicks in
+    Restricted Mode swap dummy <-> real exactly as in normal mode: **open tabs are never closed or touched** (an earlier
+    version dropped them in Restricted Mode - a bug); only pages that DISPLAY the list are reloaded (a "Your sites" tab,
+    an open bookmark-manager tab) plus the bar. **The switch only works while the bookmarks bar is SHOWN** (the owner's
+    condition, both modes): with the bar hidden three clicks just reset the zoom. **Consequences to remember:** (1) a Restricted user who knows the gesture sees the REAL list (the
+    gesture is as private as the hidden admin shortcut); (2) the mode resets each launch, so "Default Start Restricted"
+    starts Restricted on the DUMMY sites unless the real list is unlocked first.
+  - Tests that exercise bookmarks call `store.setMode("real")` first (a fresh launch is on the dummy list); the
+    Restricted restart case "no bookmarks" empties the dummy file too.
+  - **Dummy sites ship WITH their icons** (`ICONS` in bookmarkStore: each site's own icon rendered to a 32px PNG and
+    EMBEDDED as a `data:` image, 1-4 KB each; no download, so they show offline and merely showing the bar contacts
+    nobody). A globe on a decoy bookmark gives the decoy away, so **any site added to `DUMMY_DEFAULTS` must get its icon
+    in `ICONS`** and be checked on the bar (a screenshot of the bar, not a full test run). To make an icon: take the page's
+    declared `<link rel=icon>` (not `/favicon.ico` blindly - some return a web page), render it on a canvas at 32px.
+  - **The dummy file is VERSIONED: `{version, items}`** (the real list stays a plain array). A plain array is version 1 -
+    the first dummy list, six Google sites - and is upgraded ONCE when loaded: if it still holds any of those six they are
+    replaced by the current defaults (placed first) and everything the user added stays; an emptied or fully custom list is
+    left exactly as it is, and nothing is ever re-added after the user removed it. `settings.json` could not carry the
+    "done" flag: it drops keys it does not know. Sites the user adds keep a globe until opened once, then `learnIcon`
+    fills them. Tests: `verify-bookmark-modes.js` (66 checks, including three upgrade cases run as child processes).
   **Editing them is Chrome's, normal mode only** (`scripts/verify-bookmark-edit.js`, 44 checks):
   - **The bookmark box is a form: never rebuild it from pushed data.** Main re-sends every popup its data on
     EVERY tab / title / favicon / download change (`notifyTabs` -> `popup.refresh`). The edit dialog and the star
@@ -207,13 +242,24 @@ Two things define this browser against every mainstream one:
     in `shell.js`): the dragged one dims, a 2px accent line shows the landing spot (before/after the hovered
     bookmark), dropping on the empty part of the bar puts it last, dropping on itself does nothing. Main side:
     `bookmarks:move` -> `bookmarkStore.moveTo(id, index)` (index into the list WITHOUT the dragged one, clamped),
-    shell sender only, **refused in Restricted Mode** (there the bar items are also `draggable=false`).
-    Favicon `<img>`s are `draggable=false` so the whole bookmark drags. `scripts/verify-bookmark-drag.js` (22
-    checks, run on the second display when there is one). **Not verified with a real OS pointer:** synthetic
+    shell sender only. **Works in Restricted Mode too (the owner's decision; it was blocked in TWO places - the bar items
+    were `draggable=false` and `bookmarks:move` refused - and both had to go).** It changes only the ORDER of the active
+    list; the right-click menu, the edit box, add and delete stay refused there.
+    Favicon `<img>`s are `draggable=false` so the whole bookmark drags. `scripts/verify-bookmark-drag.js` (26
+    checks). **Not verified with a real OS pointer:** synthetic
     `sendInputEvent` cannot start Chromium's drag loop, so the test fires the drag events the elements receive
     (dragstart/dragover/drop/dragend); an attempt to inject real OS mouse input failed because PBCalc could not
     be raised above the owner's own windows on that display (`WindowFromPoint` returned VS Code). Say so
     rather than claim a real-mouse drag was proven; the owner confirms it by hand.
+  - **A site has one icon: a bookmark of ANOTHER page of an open site gets it too, and right away.** `learnIcon` used to
+    match only an IDENTICAL address, so editing a bookmark to `https://site/` while `https://site/login` was open (the
+    owner's case: "/" often redirects to "/login") left a globe for ever, even after a reload. It now matches the exact
+    address OR the same origin (still only fills an EMPTY icon), and `broadcastBookmarks()` - called after every edit, add
+    or list switch - first offers every open tab's icon to the list, so no reload is needed. Not in Restricted Mode (the
+    list is read-only there). Caveat: when two open pages of one origin have different icons, the first tab wins. Real
+    Chrome's behaviour for this case could NOT be captured (its window stays behind the owner's own windows on the main
+    screen, and test windows must not use the second screen), so this is built from the owner's expectation, not
+    measured. Test: `verify-bookmark-edit.js` ("ANOTHER page of the open site", 47 checks).
   - A popup **closes when the window loses focus** (`mainWindow.js` "blur", on purpose, like Chrome), so a
     test that opens one fails if the PC's owner clicks elsewhere meanwhile; `verify-bookmark-edit.js`
     refocuses and retries its opens.
@@ -334,6 +380,20 @@ Two things define this browser against every mainstream one:
   - Load failures, cert errors and renderer crashes render an in-memory `data:` error page; its buttons are `pbcalc://retry|proceed`, honoured in `will-navigate` only while that tab is showing an error page. "Proceed anyway" is per host, memory only.
   - Address-bar text → URL or search follows Chrome (`electron/urlInput.js`, mirrored by hand in `renderer/newtab/newtab.js`): `localhost:4200`, IPs and `host:port` / single-word `pb/` load over http, `name.tld` over https, everything else is a Google search. All `loadURL` calls in tabManager go through `load()` (swallows the rejection; the error page is shown by `did-fail-load`).
   - `mailto:`/`tel:`/`sms:` go to the OS after a confirm dialog; any other external scheme is dropped.
+    **That rule was only enforced in `will-navigate` / `did-fail-load`, and Chromium has a THIRD path: it asks the
+    `openExternal` PERMISSION before handing a link to Windows, and with no handler registered Electron GRANTS it.**
+    So any page could launch any registered app, and a scheme nobody handles made Windows show "You'll need a new app to
+    open this whatsapp link - Look for an app in the Microsoft Store" (the `api.whatsapp.com` page redirects to
+    `whatsapp://` by itself; real Chrome shows nothing when no app is registered). Found by probing: a page navigating to
+    `whatsapp://` - by itself, from a button, or in an iframe - raised exactly that request. Now
+    `permissionRequestHandler` (tabManager, registered in main.js on the tab AND default session) sends `openExternal`
+    through `handleExternalUrl` (confirm for mailto/tel/sms, nothing in Restricted Mode) and ALWAYS answers no, so Chromium
+    never launches anything itself; **every other permission is still granted exactly as before** (Electron's default).
+    Test: `scripts/verify-link-handling.js` (it wraps the handler the PRODUCT registered, not a copy).
+  - **A tab opened from a page goes RIGHT AFTER its opener**, behind the tabs that same opener opened earlier (A, A1, A2,
+    then the rest) - Chrome's rule - for `target=_blank`, `window.open`, Ctrl/middle-click (background) and "Open link in new
+    tab" (`indexAfterOpener`, uses `tab.openerId`). It used to be appended at the END of the strip. Ctrl+T / the + button
+    still append. Same test file.
   - Never pass `findNext:false` to `findInPage` (first search returns nothing). Zoom is per tab.
 - **Restricted Mode** (`electron/restricted.js`, `renderer/restricted/`, Settings → Restricted Mode):
   an admin-locked mode. The preset sites are simply the bookmarks. Users can open/close those and
@@ -356,6 +416,9 @@ Two things define this browser against every mainstream one:
     treated as the switch being on. "Turn on Restricted Mode now" (Settings) needs ≥1 bookmark and
     drops all tabs.
   - The + button and Ctrl+T stay, but only open another "Your sites" tiles tab, never an address.
+  - **Tabs can be dragged to a new position in Restricted Mode, exactly as in normal mode** (the owner's decision; it
+    was blocked in TWO places - the strip set `draggable=false` and `moveTab` returned early - and both had to go).
+    Reordering reveals no address and changes no bookmark. Test: `scripts/verify-tab-move.js` (both modes).
   - Ordinary settings stay: the ⋮ menu (New tab, Downloads, Zoom, Print, Find, Settings, Exit) and
     the Settings page (Mode Device/Light/Dark) work in Restricted Mode. Hidden there: bookmark
     entries, bookmark manager, developer tools and the whole Restricted Mode card
@@ -520,11 +583,11 @@ Two things define this browser against every mainstream one:
   that did not left files there).
 - **Reload, like Chrome** (`reload(mode)` and `reloadMenu` in tabManager). Three reloads: normal (Ctrl+R, F5),
   hard (Ctrl+Shift+R, Ctrl+F5, Shift+F5: cache bypassed, `reloadIgnoringCache`) and "Empty Cache and Hard Reload"
-  (`session.clearCache()` first). **Right-click on the toolbar Reload button** opens Chrome's menu (Normal Reload
-  Ctrl+R / Hard Reload Ctrl+Shift+R / Empty Cache and Hard Reload) - **only while DevTools is open** for the page
-  (measured in a real Chrome: with DevTools closed the right-click does nothing; numbers in
-  `scripts/chrome-reference/README.md`), not while the button is Stop (loading), never in Restricted Mode (no
-  DevTools there), and `tabs:reload-menu` is accepted from the shell only. It is a native menu (like the tab and
+  (`session.clearCache()` first). **Right-click on the toolbar Reload button** opens the menu (Normal Reload
+  Ctrl+R / Hard Reload Ctrl+Shift+R / Empty Cache and Hard Reload), **ALWAYS - in normal and Restricted Mode, no DevTools
+  needed (the owner's decision). This is a DELIBERATE DIFFERENCE FROM CHROME**: measured in a real Chrome (numbers in
+  `scripts/chrome-reference/README.md`) the menu exists only while DevTools is open. Not while the button is Stop
+  (loading), and `tabs:reload-menu` is accepted from the shell only. DevTools stay blocked in Restricted Mode. It is a native menu (like the tab and
   bookmark menus), not Chrome's own rounded one, and the accelerator text is a hint only (`registerAccelerator:false`).
   Before this, Ctrl+Shift+R and Ctrl+F5 were claimed but did a PLAIN reload (the shift/ctrl was ignored). Not built:
   Chrome's press-and-hold on the button also opens the menu. Test: `scripts/verify-reload-menu.js` (32 checks that

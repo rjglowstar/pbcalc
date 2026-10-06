@@ -120,7 +120,7 @@
     minus.addEventListener("click", () => act("zoom", -1));
     const val = el("span", "zval", data.zoom + "%");
     val.title = "Reset zoom";
-    val.addEventListener("click", () => act("zoom", 0));
+    val.addEventListener("click", () => act("zoom-reset"));
     const plus = el("button", "zbtn", "+");
     plus.addEventListener("click", () => act("zoom", 1));
     const full = el("button", "zbtn");

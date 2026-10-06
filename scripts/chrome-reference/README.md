@@ -181,7 +181,8 @@ the window captured with `CopyFromScreen`:
 | DevTools open (`--auto-open-devtools-for-tabs`) | a rounded menu hangs under the button, left edge aligned with it: **Normal Reload** `Ctrl+R`, **Hard Reload** `Ctrl+Shift+R`, **Empty Cache and Hard Reload** (no shortcut) |
 | DevTools closed | nothing at all |
 
-So the menu exists only while DevTools is open. PBCalc: `reloadMenu` in tabManager (also not while the button is Stop, never
+So in CHROME the menu exists only while DevTools is open. (PBCalc deliberately shows it ALWAYS - the owner's decision, no
+DevTools needed, also in Restricted Mode.) PBCalc: `reloadMenu` in tabManager (also not while the button is Stop, never
 in Restricted Mode); hard reload = `reloadIgnoringCache`, empty cache = `session.clearCache()` then hard reload; the
 shortcuts Ctrl+Shift+R / Ctrl+F5 / Shift+F5 are the hard reload as in Chrome (they used to do a plain reload).
 Not done: Chrome also opens the menu on a press-and-hold of the button (long press); only the right-click is built.

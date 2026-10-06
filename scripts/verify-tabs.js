@@ -830,6 +830,7 @@ app.whenReady().then(async () => {
 
   // ── Restricted Mode gets Duplicate too ("both mode"), still confined to the bookmark's site ──
   const bm = require("../electron/bookmarks/bookmarkStore");
+  bm.setMode("real");   // these tests are about the owner's real list; a fresh launch starts on the dummy one
   bm.toggle({ url: base + "/app", title: "App", favicon: "" });
   tm.enableRestricted(); // this drops the open tabs itself; closing the last one would quit the app
   await sleep(1200);

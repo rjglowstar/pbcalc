@@ -90,6 +90,7 @@ app.whenReady().then(() => {
     const sessions = [session.defaultSession, session.fromPartition(TAB_PARTITION)];
     for (const ses of sessions) {
       ses.setUserAgent(cleanUA);
+      ses.setPermissionRequestHandler(require("./tabs/tabManager").permissionRequestHandler);   // see there: no silent app launches
       ses.webRequest.onBeforeSendHeaders((details, callback) => {
         if (details.resourceType === "mainFrame") {
           details.requestHeaders["Upgrade-Insecure-Requests"] = "1";
