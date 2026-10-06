@@ -130,13 +130,32 @@ function notify() {
 }
 
 function init() {
-  session.defaultSession.on("will-download", (_event, item) => {
+  const { TAB_PARTITION } = require("../constants");
+  // Tabs run in the TAB_PARTITION session (see constants.js), so a download started from a page
+  // fires "will-download" THERE, not on defaultSession. Listen on both so every download is caught.
+  const onWillDownload = (_event, item, initiator) => {
     const ask = !!(settings.get("downloads") || {}).ask;
     // Chrome's default: straight into the Downloads folder, no dialog. With the switch on, Electron
     // shows its native Save As dialog instead (setSavePath left unset).
     if (!ask) {
       try { item.setSavePath(uniquePath(downloadDir(), item.getFilename())); } catch (_) {}
     }
+    // Like Chrome: a tab opened only to start this download (window.open / target=_blank) closes
+    // itself and the download carries on. Deferred a tick so the tab is not torn down from inside the
+    // very event that is creating its download; the tab manager decides whether it qualifies. With
+    // "ask where to save" the Save As dialog hangs off that tab's window, so wait until it has been
+    // answered (first progress event) or dismissed (done) instead of pulling the window from under it.
+    const closeInitiator = () => setImmediate(() => { try { require("../tabs/tabManager").closeTabOpenedForDownload(initiator); } catch (_) {} });
+    // The moment the download has REALLY started (at once; after the Save As answer in "ask" mode):
+    // Chrome's "download started" flight to the toolbar button, and the auto-close above. The flight is
+    // asked first, while the initiating tab still exists, because it only plays for a tab you are
+    // looking at (or one opened just for the download).
+    const started = () => {
+      try { require("../dlanimation").playFor(initiator); } catch (_) {}
+      closeInitiator();
+    };
+    if (!ask) started();
+    else { let fired = false; const once = () => { if (!fired) { fired = true; started(); } }; item.once("updated", once); item.once("done", once); }
     const d = {
       id: nextId++,
       filename: item.getFilename(),
@@ -215,7 +234,10 @@ function init() {
       if (st === "completed") showBubble();
       else if (!anyRunning()) require("../popup").autoCloseDownloads(BUBBLE_MS);
     });
-  });
+  };
+  for (const ses of [session.defaultSession, session.fromPartition(TAB_PARTITION)]) {
+    ses.on("will-download", onWillDownload);
+  }
 }
 
 const find = (id) => items.find((d) => d.id === Number(id));

@@ -25,9 +25,10 @@ html, body { background: transparent; overflow: hidden; }
   border-radius: 0 20px 20px 0;
   font-size: 14px;
   color: var(--text);
-  cursor: default;
+  cursor: pointer;
 }
-.row.selected { background: var(--popup-hover); }
+.row:hover, .row.selected { background: var(--popup-hover); }
+/* (the blue bar below marks only the KEYBOARD-selected row; a hovered row gets the fill alone, as in Chrome) */
 /* Chrome's blue bar on the highlighted row */
 .row.selected::before {
   content: "";

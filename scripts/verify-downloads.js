@@ -78,7 +78,7 @@ app.whenReady().then(async () => {
   await sleep(500);
   check("remove drops one row", (await pj('document.querySelectorAll(".item").length')) === 2);
 
-  // Ctrl+J reuses the tab
+  // Ctrl+Shift+J reuses the tab
   const before = state.tabs.length;
   tm.openDownloadsPage();
   await sleep(300);

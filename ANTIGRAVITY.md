@@ -22,12 +22,14 @@ PBCalc is a high-security, custom Electron multi-tab web browser designed for pr
 #### Core Injection Implementation:
 ```javascript
 // 1. Prototype Hook: Neutralizes disable-devtool's internal execution loop
-Object.defineProperty(Object.prototype, 'isSuspend', {
-  get: function() { return true; },
-  set: function() {},
-  configurable: true,
-  enumerable: false // CRITICAL: Non-enumerable so Object.keys() / for...in loops aren't broken
-});
+try {
+  Object.defineProperty(Object.prototype, 'isSuspend', {
+    get: function() { return true; },
+    set: function() {},
+    configurable: true,
+    enumerable: false
+  });
+} catch(e) {}
 
 // 2. Dummy Window Objects: Handles inline DisableDevtool() initializations
 function dummyDisableDevtool() {
@@ -37,43 +39,39 @@ dummyDisableDevtool.isSuspend = true;
 dummyDisableDevtool.md5 = '';
 dummyDisableDevtool.version = '';
 
-Object.defineProperty(window, 'DisableDevtool', {
-  get: function() { return dummyDisableDevtool; },
-  set: function() {},
-  configurable: true,
-  enumerable: false
-});
-Object.defineProperty(window, 'DISABLE_DEVTOOL', {
-  get: function() { return dummyDisableDevtool; },
-  set: function() {},
-  configurable: true,
-  enumerable: false
-});
-
-// 3. Location Replace & DOM Overwrite Traps
-const _origReplace = window.location.replace;
-window.location.replace = function(url) {
-  if (typeof url === 'string' && (url.includes('about:blank') || url === 'about:blank' || url.includes('disable-devtool'))) {
-    return;
-  }
-  return _origReplace.apply(window.location, arguments);
-};
-
-const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
-if (innerHTMLDesc && innerHTMLDesc.set) {
-  const _origSet = innerHTMLDesc.set;
-  Object.defineProperty(Element.prototype, 'innerHTML', {
-    set: function(val) {
-      if (typeof val === 'string' && (val.includes('Developer Tools Detected') || val.includes('Access Denied'))) {
-        return;
-      }
-      return _origSet.call(this, val);
-    },
-    get: function() { return innerHTMLDesc.get.call(this); },
+try {
+  Object.defineProperty(window, 'DisableDevtool', {
+    get: function() { return dummyDisableDevtool; },
+    set: function() {},
     configurable: true,
     enumerable: false
   });
-}
+  Object.defineProperty(window, 'DISABLE_DEVTOOL', {
+    get: function() { return dummyDisableDevtool; },
+    set: function() {},
+    configurable: true,
+    enumerable: false
+  });
+} catch(e) {}
+
+// 3. DOM Overwrite Trap (Blocks visual anti-debugging warnings)
+try {
+  const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+  if (innerHTMLDesc && innerHTMLDesc.set) {
+    const _origSet = innerHTMLDesc.set;
+    Object.defineProperty(Element.prototype, 'innerHTML', {
+      set: function(val) {
+        if (typeof val === 'string' && (val.includes('Developer Tools Detected') || val.includes('Access Denied: Developer Tools Detected'))) {
+          return;
+        }
+        return _origSet.call(this, val);
+      },
+      get: function() { return innerHTMLDesc.get.call(this); },
+      configurable: true,
+      enumerable: false
+    });
+  }
+} catch(e) {}
 ```
 
 ---

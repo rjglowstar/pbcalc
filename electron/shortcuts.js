@@ -113,14 +113,17 @@ function handleInput(event, input) {
   if (k === "a" && shift) return claim("tab-search", () => popup.open("tabsearch", null));
   if (k === "b" && shift) return claim("bookmarks-bar", tabManager.toggleBookmarksBar);
   if (k === "o" && shift) return claim("bookmark-manager", () => tabManager.openManager());
-  if (k === "j" && !shift) {
+  if (k === "j" && shift) {
+    // Downloads page = Ctrl+SHIFT+J, a deliberate departure from Chrome (where it is plain Ctrl+J,
+    // "Open the Downloads page in a new tab"). Reason, by the owner: one of the sites run in this
+    // browser has its own Ctrl+J shortcut (it opens a modal). before-input-event runs BEFORE the
+    // page, so claiming plain Ctrl+J would make that shortcut impossible — Chrome lets the page see
+    // it first. Plain Ctrl+J therefore must stay UNCLAIMED and reach the page (verify-browser checks
+    // that). It goes straight to the PAGE; the small bubble is what the toolbar button opens, and a
+    // bubble that happens to be open is closed first so it is not left hanging over the page.
     return claim("downloads", () => {
-      if (popup.isOpen("downloads")) {
-        popup.close();
-        tabManager.openDownloadsPage();
-      } else {
-        popup.open("downloads", null);
-      }
+      if (popup.isOpen("downloads")) popup.close();
+      tabManager.openDownloadsPage();
     });
   }
   if (k === "Tab") return claim("cycle-tab", () => tabManager.cycleTab(shift ? -1 : 1));

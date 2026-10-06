@@ -37,14 +37,18 @@ function wipeLeftoversOnDisk() {
 }
 
 async function clearSession() {
-  const ses = session.defaultSession;
-  await Promise.allSettled([
+  // Tabs run in the in-memory TAB_PARTITION session (constants.js), not defaultSession, so clearing
+  // only defaultSession would wipe a session no tab uses. Clear both. (The partition has no storage
+  // path — nothing of it reaches disk — but this keeps clearSession() honest about what it clears.)
+  const { TAB_PARTITION } = require("./constants");
+  const sessions = [session.defaultSession, session.fromPartition(TAB_PARTITION)];
+  await Promise.allSettled(sessions.flatMap((ses) => [
     ses.clearStorageData(),
     ses.clearCache(),
     ses.clearAuthCache(),
     ses.clearHostResolverCache(),
     ses.clearCodeCaches({}),
-  ]);
+  ]));
 }
 
 let wiped = false;

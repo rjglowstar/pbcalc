@@ -20,6 +20,7 @@
   let bookmarks = [];
   let urlFocused = false;
   let dragId = null;
+  let bmDragId = null;   // bookmark being dragged on the bar
   let cardShowTimer = null;
   let cardHideTimer = null;
   let cardVisible = false;
@@ -413,6 +414,20 @@
     unlockBtn.hidden = !tabState.restricted;
   }
 
+  function clearBmDrop() {
+    bookmarkBar.querySelectorAll(".drop-before, .drop-after").forEach((n) => n.classList.remove("drop-before", "drop-after"));
+  }
+
+  // Dropping on the empty part of the bar puts the bookmark last, like Chrome.
+  bookmarkBar.addEventListener("dragover", (e) => { if (bmDragId != null) e.preventDefault(); });
+  bookmarkBar.addEventListener("drop", (e) => {
+    e.preventDefault();
+    clearBmDrop();
+    if (bmDragId == null) return;
+    api.moveBookmark(bmDragId, bookmarks.length - 1);
+    bmDragId = null;
+  });
+
   function renderBookmarks() {
     bookmarkBar.textContent = "";
     if (!bookmarks.length) {
@@ -431,6 +446,7 @@
         const img = document.createElement("img");
         img.src = b.favicon;
         img.alt = "";
+        img.draggable = false;   // the whole bookmark is what drags, not its icon
         img.addEventListener("error", () => img.replaceWith(I.icon("globe")));
         el.appendChild(img);
       } else {
@@ -446,6 +462,38 @@
         api.openBookmark(b.id, newTab);
       });
       el.addEventListener("auxclick", (e) => { if (e.button === 1 && !tabState.restricted) api.newTab(b.url); });
+      // drag to reorder (Chrome): a line shows where it will land. Normal mode only - main refuses it in Restricted Mode too.
+      el.draggable = !tabState.restricted;
+      el.addEventListener("dragstart", (e) => {
+        bmDragId = b.id;
+        el.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", b.url);
+      });
+      el.addEventListener("dragend", () => { bmDragId = null; clearBmDrop(); el.classList.remove("dragging"); });
+      el.addEventListener("dragover", (e) => {
+        if (bmDragId == null || bmDragId === b.id) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const r = el.getBoundingClientRect();
+        const before = e.clientX < r.left + r.width / 2;
+        el.classList.toggle("drop-before", before);
+        el.classList.toggle("drop-after", !before);
+      });
+      el.addEventListener("dragleave", () => el.classList.remove("drop-before", "drop-after"));
+      el.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const r = el.getBoundingClientRect();
+        const before = e.clientX < r.left + r.width / 2;
+        clearBmDrop();
+        if (bmDragId == null || bmDragId === b.id) return;
+        const ids = bookmarks.map((x) => x.id).filter((x) => x !== bmDragId);
+        let idx = ids.indexOf(b.id);
+        if (!before) idx += 1;
+        api.moveBookmark(bmDragId, idx);
+        bmDragId = null;
+      });
       el.addEventListener("contextmenu", (e) => { e.preventDefault(); if (!tabState.restricted) { suppressHover(); api.bookmarkContextMenu(b.id); } });
       bookmarkBar.appendChild(el);
     });
@@ -502,7 +550,7 @@
     const done = items.filter((d) => d.state === "completed").length;
     if (done > dlSeen) downloadsBtn.classList.add("fresh");
     dlSeen = done;
-    downloadsBtn.title = running.length ? "Downloads in progress (Ctrl+J)" : "Downloads (Ctrl+J)";
+    downloadsBtn.title = running.length ? "Downloads in progress (Ctrl+Shift+J)" : "Downloads (Ctrl+Shift+J)";
   }
   api.onDownloadsChanged(renderDownloadsBtn);
   api.getDownloads().then(renderDownloadsBtn);

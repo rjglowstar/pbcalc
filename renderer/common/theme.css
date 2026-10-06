@@ -24,12 +24,14 @@
   --sep: #9aa0a6;
   --border: #dadce0;
   --accent: #1a73e8;
+  --accent-hover: #185abc;  /* a primary button on hover: darker, text stays white (7:1) */
   --accent-text: #ffffff;
   --popup: #ffffff;
   --popup-hover: #f1f3f4;
   --shadow: 0 2px 6px 2px rgba(60, 64, 67, 0.15), 0 1px 2px rgba(60, 64, 67, 0.3);
   --danger: #d93025;
   --dl-fresh: #e8f0fe;     /* downloads button right after a file finishes (Chrome's accent chip) */
+  --dl-fresh-hover: #d2e3fc; /* ...and hovered */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -55,12 +57,14 @@
     --sep: #5f6368;
     --border: #46484c;
     --accent: #8ab4f8;
+    --accent-hover: #aecbfa;  /* dark: lighter, text stays dark (10:1) */
     --accent-text: #202124;
     --popup: #292a2d;
     --popup-hover: #3c4043;
     --shadow: 0 2px 6px 2px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.6);
     --danger: #f28b82;
     --dl-fresh: rgba(138, 180, 248, 0.16);
+    --dl-fresh-hover: rgba(138, 180, 248, 0.28);
   }
 }
 
@@ -82,6 +86,14 @@ button {
   font: inherit;
   color: inherit;
 }
+
+/* The pointer on everything that acts when clicked. Safety net for anything a component's own rule does not
+   cover; components also set it on their clickable divs (tabs, rows, tiles, bookmarks), which have no
+   semantic selector. Disabled controls and the Restricted-Mode lock (an indicator) keep the arrow. */
+button, a[href], summary, select, label[for], [role="button"], [role="menuitem"], [role="switch"],
+input[type="checkbox"], input[type="radio"] { cursor: pointer; }
+button:disabled, [aria-disabled="true"], input:disabled, select:disabled { cursor: default; }
+#unlock { cursor: default; }
 
 .icon {
   width: 20px;

@@ -52,7 +52,7 @@ h2 { margin: 0; padding: 16px 20px 8px; font-size: 14px; font-weight: 500; color
   border: none;
   background: none;
   color: var(--text);
-  cursor: default;
+  cursor: pointer;
   font-size: 13px;
 }
 .seg button + button { border-left: 1px solid var(--border); }
@@ -68,7 +68,7 @@ h2 { margin: 0; padding: 16px 20px 8px; font-size: 14px; font-weight: 500; color
   border-radius: 10px;
   background: var(--sep);
   padding: 0;
-  cursor: default;
+  cursor: pointer;
 }
 .switch span {
   position: absolute;
@@ -104,10 +104,12 @@ h2 { margin: 0; padding: 16px 20px 8px; font-size: 14px; font-weight: 500; color
   background: none;
   color: var(--accent);
   font-size: 13px;
-  cursor: default;
+  cursor: pointer;
 }
 .btn:hover:not(:disabled) { background: var(--hover); }
 .btn.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+/* `.btn:hover` (above) outranks `.btn.primary`: a hovered primary button used to turn pale under its white text. */
+.btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn:disabled { opacity: 0.5; }
 .msg { color: var(--muted); font-size: 12px; }
 .btnrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

@@ -15,6 +15,8 @@ let kind = null;
 let anchor = null;
 let autoTimer = null;
 let partial = false;  // Chrome's compact bubble: the one that pops up by itself, no title or footer
+let editBubble = null; // null = the Name+URL dialog; { added } = Chrome's star bubble
+let editId = null;   // bookmark being edited in the "bookmark-edit" box
 let hovered = false; // the mouse entered the downloads bubble: never dismiss it from under them
 
 const FIND_W = 380;
@@ -53,6 +55,7 @@ function defaultAnchor(k) {
   const [w] = contentSize();
   if (k === "tabsearch") return { left: 8, right: 36, top: 6, bottom: 38 };
   if (k === "siteinfo") return { left: 100, right: 130, top: 44, bottom: 76 };
+  if (k === "bookmark-edit") return { left: Math.round(w / 2 - 190), right: Math.round(w / 2 + 190), top: 0, bottom: tabManager().chromeHeight() };
   return { left: w - 44, right: w - 12, top: 44, bottom: 76 }; // menu / downloads
 }
 
@@ -92,6 +95,10 @@ function buildData() {
     data.partial = partial;
   } else if (kind === "siteinfo") {
     data.site = siteInfo(tm.getActiveTab());
+  } else if (kind === "bookmark-edit") {
+    const b = bookmarks().list().find((x) => x.id === editId);
+    data.bookmark = b ? { id: b.id, title: b.title, url: b.url, favicon: b.favicon } : null;
+    data.bubble = editBubble;
   }
   return data;
 }
@@ -101,6 +108,8 @@ function close() {
   autoTimer = null;
   hovered = false;
   partial = false;
+  editId = null;
+  editBubble = null;
   if (!view) return;
   const v = view;
   view = null;
@@ -149,6 +158,8 @@ function open(k, rect, opts = {}) {
   require("./hovercard").hide();
   require("./omnibox").hide();
   kind = k;
+  editId = k === "bookmark-edit" ? String(opts.bookmarkId || "") : null;
+  editBubble = k === "bookmark-edit" && opts.bubble ? { added: !!opts.added } : null;
   partial = !!opts.partial;
   anchor = rect || defaultAnchor(k);
   view = new BrowserView({
@@ -206,6 +217,28 @@ function reposition() {
   setImmediate(() => { if (alive() && kind !== "find") close(); });
 }
 
+// Save from the "bookmark-edit" box. Main process decides: it re-checks Restricted Mode itself, so even a popup page
+// that somehow existed there could not edit anything.
+function saveBookmark(title, url) {
+  if (state.restricted || !isOpen("bookmark-edit") || !editId) return { ok: false, error: "unavailable" };
+  const fields = { title: String(title == null ? "" : title) };
+  if (url != null) fields.url = String(url);   // the star bubble edits the name only
+  const r = bookmarks().update(editId, fields);
+  if (!r.ok) return { ok: false, error: r.error };
+  tabManager().broadcastBookmarks();
+  close();
+  return { ok: true };
+}
+
+// "Remove" in the star bubble.
+function removeBookmark() {
+  if (state.restricted || !isOpen("bookmark-edit") || !editId) return { ok: false, error: "unavailable" };
+  bookmarks().remove(editId);
+  tabManager().broadcastBookmarks();
+  close();
+  return { ok: true };
+}
+
 function handleAction(name, arg) {
   if (state.restricted && !RESTRICTED_ACTIONS.has(name)) return;
   const tm = tabManager();
@@ -250,4 +283,4 @@ function handleAction(name, arg) {
   }
 }
 
-module.exports = { open, autoCloseDownloads, close, isOpen, isSender, getData, refresh, sendFindResult, reposition, handleAction };
+module.exports = { open, autoCloseDownloads, close, isOpen, isSender, getData, refresh, sendFindResult, reposition, handleAction, saveBookmark, removeBookmark };

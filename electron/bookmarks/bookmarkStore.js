@@ -38,6 +38,16 @@ function isBookmarkable(url) {
   return /^https?:\/\//i.test(String(url || ""));
 }
 
+// What may be kept as a bookmark's icon: a web address, or a small inline image. Many sites declare their icon as a
+// data: URL (the tab strip shows it fine); refusing those left the bookmark with a globe. The size cap keeps
+// bookmarks.json small - an oversize inline icon is simply not stored.
+const MAX_DATA_ICON = 32 * 1024;
+function isIconUrl(u) {
+  const s = String(u || "");
+  if (/^https?:\/\//i.test(s)) return true;
+  return /^data:image\/[a-z0-9.+-]+[;,]/i.test(s) && s.length <= MAX_DATA_ICON;
+}
+
 // Adds if absent, removes if already present. Returns the new list.
 function toggle({ url, title, favicon } = {}) {
   if (!isBookmarkable(url)) return list();
@@ -50,11 +60,23 @@ function toggle({ url, title, favicon } = {}) {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       title: String(title || url).slice(0, 200),
       url,
-      favicon: /^https?:\/\//i.test(String(favicon || "")) ? String(favicon) : "",
+      favicon: isIconUrl(favicon) ? String(favicon) : "",
     });
   }
   persist();
   return list();
+}
+
+// A bookmark saved before its page had reported an icon (or with an icon the store used to refuse) learns it the
+// next time that exact address shows one. Only fills an EMPTY icon, and only for an address the user bookmarked:
+// nothing is recorded about pages that are not bookmarks. Returns true when something changed.
+function learnIcon(url, favicon) {
+  if (!isIconUrl(favicon)) return false;
+  const items = load();
+  let changed = false;
+  for (const b of items) if (b.url === url && !b.favicon) { b.favicon = String(favicon); changed = true; }
+  if (changed) persist();
+  return changed;
 }
 
 function remove(id) {
@@ -122,4 +144,18 @@ function move(id, dir) {
   return list();
 }
 
-module.exports = { list, toggle, remove, add, update, move, isBookmarkable };
+// Drag and drop on the bookmarks bar: put `id` at position `index` of the list WITHOUT it (so 0 = first,
+// length-1 = last). Anything out of range is clamped. Returns the new list.
+function moveTo(id, index) {
+  const items = load();
+  const i = items.findIndex((x) => x.id === id);
+  if (i === -1) return list();
+  const n = Number(index);
+  if (!Number.isFinite(n)) return list();
+  const [it] = items.splice(i, 1);
+  items.splice(Math.max(0, Math.min(items.length, Math.trunc(n))), 0, it);
+  if (items.indexOf(it) !== i) persist();
+  return list();
+}
+
+module.exports = { list, toggle, remove, add, update, move, moveTo, isBookmarkable, learnIcon };

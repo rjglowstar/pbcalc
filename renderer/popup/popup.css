@@ -23,7 +23,7 @@ body.bubble .panel { inset: 4px; border-radius: 8px; }
   gap: 12px;
   height: 32px;
   padding: 0 16px;
-  cursor: default;
+  cursor: pointer;
   white-space: nowrap;
 }
 .item:hover { background: var(--popup-hover); }
@@ -87,7 +87,7 @@ body.bubble .panel { inset: 4px; border-radius: 8px; }
   padding: 4px 12px 4px 8px;
   margin: 0 6px;
   border-radius: 6px;
-  cursor: default;
+  cursor: pointer;
 }
 .row:hover, .row.active { background: var(--popup-hover); }
 .row .ico {
@@ -138,6 +138,7 @@ body.bubble .panel { inset: 4px; border-radius: 8px; }
 .dl-close:hover, .dl-btn:hover { background: var(--hover); }
 .dl-close .icon, .dl-btn .icon { width: 18px; height: 18px; }
 .dl-row { cursor: default; }
+.dl-row.openable { cursor: pointer; }
 .dl-row .dl-ico { background: none; }
 .dl-row .dl-ico img { width: 32px; height: 32px; }
 .dl-name { font-weight: 600; }
@@ -235,6 +236,7 @@ body.bubble .panel { inset: 4px; border-radius: 8px; }
   color: var(--accent-text);
   font-size: 13px;
 }
+.unlock .primary:hover:not(:disabled) { background: var(--accent-hover); }
 .unlock .primary:disabled { opacity: 0.6; }
 
 .unlock .secondary {
@@ -247,3 +249,56 @@ body.bubble .panel { inset: 4px; border-radius: 8px; }
 }
 .unlock .secondary:hover:not(:disabled) { background: var(--hover); }
 .unlock .secondary:disabled { opacity: 0.6; }
+
+/* star bubble: "Bookmark added" */
+.bmb-head { display: flex; align-items: center; padding: 14px 12px 8px 20px; }
+.bmb-title { flex: 1 1 auto; font-size: 15px; font-weight: 500; }
+.bmb-x { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: none; border-radius: 50%; background: none; color: var(--text); }
+.bmb-x:hover { background: var(--hover); }
+.bmb-x .icon { width: 16px; height: 16px; }
+.bmb-body { display: flex; gap: 16px; padding: 4px 20px 0; }
+.bmb-tile { flex: 0 0 auto; width: 100px; height: 100px; border-radius: 8px; background: var(--hover); display: flex; align-items: center; justify-content: center; }
+/* the favicon size rules above are scoped to ".row .ico", so the tile must size its own: an unconstrained
+   favicon (WhatsApp's is large) otherwise spills over the whole bubble */
+.bmb-tile { overflow: hidden; }
+.bmb-tile .ico { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; background: none; }
+.bmb-tile .ico img { width: 32px; height: 32px; object-fit: contain; }
+.bmb-tile .ico .icon { width: 32px; height: 32px; color: var(--muted); }
+.bmb-form { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; gap: 12px; min-width: 0; }
+.bmb-row { display: flex; align-items: center; gap: 12px; }
+.bmb-label { flex: 0 0 44px; font-size: 12px; }
+.bmb-row input, .bmb-row select { flex: 1 1 auto; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--omnibox); color: var(--text); font-size: 13px; outline: none; user-select: text; }
+.bmb-row select { cursor: pointer; }
+.bmb-row select:hover { background: var(--hover); }
+.bmb-row input:focus { border: 2px solid var(--accent); padding: 0 9px; }
+.bmb-buttons { display: flex; justify-content: flex-end; gap: 8px; padding: 20px 20px 16px; }
+.bmb-buttons button { height: 36px; padding: 0 22px; border-radius: 18px; font-size: 13px; }
+.bmb-buttons .primary { border: none; background: var(--accent); color: var(--accent-text); }
+.bmb-buttons .primary:hover:not(:disabled) { background: var(--accent-hover); }
+.bmb-buttons .secondary { border: 1px solid var(--border); background: none; color: var(--accent); }
+.bmb-buttons .secondary:hover:not(:disabled) { background: var(--hover); }
+
+/* edit bookmark (same pill buttons as the admin panel; hover colours must stay readable in both themes) */
+.bm-edit { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 16px; }
+.bm-field { display: flex; flex-direction: column; gap: 4px; }
+.bm-label { color: var(--muted); font-size: 12px; }
+.bm-field input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--omnibox);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  user-select: text;
+}
+.bm-field input:focus { border-color: var(--accent); }
+.bm-msg { min-height: 16px; color: var(--danger); font-size: 12px; }
+.bm-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+.bm-buttons button { height: 34px; padding: 0 20px; border-radius: 17px; font-size: 13px; }
+.bm-buttons .secondary { border: 1px solid var(--border); background: none; color: var(--accent); }
+.bm-buttons .secondary:hover:not(:disabled) { background: var(--hover); }
+.bm-buttons .primary { border: none; background: var(--accent); color: var(--accent-text); }
+.bm-buttons .primary:hover:not(:disabled) { background: var(--accent-hover); }
+.bm-buttons button:disabled { opacity: 0.6; }

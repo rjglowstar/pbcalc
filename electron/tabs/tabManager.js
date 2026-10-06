@@ -1,7 +1,7 @@
 const { BrowserView, Menu, clipboard, dialog, shell } = require("electron");
 const path = require("path");
 const state = require("../state");
-const { TAB_STRIP_HEIGHT, TOOLBAR_HEIGHT, BOOKMARKS_BAR_HEIGHT, MAX_TABS, NEWTAB_URL, SETTINGS_URL, RESTRICTED_HOME_URL, MANAGER_URL, DOWNLOADS_URL } = require("../constants");
+const { TAB_STRIP_HEIGHT, TOOLBAR_HEIGHT, BOOKMARKS_BAR_HEIGHT, MAX_TABS, NEWTAB_URL, SETTINGS_URL, RESTRICTED_HOME_URL, MANAGER_URL, DOWNLOADS_URL, TAB_PARTITION } = require("../constants");
 const restricted = require("../restricted");
 const { resolveInput } = require("../urlInput");
 const settings = require("../settings");
@@ -110,7 +110,8 @@ function getActiveTab() {
 
 function activeWebContents() {
   const t = getActiveTab();
-  return t && !t.view.webContents.isDestroyed() ? t.view.webContents : null;
+  const wc = t && t.view.webContents;
+  return wc && !wc.isDestroyed() ? wc : null;
 }
 
 function resizeActiveView() {
@@ -140,9 +141,11 @@ function createTab(url, opts = {}) {
           // Only a duplicated tab carries this flag; its preload then asks for the source tab's
           // sessionStorage before any page script runs. Every other tab skips that round trip.
           additionalArguments: opts.sessionRestore ? ["--pbcalc-restore-session"] : [],
-          // The user specifically requested that cache is kept in memory to speed up page loads, but 
-          // never touches the disk and is wiped completely on close. An ephemeral partition does exactly this.
-          partition: "pbcalc",
+          // The user specifically requested that cache is kept in memory to speed up page loads, but
+          // never touches the disk and is wiped completely on close. An ephemeral partition does exactly
+          // this. NOTE: main.js (UA/headers) and downloadManager (will-download) MUST target this same
+          // session (constants.TAB_PARTITION), or tabs leak the Electron UA and downloads are not caught.
+          partition: TAB_PARTITION,
           preload: path.join(__dirname, "..", "..", "preloads", "tab-preload.js"),
         },
       });
@@ -171,6 +174,9 @@ function createTab(url, opts = {}) {
     // is still the (empty) home page.
     site: opts.site || null,
     bookmarkId: opts.bookmarkId || null,
+    // The tab whose window.open / target=_blank created this one. Only used to go back to it when this
+    // tab turns out to have been opened just to start a download (closeTabOpenedForDownload).
+    openerId: opts.openerId || null,
     isHome: !!(state.restricted && !url),
   };
   if (opts.sessionRestore) {
@@ -201,6 +207,8 @@ function createTab(url, opts = {}) {
   } else if (!opts.webContents) {
     load(view.webContents, url || (state.restricted ? RESTRICTED_HOME_URL : NEWTAB_URL));
   }
+  // switchTab gave the page focus before the load began, which a brand-new view ignores: repeat it now.
+  if (state.activeTabId === tab.id) focusActivePageUnlessShell();
 
   notifyTabs();
   return getTabState();
@@ -325,8 +333,18 @@ function wireTabEvents(tab) {
   // No developer tools in Restricted Mode, however they were opened.
   wc.on("devtools-opened", () => { if (state.restricted) wc.closeDevTools(); });
 
+  // A page can end itself: an OAuth / sign-in popup calls window.close() when it is done (ChatGPT, Google). Chromium
+  // then destroys its webContents, but nothing told the strip, so the tab stayed as the ACTIVE tab with no page behind
+  // it ("New Tab", spinning) and the next reload / shortcut threw "Cannot read properties of undefined". Chrome closes
+  // the tab and goes back to the page that opened it. Our own closeTab removes the tab from the list BEFORE it
+  // destroys the page, so this only fires for pages that ended themselves.
+  wc.once("destroyed", () => closePageEndedTab(tab));
   wc.on("page-title-updated", (_e, title) => { if (!tab.errorPage) tab.title = title; notifyTabs(); });
-  wc.on("page-favicon-updated", (_e, favicons) => { tab.favicon = (favicons && favicons[0]) || ""; notifyTabs(); });
+  wc.on("page-favicon-updated", (_e, favicons) => {
+    tab.favicon = (favicons && favicons[0]) || "";
+    learnBookmarkIcon(tab);
+    notifyTabs();
+  });
   wc.on("did-navigate", (_e, url) => {
     // While one of our error pages is showing, the address bar keeps the URL that failed.
     if (tab.errorPage && url.startsWith("data:")) tab.url = tab.errorPage.url;
@@ -447,6 +465,7 @@ function wireTabEvents(tab) {
       background,
       webContents: childWindow.webContents,
       childWindow,
+      openerId: tab.id,
     });
   });
 
@@ -551,12 +570,44 @@ function switchTab(id) {
       try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.removeBrowserView(leaving.view); } catch (_) {}
     });
   }
+  // KEYBOARD FOCUS FOLLOWS THE SWITCH — unless the user is working in the shell (typing in the
+  // address bar, or just clicked the tab strip). Measured before this existed: after ANY switch that
+  // started from a focused page or a popup (Ctrl+Shift+O, Ctrl+Shift+J, Ctrl+Tab, Ctrl+1..9, the ⋮ menu,
+  // tab search, closing the active tab, Ctrl+Shift+T) focus sat on the old page at 5ms and was NOBODY
+  // by 100ms: the old view is detached a moment later and takes focus with it, while the new view was
+  // only attached, never focused. From then on every shortcut reached no before-input-event handler
+  // until a mouse click gave focus back — "the shortcut stopped working, opening it manually did".
+  focusActivePageUnlessShell();
   resizeActiveView();
   notifyTabs();
   return getTabState();
 }
 
-function closeTab(id) {
+// Give a tab's page keyboard focus (the page view, not the shell), so the next keystroke reaches a
+// before-input-event handler. switchTab calls it for every tab change; see the note there.
+function focusTabPage(tab) {
+  try { if (tab && tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.focus(); } catch (_) {}
+}
+
+// The rule from switchTab: the active page takes keyboard focus unless the shell (address bar, tab
+// strip) already has it. createTab calls this again AFTER it has started the load: a brand-new view
+// does not accept focus until then, so the call inside switchTab (which runs before loadURL) is lost
+// for new tabs — measured: Ctrl+Shift+O, Ctrl+Shift+J and ⋮ → Settings still left nobody focused.
+function focusActivePageUnlessShell() {
+  if (!state.mainWindow || state.mainWindow.isDestroyed() || state.mainWindow.webContents.isFocused()) return;
+  focusTabPage(getActiveTab());
+}
+
+// The tab's page is already gone (see wireTabEvents): take the tab out of the strip like Chrome, back to its opener.
+function closePageEndedTab(tab) {
+  if (!state.tabs.includes(tab)) return; // we closed it ourselves
+  const wasActive = state.activeTabId === tab.id;
+  const opener = state.tabs.find((t) => t.id === tab.openerId);
+  closeTab(tab.id, { pageGone: true });
+  if (wasActive && opener && state.tabs.includes(opener)) switchTab(opener.id);
+}
+
+function closeTab(id, opts = {}) {
   const idx = state.tabs.findIndex((t) => t.id === Number(id));
   if (idx === -1) return getTabState();
 
@@ -564,10 +615,13 @@ function closeTab(id) {
   const [removed] = state.tabs.splice(idx, 1);
 
   // Push to history (skipping error pages or local pbcalc:/file: pages) before webContents is destroyed
+  let entry = null;
   try {
+    if (opts.pageGone) throw new Error("page ended itself: not offered by Ctrl+Shift+T");
     const url = removed.url || removed.view.webContents.getURL();
     if (url && url !== "about:blank" && !url.startsWith("pbcalc:") && !url.startsWith("chrome:") && !url.startsWith("file:") && !url.startsWith("data:")) {
-      closedTabsHistory.push({ url, index: idx });
+      entry = { url, index: idx, session: null, pending: null };
+      closedTabsHistory.push(entry);
       if (closedTabsHistory.length > 20) closedTabsHistory.shift();
     }
   } catch (_) {}
@@ -578,14 +632,34 @@ function closeTab(id) {
       state.mainWindow.removeBrowserView(removed.view);
     } catch (_) {}
   }
-  if (removed.childWindow && !removed.childWindow.isDestroyed()) {
-    try { removed.childWindow.destroy(); } catch (_) {}
+  // The tab disappears from the strip and the window right now; only the page behind it lingers for
+  // the few milliseconds it takes to read its sessionStorage. That storage belongs to the TAB and dies
+  // with its webContents, and reading it is asynchronous — so the page has to outlive this call. (The
+  // PB ERP keeps its login there: without this a restored tab showed the LOGIN page, while Chrome's
+  // "reopen closed tab" brings the tab's sessionStorage back. Cookies/localStorage were never lost:
+  // every tab shares one session.) Held in memory only, like the rest of the closed-tab list.
+  const closedWc = removed.view.webContents; // undefined when the page already ended itself
+  const destroyPage = () => {
+    if (removed.childWindow && !removed.childWindow.isDestroyed()) {
+      try { removed.childWindow.destroy(); } catch (_) {}
+    }
+    if (closedWc && !closedWc.isDestroyed()) closedWc.destroy();
+  };
+  if (entry) {
+    entry.pending = Promise.race([snapshotSessionStorage(closedWc), new Promise((r) => setTimeout(() => r(null), SESSION_SNAPSHOT_MS))])
+      .then((data) => { entry.session = packSessionStorage(entry.url, data); })
+      .catch(() => {})
+      .then(destroyPage);
+  } else {
+    destroyPage();
   }
-  if (!removed.view.webContents.isDestroyed()) removed.view.webContents.destroy();
 
   if (state.activeTabId === removed.id) {
     state.activeTabId = null;
+    // Like Chrome: the tab to the right takes over, or the one to the left when it was the last.
     const nextTab = state.tabs[Math.min(idx, state.tabs.length - 1)];
+    // (switchTab hands keyboard focus to it — closing the focused tab otherwise leaves nobody
+    // focused and the next Ctrl+W / Ctrl+Shift+T goes nowhere; Chrome closes tab after tab.)
     if (nextTab) switchTab(nextTab.id);
   }
 
@@ -600,14 +674,65 @@ function closeTab(id) {
   return getTabState();
 }
 
+// Chrome closes a tab that was opened only to start a download: a site's "Download" button often does
+// window.open(url) or a target=_blank link, the new tab appears for a moment, the response turns out
+// to be a file, and the tab closes itself (the download carries on) and you are back on the page you
+// were on. Called by the download manager when a download starts in `wc`.
+// MEASURED at that moment (probe: scripts/chrome-reference/README.md notes): a tab opened by
+// window.open / target=_blank / a redirect that ends in a file has wc.getURL() === "" — nothing was
+// ever committed, so it has never shown a page — whereas a download started by a link on a page that
+// IS showing (same-tab link) has that page's URL. Only the first kind closes; a tab showing a page
+// stays, as does the last tab (closing it would quit the app).
+function closeTabOpenedForDownload(wc) {
+  if (!wc || wc.isDestroyed() || !state.mainWindow || state.mainWindow.isDestroyed()) return;
+  const tab = state.tabs.find((t) => t.view.webContents === wc);
+  if (!tab || state.tabs.length < 2) return;
+  const shown = wc.getURL();
+  if (shown && shown !== "about:blank") return;
+  const wasActive = state.activeTabId === tab.id;
+  const opener = state.tabs.find((t) => t.id === tab.openerId);
+  closeTab(tab.id);
+  // Chrome returns to the page the tab was opened from. Without this the neighbour to the left of the
+  // strip's end would take over, which is not where the user was. Only if the user is still on the
+  // download tab: if they already moved elsewhere in those milliseconds, leave them there.
+  if (wasActive && opener && state.tabs.includes(opener)) switchTab(opener.id);
+}
+
+// How long a closing tab's page may linger so its sessionStorage can be read (see closeTab).
+const SESSION_SNAPSHOT_MS = 400;
+// A closed tab's sessionStorage is kept only if it is a sensible size: it sits in memory with the
+// closed-tab list, and one runaway page should not be able to fill it.
+const SESSION_SNAPSHOT_MAX_BYTES = 512 * 1024;
+
+// {origin, data} in the shape createTab({sessionRestore}) wants, or null when there is nothing worth
+// keeping (no storage, no readable origin, or too big).
+function packSessionStorage(url, data) {
+  if (!data || typeof data !== "object" || !Object.keys(data).length) return null;
+  let origin = "";
+  try { origin = new URL(url).origin; } catch (_) {}
+  if (!origin || origin === "null") return null;
+  try { if (JSON.stringify(data).length > SESSION_SNAPSHOT_MAX_BYTES) return null; } catch (_) { return null; }
+  return { origin, data };
+}
+
+// Several quick Ctrl+Shift+T presses must restore tabs in order even though each may wait a moment for
+// its sessionStorage snapshot, so the restores are chained.
+let reopenChain = Promise.resolve();
+
 function reopenClosedTab() {
   if (closedTabsHistory.length === 0) return;
-  const entry = closedTabsHistory.pop();
-  if (state.restricted) {
-    createTab(entry.url, { allowRestricted: true, index: entry.index });
-  } else {
-    createTab(entry.url, { index: entry.index });
-  }
+  const entry = closedTabsHistory.pop(); // taken now, so the list stays LIFO however long a snapshot takes
+  reopenChain = reopenChain.then(async () => {
+    try { if (entry.pending) await entry.pending; } catch (_) {}
+    // Chrome's reopen-closed-tab brings the tab's sessionStorage back with it, so a site that keeps
+    // its login there (the PB ERP) is still logged in; the same mechanism Duplicate uses.
+    const opts = { index: entry.index, sessionRestore: entry.session || null };
+    if (state.restricted) opts.allowRestricted = true;
+    // (createTab -> switchTab hands the restored page keyboard focus, so the NEXT Ctrl+Shift+T still
+    // reaches a handler; see the note in switchTab.)
+    createTab(entry.url, opts);
+  }).catch(() => {});
+  return reopenChain;
 }
 
 function cycleTab(dir) {
@@ -657,7 +782,7 @@ function goForward() {
 }
 function reload() {
   const t = getActiveTab();
-  if (!t || t.view.webContents.isDestroyed()) return;
+  if (!t || !t.view.webContents || t.view.webContents.isDestroyed()) return;
   // On an error page, reloading means retrying the URL that failed, not reloading the data: page.
   if (t.errorPage) {
     const failed = t.errorPage.url;
@@ -752,14 +877,43 @@ function openDevTools() {
   }
 }
 
+// The star / Ctrl+D, like Chrome: a page that is not bookmarked is added and the "Bookmark added" bubble opens
+// under the star (Name, Folder, Done, Remove); on a page that already is, the same bubble opens as "Edit
+// bookmark". The star never removes by itself any more - Remove is in the bubble.
+// A bookmarked page that is showing its icon gives it to its bookmark if the bookmark has none (see
+// bookmarkStore.learnIcon). Not in Restricted Mode: the list is read-only there.
+function learnBookmarkIcon(tab) {
+  if (state.restricted || !tab || !tab.favicon || !tab.url) return;
+  if (bookmarks.learnIcon(tab.url, tab.favicon)) broadcastBookmarks();
+}
+
 function toggleBookmarkActive() {
   if (state.restricted) return bookmarks.list(); // bookmarks are read-only in Restricted Mode
   const wc = activeWebContents();
   if (!wc) return bookmarks.list();
   const tab = getActiveTab();
-  const list = bookmarks.toggle({ url: tab.url || wc.getURL(), title: wc.getTitle(), favicon: tab.favicon });
+  const url = tab.url || wc.getURL();
+  if (!bookmarks.isBookmarkable(url)) return bookmarks.list();
+  let added = false;
+  if (!bookmarks.list().some((b) => b.url === url)) {
+    bookmarks.toggle({ url, title: wc.getTitle(), favicon: tab.favicon });
+    added = true;
+  }
+  const list = bookmarks.list();
   sendToShell("bookmarks:changed", list);
+  const b = list.find((x) => x.url === url);
+  if (b) showBookmarkBubble(b.id, added);
   return list;
+}
+
+// Anchored under the star: read its real rectangle from the shell (the toolbar is flexbox, not constants).
+async function showBookmarkBubble(id, added) {
+  let rect = null;
+  try {
+    rect = await state.mainWindow.webContents.executeJavaScript('(() => { const e = document.getElementById("bookmark"); if (!e) return null; const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; })()');
+  } catch (_) {}
+  if (state.restricted) return;
+  popup().open("bookmark-edit", rect, { bookmarkId: id, bubble: true, added });
 }
 
 // Allowed in Restricted Mode as well: this only shows or hides the bar, it cannot change what is
@@ -781,7 +935,8 @@ function openSettings() {
   return createTab(SETTINGS_URL, { allowRestricted: true });
 }
 
-// The Downloads page, like Chrome's Ctrl+J: reuse its tab if it is already open. Allowed in
+// The Downloads page (Ctrl+Shift+J here; plain Ctrl+J is left to the page, see shortcuts.js): reuse
+// its tab if it is already open. Allowed in
 // Restricted Mode too (it never shows addresses there).
 function openDownloadsPage() {
   const existing = state.tabs.find((t) => isDownloadsUrl(t.url));
@@ -1031,12 +1186,26 @@ function bookmarkContextMenu(id) {
   if (state.restricted) return;
   const b = bookmarks.list().find((x) => x.id === id);
   if (!b) return;
+  const active = getActiveTab();
   Menu.buildFromTemplate([
     { label: "Open in new tab", click: () => createTab(b.url) },
+    { type: "separator" },
+    { label: "Edit...", click: () => openBookmarkEdit(id) },
+    { label: "Delete", click: () => { bookmarks.remove(id); broadcastBookmarks(); } },
     { label: "Copy link address", click: () => clipboard.writeText(b.url) },
     { type: "separator" },
-    { label: "Delete", click: () => { bookmarks.remove(id); sendToShell("bookmarks:changed", bookmarks.list()); } },
+    { label: "Add page...", enabled: !!active && bookmarks.isBookmarkable(active.url) && !bookmarks.list().some((x) => x.url === active.url), click: () => toggleBookmarkActive() },
+    { label: "Bookmark manager", click: () => openManager() },
+    { label: "Show bookmarks bar", type: "checkbox", checked: !!state.bookmarksBarVisible, click: () => toggleBookmarksBar() },
   ]).popup({ window: state.mainWindow });
+}
+
+// Chrome's "Edit bookmark" box (Name + URL, Cancel / Save). Normal mode only: the popup kind itself is
+// refused in Restricted Mode (popup.js), so this is just the convenient entry point.
+function openBookmarkEdit(id) {
+  if (state.restricted) return;
+  if (!bookmarks.list().some((x) => x.id === id)) return;
+  popup().open("bookmark-edit", null, { bookmarkId: id });
 }
 
 module.exports = {
@@ -1081,7 +1250,9 @@ module.exports = {
   moveTab,
   tabContextMenu,
   bookmarkContextMenu,
+  openBookmarkEdit,
   chromeHeight,
   siteKind,
   reopenClosedTab,
+  closeTabOpenedForDownload,
 };

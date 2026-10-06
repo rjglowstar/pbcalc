@@ -24,7 +24,7 @@ body::before {
   border-radius: 50%;
   background: none;
   color: var(--muted);
-  cursor: default;
+  cursor: pointer;
   padding: 0;
   -webkit-app-region: no-drag;
 }
@@ -39,6 +39,9 @@ body::before {
 #downloads { position: relative; }
 #downloads.busy, #downloads.fresh { color: var(--accent); }
 #downloads.fresh { background: var(--dl-fresh); }
+/* `#downloads.fresh` (id + class) outranks `.icon-btn:hover`, so right after a download the button gave NO hover
+   feedback at all; it needs its own, a shade stronger than the chip it sits on. */
+#downloads.fresh:hover:not(:disabled) { background: var(--dl-fresh-hover); }
 #downloads.busy::before {
   content: "";
   position: absolute;
@@ -99,7 +102,7 @@ body::before {
   padding: 0;
   border: none;
   background: none;
-  cursor: default;
+  cursor: pointer;
 }
 .strip-btn .icon { width: 18px; height: 18px; }
 /* tab-search: rounded square in its own colour; "+": plain until hovered, then a circle */
@@ -137,7 +140,7 @@ body::before {
      down). Chrome never refuses to open a tab; it just keeps shrinking. */
   min-width: 18px;
   height: 40px;
-  cursor: default;
+  cursor: pointer;
   font-size: 12px;
   color: var(--tab-text);
   /* Children size themselves from the tab's width (cqw units); slot width = body width + 6.
@@ -372,7 +375,7 @@ body:not(.no-hover) .tab:has(+ .tab:hover) .tab-sep { opacity: 0; }
   background: none;
   color: var(--muted);
   font-size: 12px;
-  cursor: default;
+  cursor: pointer;
 }
 .site-info:hover { background: var(--hover); }
 .site-info .icon { width: 16px; height: 16px; }
@@ -453,7 +456,7 @@ body:not(.no-hover) .tab:has(+ .tab:hover) .tab-sep { opacity: 0; }
   border-radius: 13px;
   color: var(--text);
   font-size: 12px;
-  cursor: default;
+  cursor: pointer;
 }
 body:not(.no-hover) .bookmark:hover { background: var(--hover); }
 .bookmark img, .bookmark .icon { width: 16px; height: 16px; flex: 0 0 auto; }
@@ -464,6 +467,9 @@ body:not(.no-hover) .bookmark:hover { background: var(--hover); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.bookmark.dragging { opacity: 0.5; }
+.bookmark.drop-before { box-shadow: -2px 0 0 var(--accent); }
+.bookmark.drop-after { box-shadow: 2px 0 0 var(--accent); }
 .bookmark-empty { color: var(--muted); font-size: 12px; padding: 0 4px; }
 
 /* ── Restricted Mode: ordinary browsing controls stay (back / forward / reload, tabs, + for the

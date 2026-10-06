@@ -103,7 +103,7 @@
     place(300, { alignRight: true });
     panel.appendChild(menuItem("New tab", "Ctrl+T", () => act("new-tab")));
     panel.appendChild(el("div", "sep"));
-    panel.appendChild(menuItem("Downloads", "Ctrl+J", () => act("downloads")));
+    panel.appendChild(menuItem("Downloads", "Ctrl+Shift+J", () => act("downloads")));
     if (!data.restricted) {
       panel.appendChild(menuItem(data.bookmarked ? "Remove this bookmark" : "Bookmark this tab…", "Ctrl+D",
         () => act("bookmark-active"), { disabled: !data.canBookmark }));
@@ -280,7 +280,8 @@
         actions.appendChild(iconBtn("close", "Remove from list", "dl-dismiss"));
       }
       row.appendChild(actions);
-      if (done) row.addEventListener("click", () => act("dl-open", d.id));
+      // only a FINISHED download opens when you click its row, so only that row gets the pointer
+      if (done) { row.classList.add("openable"); row.addEventListener("click", () => act("dl-open", d.id)); }
       list.appendChild(row);
     });
     panel.appendChild(list);
@@ -338,6 +339,98 @@
     panel.appendChild(body);
   }
 
+  // ── edit bookmark (Chrome's "Edit bookmark": Name, URL, Cancel / Save; normal mode only) ──────────
+  function renderBookmarkEdit() {
+    panel.textContent = "";
+    const b = data.bookmark;
+    if (!b) { act("close"); return; }
+    if (data.bubble) return renderBookmarkBubble(b);
+    place(380);
+    panel.appendChild(el("div", "head", "Edit bookmark"));
+    const form = el("div", "bm-edit");
+    const field = (label, value, type) => {
+      const wrap = el("label", "bm-field");
+      wrap.appendChild(el("span", "bm-label", label));
+      const input = el("input");
+      input.type = type; input.value = value; input.spellcheck = false;
+      wrap.appendChild(input);
+      form.appendChild(wrap);
+      return input;
+    };
+    const name = field("Name", b.title, "text");
+    const url = field("URL", b.url, "text");
+    const msg = el("div", "bm-msg");
+    form.appendChild(msg);
+    const row = el("div", "bm-buttons");
+    const cancel = el("button", "secondary", "Cancel");
+    const save = el("button", "primary", "Save");
+    row.appendChild(cancel);
+    row.appendChild(save);
+    form.appendChild(row);
+    panel.appendChild(form);
+    const ERR = { "bad-url": "Enter a valid web address (http or https).", duplicate: "That address is already bookmarked.", "not-found": "This bookmark no longer exists.", unavailable: "Editing bookmarks is not available." };
+    let busy = false;
+    const submit = async () => {
+      if (busy) return;
+      busy = true; save.disabled = true;
+      const r = await api.saveBookmark(name.value, url.value).catch(() => ({ ok: false, error: "unavailable" }));
+      busy = false; save.disabled = false;
+      if (r && r.ok) return;   // main closes the box
+      msg.textContent = ERR[r && r.error] || ERR.unavailable;
+      url.focus(); url.select();
+    };
+    cancel.addEventListener("click", () => act("close"));
+    save.addEventListener("click", submit);
+    form.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    name.focus(); name.select();
+  }
+
+  // Chrome's star bubble: "Bookmark added" (or "Edit bookmark" on a page that already is), page tile, Name,
+  // Folder, Done / Remove. Every bookmark lives on the bookmarks bar here, so the folder list has that one entry.
+  function renderBookmarkBubble(b) {
+    panel.textContent = "";
+    place(450, { alignRight: true });
+    const head = el("div", "bmb-head");
+    head.appendChild(el("div", "bmb-title", data.bubble.added ? "Bookmark added" : "Edit bookmark"));
+    const x = el("button", "bmb-x");
+    x.title = "Close";
+    x.appendChild(I.icon("close"));
+    head.appendChild(x);
+    panel.appendChild(head);
+    const body = el("div", "bmb-body");
+    const tile = el("div", "bmb-tile");
+    tile.appendChild(favIcon(b.favicon));
+    body.appendChild(tile);
+    const form = el("div", "bmb-form");
+    const nameRow = el("label", "bmb-row");
+    nameRow.appendChild(el("span", "bmb-label", "Name"));
+    const name = el("input");
+    name.type = "text"; name.value = b.title; name.spellcheck = false;
+    nameRow.appendChild(name);
+    const folderRow = el("label", "bmb-row");
+    folderRow.appendChild(el("span", "bmb-label", "Folder"));
+    const folder = el("select");
+    folder.appendChild(el("option", "", "Bookmarks bar"));
+    folderRow.appendChild(folder);
+    form.appendChild(nameRow);
+    form.appendChild(folderRow);
+    body.appendChild(form);
+    panel.appendChild(body);
+    const buttons = el("div", "bmb-buttons");
+    const done = el("button", "primary", "Done");
+    const remove = el("button", "secondary", "Remove");
+    buttons.appendChild(done);
+    buttons.appendChild(remove);
+    panel.appendChild(buttons);
+    // Done, the X and Enter keep the name (Chrome applies it when the bubble closes)
+    const finish = async () => { await api.saveBookmark(name.value).catch(() => null); act("close"); };
+    done.addEventListener("click", finish);
+    x.addEventListener("click", finish);
+    remove.addEventListener("click", () => api.removeBookmark());
+    name.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); finish(); } });
+    name.focus(); name.select();
+  }
+
   // ── find bubble ───────────────────────────────────────────────────────
   function renderFind() {
     document.body.classList.add("bubble");
@@ -385,6 +478,7 @@
     else if (data.kind === "siteinfo") renderSiteInfo();
     else if (data.kind === "find") renderFind();
     else if (data.kind === "unlock") renderUnlock();
+    else if (data.kind === "bookmark-edit") renderBookmarkEdit();
   }
 
   backdrop.addEventListener("mousedown", () => act("close"));

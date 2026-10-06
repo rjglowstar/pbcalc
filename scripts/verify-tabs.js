@@ -21,7 +21,9 @@ process.on("unhandledRejection", (e) => console.log("  .. UNHANDLED " + (e && e.
 const check = (name, cond) => { results.push({ name, pass: !!cond }); console.log("  .. " + (cond ? "ok " : "FAIL ") + name); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, ms = 8000) => { for (let i = 0; i < ms / 100; i++) { if (await fn()) return true; await sleep(100); } return false; };
-setTimeout(() => { console.log("WATCHDOG after " + results.length); app.exit(2); }, 120000).unref();
+// A hung suite must still end, but the limit has to fit the suite: it grew past 120s once the
+// keyboard-focus checks (each waits out the 300ms the old view lingers) were added.
+setTimeout(() => { console.log("WATCHDOG after " + results.length); app.exit(2); }, 360000).unref();
 
 // A tiny site with a real <link rel=icon>, and pages that keep firing title updates so the strip
 // is pushed a lot (that churn is what used to blank the favicons).
@@ -29,7 +31,11 @@ const ICON = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 let srv, base;
 const ready = new Promise((resolve) => {
   srv = http.createServer((req, res) => {
+    // echoes the User-Agent the server actually received (what a WAF would see)
+    if (req.url === "/ua-probe") { res.setHeader("x-seen-ua", req.headers["user-agent"] || ""); return res.end("ok"); }
     if (req.url === "/icon.png") { res.setHeader("content-type", "image/png"); return res.end(ICON); }
+    // a page whose script never yields: nothing can be read from it, so closing it must still finish
+    if (req.url.startsWith("/hang")) { res.setHeader("content-type", "text/html"); return res.end('<!doctype html><title>Hang</title><body>hang<script>setTimeout(function(){ for (;;) {} }, 300)</script>'); }
     if (req.url.startsWith("/app")) {
       // Like the PB ERP: the session lives in sessionStorage, not in a cookie. No token -> login.
       res.setHeader("content-type", "text/html");
@@ -497,6 +503,330 @@ app.whenReady().then(async () => {
   check("...and so do the inactive close buttons (Chrome: from 84px)", normal.x);
   state.tabs.slice(1).forEach((t) => tm.closeTab(t.id));
   await sleep(1500);
+
+  // ── tabs present plain Chrome, in the session they really use ──
+  // Tabs run in the in-memory TAB_PARTITION, not defaultSession. The UA rule used to be applied to
+  // defaultSession only, so every tab sent "...Chrome/146 Electron/41.x..." — the token Akamai (Meesho)
+  // answers with a 403. Checked on the HEADER the server really received, not just navigator.userAgent.
+  {
+    const hdr = await new Promise((resolve) => {
+      const t = state.tabs.find((x) => x.url && x.url.startsWith(base));
+      const wc = t ? t.view.webContents : tm.getActiveTab().view.webContents;
+      const { net } = require("electron");
+      // a request made BY the tab's own session, so it goes through that session's header rules
+      const req = net.request({ url: base + "/ua-probe", session: wc.session });
+      let ua = "";
+      req.on("response", (r) => { ua = r.headers["x-seen-ua"] || ""; r.on("data", () => {}); r.on("end", () => resolve(ua)); });
+      req.on("error", () => resolve("ERR"));
+      req.end();
+    });
+    const tabWc = tm.getActiveTab().view.webContents;
+    const pageUA = await tabWc.executeJavaScript("navigator.userAgent");
+    check("a tab's session is the in-memory TAB_PARTITION", tabWc.session === require("electron").session.fromPartition(require("../electron/constants").TAB_PARTITION) && tabWc.session.getStoragePath() === null);
+    check("the User-Agent a tab SENDS has no Electron token, and carries the real Chrome version",
+      !!hdr && hdr !== "ERR" && !/Electron/i.test(hdr) && hdr.includes("Chrome/" + process.versions.chrome));
+    check("...and navigator.userAgent in the page agrees with it", pageUA === hdr);
+  }
+
+  // ── Ctrl+Shift+T: each closed tab comes back in ITS OWN slot, and the keyboard keeps working ──
+  // Reported: close tabs from random positions, restore, and only ONE restore worked until a tab was
+  // switched by hand. The positions were fine; the cause was focus. Closing the focused tab leaves
+  // NO webContents focused, and restoring (a keyboard action, nothing clicked) did not give the new
+  // view focus, so the next Ctrl+Shift+T reached no before-input-event handler. A click on a tab
+  // hands focus back, which is why switching tabs "fixed" it.
+  {
+    const { webContents } = require("electron");
+    win.show(); win.focus(); await sleep(400);
+    const urls = [91, 92, 93, 94].map((n) => base + "/" + n);
+    const idFor = (u) => (state.tabs.find((t) => t.url === u) || {}).id;
+    const order = () => state.tabs.map((t) => t.url).filter((u) => urls.includes(u)).map((u) => u.slice(-2)).join(",");
+    const holder = () => {
+      const f = webContents.getAllWebContents().find((w) => !w.isDestroyed() && w.isFocused());
+      const t = f && state.tabs.find((x) => x.view.webContents === f);
+      if (!f) { console.log("     [diag] nobody holds focus; window OS-active: " + win.isFocused() + "; focused window is " + (require("electron").BrowserWindow.getFocusedWindow() ? "one of ours" : "NOT ours")); }
+      return t ? t.url : f ? "(shell or popup)" : "NOBODY";
+    };
+    const activeUrl = () => (state.tabs.find((t) => t.id === state.activeTabId) || {}).url;
+    for (const u of urls) { tm.createTab(u); await sleep(700); }
+    check("[reopen] setup: four test tabs open, in order", order() === "91,92,93,94");
+    tm.getActiveTab().view.webContents.focus(); await sleep(300);
+    // without this the focus checks below would prove nothing
+    check("[reopen] harness: the window can hold keyboard focus on a tab", holder() === urls[3]);
+
+    // close from the MIDDLE, then the FRONT (not the end)
+    tm.closeTab(idFor(urls[2])); await sleep(400);
+    tm.closeTab(idFor(urls[0])); await sleep(400);
+    check("[reopen] closed 93 (middle) and 91 (front)", order() === "92,94");
+
+    tm.reopenClosedTab(); await sleep(900);
+    check("[reopen] #1 brings back 91 at the front", order() === "91,92,94");
+    check("[reopen] #1 shows it and leaves keyboard focus ON it (was: nobody)", activeUrl() === urls[0] && holder() === urls[0]);
+    tm.reopenClosedTab(); await sleep(900);
+    check("[reopen] #2 brings back 93 between 92 and 94", order() === "91,92,93,94");
+    check("[reopen] #2 keeps focus on the restored tab", activeUrl() === urls[2] && holder() === urls[2]);
+    const countBefore = state.tabs.length;
+    const urlsBefore = state.tabs.map((t) => t.url);
+    tm.reopenClosedTab(); await sleep(500);
+    // History is LIFO and spans the whole run, so a further press brings back the next-OLDER page
+    // closed earlier (measured: an earlier /9) — at most one tab, and never a copy of these four.
+    const extra = state.tabs.filter((t) => !urlsBefore.includes(t.url));
+    check("[reopen] one more press restores at most the next-older page, no duplicates of these four",
+      extra.length <= 1 && order() === "91,92,93,94" && extra.every((t) => !urls.includes(t.url)));
+    for (const t of extra) tm.closeTab(t.id);
+    await sleep(300);
+    check("[reopen] (cleanup) back to the same tab count", state.tabs.length === countBefore);
+
+    // a real keystroke path: Ctrl+Shift+T on the focused page goes through before-input-event
+    tm.closeTab(idFor(urls[1])); await sleep(400);
+    check("[reopen] closed 92", order() === "91,93,94");
+    const wcNow = tm.getActiveTab().view.webContents;
+    wcNow.focus(); await sleep(200);
+    wcNow.sendInputEvent({ type: "keyDown", keyCode: "T", modifiers: ["control", "shift"] });
+    wcNow.sendInputEvent({ type: "keyUp", keyCode: "T", modifiers: ["control", "shift"] });
+    await sleep(900);
+    check("[reopen] the Ctrl+Shift+T keystroke restores 92 into its slot", order() === "91,92,93,94");
+    check("[reopen] ...and focus stays on a tab for the next press", holder() === activeUrl());
+    for (const u of urls) { const id = idFor(u); if (id != null) tm.closeTab(id); }
+    await sleep(500);
+  }
+
+  // ── Ctrl+W: keyboard focus follows to the tab that takes over, so the NEXT shortcut still works ──
+  // Closing the focused tab left no webContents focused (measured: NOBODY), and the next keystroke
+  // reached no handler until a tab was clicked ("only works once"). Chrome closes tab after tab on
+  // repeated Ctrl+W, and the tab to the right takes over (the left one when the last tab goes).
+  // Keystrokes here go ONLY to the webContents that holds focus, like the OS: nobody focused = lost.
+  {
+    const { webContents } = require("electron");
+    win.show(); win.focus(); await sleep(400);
+    const urls = [81, 82, 83, 84].map((n) => base + "/" + n);
+    const mine = () => state.tabs.map((t) => t.url).filter((u) => urls.includes(u)).map((u) => u.slice(-2)).join(",");
+    const focusedWc = () => webContents.getAllWebContents().find((w) => !w.isDestroyed() && w.isFocused());
+    const holderUrl = () => { const f = focusedWc(); const t = f && state.tabs.find((x) => x.view.webContents === f); if (!f) { console.log("     [diag] nobody holds focus; window OS-active: " + win.isFocused() + "; focused window is " + (require("electron").BrowserWindow.getFocusedWindow() ? "one of ours" : "NOT ours")); } return t ? t.url : f ? "(shell or popup)" : "NOBODY"; };
+    const activeUrl = () => (state.tabs.find((t) => t.id === state.activeTabId) || {}).url;
+    const press = (k, mods) => {
+      const f = focusedWc();
+      if (!f) return false; // nobody has focus: the keystroke goes nowhere
+      f.sendInputEvent({ type: "keyDown", keyCode: k, modifiers: mods });
+      f.sendInputEvent({ type: "keyUp", keyCode: k, modifiers: mods });
+      return true;
+    };
+    for (const u of urls) { tm.createTab(u); await sleep(700); }
+    check("[ctrl+w] setup: four test tabs open, in order", mine() === "81,82,83,84");
+    tm.getActiveTab().view.webContents.focus(); await sleep(300);
+    check("[ctrl+w] harness: a tab holds keyboard focus", holderUrl() === urls[3]);
+
+    // close the LAST tab with the keyboard: the one to its left takes over, and holds focus
+    check("[ctrl+w] #1 key reached a handler", press("W", ["control"]));
+    await sleep(700);
+    check("[ctrl+w] #1 closed 84; 83 (left neighbour) takes over", mine() === "81,82,83" && activeUrl() === urls[2]);
+    check("[ctrl+w] #1 leaves keyboard focus ON the new tab (was: nobody)", holderUrl() === urls[2]);
+    // the very same shortcut again, with nothing clicked in between
+    check("[ctrl+w] #2 key still reaches a handler", press("W", ["control"]));
+    await sleep(700);
+    check("[ctrl+w] #2 closed 83; 82 takes over", mine() === "81,82" && activeUrl() === urls[1] && holderUrl() === urls[1]);
+
+    // a MIDDLE tab: the tab to its RIGHT takes over (Chrome), and focus goes with it
+    tm.createTab(urls[2]); await sleep(700);   // order is now 81,82,83 with 83 active
+    tm.switchTab((state.tabs.find((t) => t.url === urls[1]) || {}).id); await sleep(300);
+    tm.getActiveTab().view.webContents.focus(); await sleep(200);
+    check("[ctrl+w] middle: 82 is active between 81 and 83", activeUrl() === urls[1] && mine() === "81,82,83");
+    check("[ctrl+w] middle: key reached a handler", press("W", ["control"]));
+    await sleep(700);
+    check("[ctrl+w] middle: the RIGHT neighbour (83) takes over and holds focus", mine() === "81,83" && activeUrl() === urls[2] && holderUrl() === urls[2]);
+
+    // closing a tab that is NOT the active one must not move focus away from the active page
+    tm.createTab(urls[3]); await sleep(700);   // 81,83,84 with 84 active
+    tm.getActiveTab().view.webContents.focus(); await sleep(200);
+    const bgId = (state.tabs.find((t) => t.url === urls[0]) || {}).id;
+    tm.closeTab(bgId); await sleep(500);
+    check("[ctrl+w] closing a BACKGROUND tab leaves the active page and its focus alone", mine() === "83,84" && activeUrl() === urls[3] && holderUrl() === urls[3]);
+
+    // Ctrl+W then Ctrl+Shift+T then Ctrl+W: the whole keyboard round trip, nothing clicked
+    check("[ctrl+w] round trip: close", press("W", ["control"]));
+    await sleep(700);
+    check("[ctrl+w] round trip: Ctrl+Shift+T reaches a handler", press("T", ["control", "shift"]));
+    await sleep(900);
+    check("[ctrl+w] round trip: 84 is restored and focused", mine() === "83,84" && activeUrl() === urls[3] && holderUrl() === urls[3]);
+    for (const u of urls) { const t = state.tabs.find((x) => x.url === u); if (t) tm.closeTab(t.id); }
+    await sleep(500);
+  }
+
+  // ── keyboard focus follows EVERY tab switch, so shortcuts keep working afterwards ──
+  // Reported: after closing tabs and restoring them, Ctrl+Shift+O / Ctrl+Shift+J (our own pages) did nothing
+  // while the same pages opened fine from the menu. Cause (measured): switchTab attached the new view
+  // but never focused it, and ~300ms later the OLD view — which still held focus — was detached, so
+  // focus was NOBODY and every later shortcut reached no before-input-event handler. A mouse click
+  // gave focus back, which is why opening things manually "fixed" it. Brand-new tabs additionally
+  // ignored a focus() made before their first load began, so createTab repeats it afterwards.
+  // Keystrokes here go ONLY to the webContents that holds focus (like the OS): nobody = lost.
+  {
+    const { webContents } = require("electron");
+    const popup = require("../electron/popup");
+    const nm = (u) => { u = String(u || ""); const m = /\/(\w+)\.html$/.exec(u); return m ? m[1] : u.replace(base, "").replace(/^\//, "") || "blank"; };
+    const focusedWc = () => webContents.getAllWebContents().find((w) => !w.isDestroyed() && w.isFocused());
+    const holder = () => { const f = focusedWc(); if (!f) { console.log("     [diag] nobody holds focus; window OS-active: " + win.isFocused() + "; focused window is " + (require("electron").BrowserWindow.getFocusedWindow() ? "one of ours" : "NOT ours")); return "NOBODY"; } if (f === win.webContents) return "shell"; const t = state.tabs.find((x) => x.view.webContents === f); return t ? nm(t.url) : "popup"; };
+    const press = (k, mods) => { const f = focusedWc(); if (!f) return false; f.sendInputEvent({ type: "keyDown", keyCode: k, modifiers: mods }); f.sendInputEvent({ type: "keyUp", keyCode: k, modifiers: mods }); return true; };
+    const activeT = () => state.tabs.find((t) => t.id === state.activeTabId);
+    const settle = () => sleep(900); // longer than the 300ms the old view lingers before it is detached
+    const reset = async () => {
+      popup.close(); win.show(); win.focus(); await sleep(200);
+      while (state.tabs.length > 1) tm.closeTab(state.tabs[state.tabs.length - 1].id);
+      await sleep(250);
+      for (let i = 1; i <= 3; i++) { tm.createTab(base + "/7" + i); await sleep(450); }
+      activeT().view.webContents.focus(); await sleep(350);
+    };
+    const secondShortcutWorks = async () => {
+      // Ctrl+Shift+B toggles the bookmarks bar: a harmless shortcut that needs a live handler
+      const had = state.bookmarksBarVisible;
+      const delivered = press("B", ["control", "shift"]);
+      await sleep(300);
+      const worked = delivered && state.bookmarksBarVisible !== had;
+      if (worked) { press("B", ["control", "shift"]); await sleep(250); } // put it back
+      return worked;
+    };
+
+    await reset();
+    check("[focus] harness: a page holds keyboard focus to start", holder() === "73");
+    press("O", ["control", "shift"]); await settle();
+    check("[focus] Ctrl+Shift+O opens the bookmark manager...", nm(activeT().url) === "manager");
+    check("[focus] ...and the NEW page holds focus (was: nobody)", holder() === "manager");
+    check("[focus] ...so the next shortcut still works", await secondShortcutWorks());
+
+    await reset();
+    press("J", ["control", "shift"]); await settle();
+    check("[focus] Ctrl+Shift+J opens the Downloads page, which holds focus", nm(activeT().url) === "downloads" && holder() === "downloads");
+    check("[focus] ...and the next shortcut still works", await secondShortcutWorks());
+
+    await reset();
+    press("Tab", ["control"]); await settle();
+    check("[focus] Ctrl+Tab: the next tab holds focus and shortcuts still work", holder() !== "NOBODY" && holder() === nm(activeT().url) && await secondShortcutWorks());
+    await reset();
+    press("1", ["control"]); await settle();
+    check("[focus] Ctrl+1: the first tab holds focus and shortcuts still work", holder() !== "NOBODY" && holder() === nm(activeT().url) && await secondShortcutWorks());
+
+    // the ⋮ menu and tab search (popups hold focus while open) — the other way to "open it manually"
+    await reset();
+    popup.open("menu", null); await sleep(900);
+    popup.handleAction("settings"); await settle();
+    check("[focus] ⋮ menu → Settings: the Settings page holds focus", nm(activeT().url) === "settings" && holder() === "settings");
+    check("[focus] ...and the next shortcut still works", await secondShortcutWorks());
+    await reset();
+    popup.open("tabsearch", null); await sleep(900);
+    popup.handleAction("activate-tab", state.tabs[0].id); await settle();
+    check("[focus] tab search → activate: that tab holds focus and shortcuts still work", holder() === nm(activeT().url) && holder() !== "NOBODY" && await secondShortcutWorks());
+
+    // what must NOT change: the shell keeps focus when that is where the user is working
+    await reset();
+    win.webContents.focus(); await sleep(300);
+    tm.switchTab(state.tabs[0].id); await settle();
+    check("[focus] clicking the tab strip (shell focused): focus is NOT stolen from the shell", holder() === "shell");
+    await reset();
+    press("T", ["control"]); await settle();
+    check("[focus] Ctrl+T still ends with the address bar (shell) focused", holder() === "shell");
+
+    // YOUR exact flow: build a strip like the real one, close down to one tab with Ctrl+W, restore
+    // them all with Ctrl+Shift+T, then open our own pages by shortcut
+    await reset();
+    for (let i = 4; i <= 8; i++) { tm.createTab(base + "/7" + i); await sleep(350); }
+    tm.createTab(); await sleep(350); tm.openSettings(); await sleep(400);
+    activeT().view.webContents.focus(); await sleep(300);
+    const opened = state.tabs.length;
+    let closes = 0; while (state.tabs.length > 1 && closes < 20 && press("W", ["control"])) { closes++; await sleep(330); }
+    check("[flow] Ctrl+W closed down to one tab with every press delivered", state.tabs.length === 1 && closes === opened - 1);
+    let restores = 0; for (let i = 0; i < 25 && press("T", ["control", "shift"]); i++) { const b = state.tabs.length; await sleep(450); if (state.tabs.length > b) restores++; else break; }
+    check("[flow] Ctrl+Shift+T restored the closed web pages (every press delivered)", restores >= 6);
+    check("[flow] after restoring, a page holds focus", holder() !== "NOBODY");
+    press("O", ["control", "shift"]); await settle();
+    check("[flow] then Ctrl+Shift+O opens the bookmark manager", nm(activeT().url) === "manager" && holder() === "manager");
+    press("J", ["control", "shift"]); await settle();
+    check("[flow] then Ctrl+Shift+J opens the Downloads page", nm(activeT().url) === "downloads" && holder() === "downloads");
+    check("[flow] and shortcuts still work after both", await secondShortcutWorks());
+    while (state.tabs.length > 1) tm.closeTab(state.tabs[state.tabs.length - 1].id);
+    await sleep(300);
+  }
+
+  // ── Ctrl+Shift+T brings the tab's LOGIN back (sessionStorage), like Chrome ──
+  // Reported: log in to the PB ERP, close the tab, reopen it with Ctrl+Shift+T -> the login page. The ERP
+  // keeps its login in sessionStorage (the sibling ERP shell reads fxCredentials there), which belongs to
+  // the TAB and died with its webContents; the closed-tab list only remembered the URL. Cookies and
+  // localStorage were never lost: every tab shares one session. Chrome restores a closed tab's
+  // sessionStorage; so do we now (same mechanism as Duplicate), held in memory only.
+  {
+    win.show(); win.focus(); await sleep(300);
+    const activeT = () => state.tabs.find((t) => t.id === state.activeTabId);
+    const outOf = (wc) => wc.executeJavaScript('document.getElementById("out") ? document.getElementById("out").textContent : "(no #out)"');
+    const resetStrip = async () => { while (state.tabs.length > 1) tm.closeTab(state.tabs[state.tabs.length - 1].id); await sleep(500); };
+    // a tab on /app<n> that is logged in: the page reads sessionStorage("authToken") on load
+    const loginTab = async (n, token, extra) => {
+      tm.createTab(base + "/app" + n); await sleep(800);
+      const wc = activeT().view.webContents;
+      await wc.executeJavaScript('sessionStorage.setItem("authToken", ' + JSON.stringify(token) + '); ' + (extra || "") + " 0");
+      await wc.loadURL(base + "/app" + n); await sleep(500);
+      return activeT();
+    };
+    const slotOf = (tab) => state.tabs.indexOf(tab);
+    const tokenRe = /DASHBOARD (\S+)/;
+
+    await resetStrip();
+    const t1 = await loginTab(1, "alpha");
+    const wc1 = t1.view.webContents;
+    check("[restore] setup: the tab is logged in (the page sees its sessionStorage token)", /DASHBOARD alpha/.test(await outOf(wc1)));
+    const slot1 = slotOf(t1);
+    tm.closeTab(t1.id);
+    check("[restore] the tab leaves the strip immediately (only its page lingers a few ms)", !state.tabs.includes(t1));
+    await sleep(900);
+    check("[restore] ...and that page is destroyed afterwards (nothing is leaked)", wc1.isDestroyed());
+    await tm.reopenClosedTab(); await sleep(1200);
+    const back1 = activeT();
+    check("[restore] Ctrl+Shift+T reopens it in its own slot", String(back1.url).endsWith("/app1") && slotOf(back1) === slot1);
+    check("[restore] ...and it is STILL LOGGED IN (was: the login page)", /DASHBOARD alpha/.test(await outOf(back1.view.webContents)));
+
+    // sessionStorage is per TAB: another tab on the same site must not inherit the login
+    tm.createTab(base + "/app9"); await sleep(900);
+    check("[restore] a different tab on the same site does NOT inherit that login", /LOGIN PAGE/.test(await outOf(activeT().view.webContents)));
+    // ...and restoring is once: the restored data is not served to later page loads of that tab
+    await back1.view.webContents.executeJavaScript('sessionStorage.removeItem("authToken"); 0');
+    await back1.view.webContents.reload(); await sleep(800);
+    check("[restore] the restored login is not re-applied on every reload (logging out sticks)", /LOGIN PAGE/.test(await outOf(back1.view.webContents)));
+
+    // two tabs closed back to back, restored back to back: LIFO order and each keeps ITS OWN login
+    await resetStrip();
+    const ta = await loginTab(2, "tok-A"); const tb = await loginTab(3, "tok-B");
+    const slotA = slotOf(ta), slotB = slotOf(tb);
+    tm.closeTab(tb.id); tm.closeTab(ta.id);            // no pause: both snapshots are in flight together
+    tm.reopenClosedTab(); tm.reopenClosedTab();         // no pause: the second waits for the first
+    await sleep(2500);
+    const restoredA = state.tabs.find((t) => String(t.url).endsWith("/app2")), restoredB = state.tabs.find((t) => String(t.url).endsWith("/app3"));
+    check("[restore] quick close,close,restore,restore brings both back", !!restoredA && !!restoredB);
+    check("[restore] ...each in its own slot", !!restoredA && !!restoredB && slotOf(restoredA) === slotA && slotOf(restoredB) === slotB);
+    check("[restore] ...and each with ITS OWN login (A:" + "tok-A, B:tok-B)",
+      !!restoredA && !!restoredB && (tokenRe.exec(await outOf(restoredA.view.webContents)) || [])[1] === "tok-A" && (tokenRe.exec(await outOf(restoredB.view.webContents)) || [])[1] === "tok-B");
+
+    // a page that never yields: its sessionStorage cannot be read, but closing must still finish
+    await resetStrip();
+    tm.createTab(base + "/hang"); await sleep(1500);   // loads, then spins forever 300ms later
+    const hungTab = activeT(); const hungWc = hungTab.view.webContents;
+    tm.closeTab(hungTab.id);
+    check("[restore] a HUNG page leaves the strip at once", !state.tabs.includes(hungTab));
+    check("[restore] ...and is still destroyed after the snapshot gives up (no leaked, spinning page)", await until(() => hungWc.isDestroyed(), 4000));
+    await tm.reopenClosedTab(); await sleep(1000);
+    check("[restore] ...and it can still be reopened (without a login to restore)", String(activeT().url).endsWith("/hang"));
+
+    // memory guard: the closed-tab list lives in RAM, so an enormous sessionStorage is not kept
+    await resetStrip();
+    const big = await loginTab(4, "big-token", 'sessionStorage.setItem("pad", "x".repeat(600 * 1024));');
+    tm.closeTab(big.id); await sleep(900);
+    await tm.reopenClosedTab(); await sleep(1200);
+    check("[restore] an oversized sessionStorage (>512KB) is dropped, the tab still reopens", String(activeT().url).endsWith("/app4") && /LOGIN PAGE/.test(await outOf(activeT().view.webContents)));
+
+    // our own pages and blanks never enter the list, so there is nothing to snapshot for them
+    await resetStrip();
+    tm.openSettings(); await sleep(700);
+    const settingsWc = activeT().view.webContents;
+    tm.closeTab(activeT().id); await sleep(300);
+    check("[restore] an internal page (Settings) closes and is destroyed promptly, with no snapshot wait", settingsWc.isDestroyed());
+    await resetStrip();
+  }
 
   // ── Restricted Mode gets Duplicate too ("both mode"), still confined to the bookmark's site ──
   const bm = require("../electron/bookmarks/bookmarkStore");

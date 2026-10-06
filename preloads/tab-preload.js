@@ -55,6 +55,41 @@ try {
           });
         }
       } catch(e) {}
+
+      // Real Chrome's window.chrome carries app, csi and loadTimes; Electron's is an EMPTY object, which Google's
+      // sign-in reads as "embedded browser" ("This browser or app may not be secure"). Measured against Google
+      // itself: filling these in was the one change that stopped the refusal (the identity headers, our own
+      // extras and the notification state made no difference). Additive only: nothing already there is replaced.
+      try {
+        if (window.chrome && typeof window.chrome === 'object') {
+          var navStart = (performance.timing && performance.timing.navigationStart) || Date.now();
+          if (!window.chrome.app) {
+            window.chrome.app = {
+              isInstalled: false,
+              InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+              RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+              getDetails: function getDetails() { return null; },
+              getIsInstalled: function getIsInstalled() { return false; },
+              runningState: function runningState() { return 'cannot_run'; }
+            };
+          }
+          if (!window.chrome.csi) {
+            window.chrome.csi = function csi() {
+              return { onloadT: Date.now(), startE: navStart, pageT: Date.now() - navStart, tran: 15 };
+            };
+          }
+          if (!window.chrome.loadTimes) {
+            window.chrome.loadTimes = function loadTimes() {
+              return {
+                requestTime: navStart / 1000, startLoadTime: navStart / 1000, commitLoadTime: navStart / 1000,
+                finishDocumentLoadTime: 0, finishLoadTime: 0, firstPaintTime: 0, firstPaintAfterLoadTime: 0,
+                navigationType: 'Other', wasFetchedViaSpdy: true, wasNpnNegotiated: true,
+                npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false, connectionInfo: 'h2'
+              };
+            };
+          }
+        }
+      } catch(e) {}
     })();
   `, true);
 } catch (e) {}

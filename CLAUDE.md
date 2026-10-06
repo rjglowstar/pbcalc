@@ -89,6 +89,23 @@ Two things define this browser against every mainstream one:
 - **Switches:** `app.commandLine.appendSwitch("disable-gpu-shader-disk-cache")` and `app.commandLine.appendSwitch("disable-http-cache")`.
 - **Purpose:** Prevents Windows file locking collisions on Chromium cache files (`net\disk_cache` / `gpu_disk_cache` Access is denied console errors) during app launches or rapid restarts.
 
+### 5. Google sign-in ("This browser or app may not be secure") — `window.chrome`
+- **Target File:** [tab-preload.js](file:///d:/Project/PBCalc/preloads/tab-preload.js), the same injected block as the Buketo helpers.
+- **Problem & root cause (measured against Google itself, not assumed):** signing in to Google, or to anything that
+  uses "Continue with Google" (ChatGPT), ended on `accounts.google.com/v3/signin/rejected`. Real Chrome's
+  `window.chrome` has `app`, `csi` and `loadTimes`; Electron's is an EMPTY object, which Google reads as an embedded
+  browser. Method: enter an address that does not exist and see which answer Google gives ("Couldn't find this
+  account" = browser accepted, "Couldn't sign you in" = refused), with each candidate difference applied ALONE:
+  Chrome-like UA/brands/client hints -> still refused; hiding `Object.prototype.isSuspend` -> refused; hiding
+  `window.vaultAPI` -> refused; `Notification.permission` -> refused; **filling in `window.chrome` -> accepted.**
+- **Solution:** the injected script adds `chrome.app`, `chrome.csi`, `chrome.loadTimes` when missing (additive,
+  never replaces anything). The `isSuspend` trap above stays: the Buketo site depends on it.
+- **Known differences left alone on purpose** (they did not change Google's answer): the client-hint brand list has
+  no "Google Chrome" entry and the UA carries the full Chromium version (Chrome sends `.0.0.0`), `Accept-CH`
+  requests are not honoured, `Accept-Language` is `en-US` only. Do not "fix" those without the same kind of test.
+- **Limit:** this is Google's heuristic, not a contract; it can change. Re-run the method above if sign-in breaks
+  again. Repeated probing makes Google show a "type the text you hear or see" check for a while.
+
 ## Architecture
 
 - `electron/main.js` — entry point. Sets the `userData` path (`C:\PBCalc`) first, then wires up the
@@ -96,10 +113,20 @@ Two things define this browser against every mainstream one:
 - `electron/state.js` — single mutable module-level object (`mainWindow`, `tabs`, `activeTabId`),
   same pattern as the sibling ERP project. No store/reducer layer.
 - `electron/constants.js` — `dataDir()` / `resolveDataDir()` / `PREFERRED_DATA_DIR` (the
-  `C:\PBCalc` rule above, dev vs. packaged), tab bar height, tab ceiling, home URL.
-- `electron/tabs/tabManager.js` — the tab engine. Each tab is a `BrowserView`. Deliberately **no**
-  session partition per tab — every tab shares Electron's default persistent session, so logging
-  into a site in one tab keeps you logged in in another tab of the same site, like a real browser.
+  `%LOCALAPPDATA%\PBCalc` rule above, dev vs. packaged), `TAB_PARTITION`, tab bar height, tab
+  ceiling, home URL.
+- `electron/tabs/tabManager.js` — the tab engine. Each tab is a `BrowserView`. Deliberately **no
+  per-tab** session partition: every tab shares ONE session, so logging into a site in one tab
+  keeps you logged in in another tab of the same site, like a real browser. That shared session is
+  the named, **in-memory** partition `TAB_PARTITION` (`"pbcalc"`, no `persist:` prefix, so
+  `getStoragePath()` is `null` — cookies, localStorage and the HTTP cache live in RAM and are gone
+  on exit with nothing on disk). **It is NOT `session.defaultSession`, so anything that must see tab
+  traffic has to target `TAB_PARTITION`:** the Chrome User-Agent / header rules (`main.js`), the
+  download manager's `will-download` (`downloadManager.init`, which listens on both) and
+  `privacy.clearSession()` (clears both). Wiring them to `defaultSession` alone silently broke two
+  things at once: tabs sent the `Electron/x` token in their User-Agent (WAFs such as Akamai on
+  Meesho answer that with a 403) and page downloads were never caught. Tests that hook a session
+  for tab behaviour must use `session.fromPartition(TAB_PARTITION)` too (`verify-features.js`).
   (The sibling ERP project isolates each tab into its own partition instead, because it needs
   several independent logins open side by side — that reasoning does not apply here; do not copy
   that pattern in without a specific reason.) Only the currently active tab's `BrowserView` is
@@ -138,12 +165,64 @@ Two things define this browser against every mainstream one:
   `safeStorage` key; deleting it makes the vault undecryptable.
 - **Bookmarks** (`electron/bookmarks/`): user-curated, persisted in `bookmarks.json`; bar + star
   button in the shell. Stores only what was explicitly bookmarked (no visit data).
+  **Editing them is Chrome's, normal mode only** (`scripts/verify-bookmark-edit.js`, 36 checks):
+  - **The star / Ctrl+D** (`toggleBookmarkActive`): a page that is not bookmarked is added and Chrome's
+    **"Bookmark added" bubble** opens under the star (page tile, Name pre-selected, Folder, Done / Remove, X);
+    on a bookmarked page the same bubble opens as "Edit bookmark". **The star no longer removes by
+    itself** (Chrome never did) - Remove is in the bubble. Done / X / Enter keep the name. Folder lists only
+    "Bookmarks bar" (there are no folders here; do not fake more). Anchored from the star's real rectangle
+    (`showBookmarkBubble`, read from the shell DOM).
+  - **Right-click a bookmark on the bar** (`bookmarkContextMenu`): Open in new tab, Edit..., Delete, Copy link
+    address, Add page..., Bookmark manager, Show bookmarks bar (checkbox). `Edit...` opens the Name + URL dialog.
+    Both are the one popup kind `bookmark-edit` (`renderBookmarkEdit` / `renderBookmarkBubble` in
+    `renderer/popup/popup.js`); saves go through `popup:bookmark-save` / `popup:bookmark-remove`
+    (`popup.saveBookmark` / `removeBookmark`, popup page only; validation = `bookmarkStore.update`: bad
+    address and duplicates are refused with a message).
+  - **Restricted Mode is unchanged: read and open only.** Guarded in FOUR places so no single check carries it:
+    `bookmarkContextMenu`/`openBookmarkEdit` return, `popup.open` refuses the kind (`RESTRICTED_KINDS`),
+    `saveBookmark`/`removeBookmark` re-check `state.restricted`, and `toggleBookmarkActive` returns first.
+    `bookmarks:context-menu` is also accepted from the shell only. The test removes the `popup.open` guard to
+    prove it is the one that fails (negative control).
+  - **A bookmark keeps its page's icon, including inline `data:` ones.** `bookmarkStore` used to accept only
+    http(s) icons, so a site declaring its icon inline (the tab strip showed it fine) was bookmarked with an
+    empty icon and the bar drew the globe (found with a probe page: `data:` -> stored `""`; http, late-loading and
+    `/favicon.ico` icons were fine, so timing was NOT the cause). `isIconUrl` now also accepts `data:image/*` up to
+    32 KB (bigger is dropped, keeps `bookmarks.json` small). Bookmarks that already have no icon **learn it** the
+    next time that exact address shows one (`learnIcon`, called from `page-favicon-updated`; fills only an EMPTY
+    icon, only for a bookmarked address, never in Restricted Mode) - so reopen/reload such a page once. Nothing is
+    recorded for pages that are not bookmarks. The bar shows the TITLE the page had when it was bookmarked (as in
+    Chrome), which can differ from the tab's current title.
+  - **Drag to reorder on the bookmarks bar** (Chrome): HTML5 drag like the tab strip (`bmDragId`, `renderBookmarks`
+    in `shell.js`): the dragged one dims, a 2px accent line shows the landing spot (before/after the hovered
+    bookmark), dropping on the empty part of the bar puts it last, dropping on itself does nothing. Main side:
+    `bookmarks:move` -> `bookmarkStore.moveTo(id, index)` (index into the list WITHOUT the dragged one, clamped),
+    shell sender only, **refused in Restricted Mode** (there the bar items are also `draggable=false`).
+    Favicon `<img>`s are `draggable=false` so the whole bookmark drags. `scripts/verify-bookmark-drag.js` (22
+    checks, run on the second display when there is one). **Not verified with a real OS pointer:** synthetic
+    `sendInputEvent` cannot start Chromium's drag loop, so the test fires the drag events the elements receive
+    (dragstart/dragover/drop/dragend); an attempt to inject real OS mouse input failed because PBCalc could not
+    be raised above the owner's own windows on that display (`WindowFromPoint` returned VS Code). Say so
+    rather than claim a real-mouse drag was proven; the owner confirms it by hand.
+  - A popup **closes when the window loses focus** (`mainWindow.js` "blur", on purpose, like Chrome), so a
+    test that opens one fails if the PC's owner clicks elsewhere meanwhile; `verify-bookmark-edit.js`
+    refocuses and retries its opens.
 - **Downloads** (`electron/downloads/`): in-memory list, never persisted, gone
   on exit (Chrome's permanent download history is deliberately absent). Like Chrome: the toolbar
   downloads button is ALWAYS visible; it opens the "Recent download history" popup (newest 5, system
   file icon, "size • time ago", hover folder/open icons, circled-X close, "Full download history"
-  footer; auto-opens 5s when a download starts). Ctrl+J, ⋮ → Downloads and that footer open the full
-  page `pbcalc://downloads` (`renderer/downloads/`, reuses its tab): search, Clear all, day groups,
+  footer; auto-opens 5s when a download starts). Ctrl+Shift+J, ⋮ → Downloads and that footer open the
+  full page `pbcalc://downloads` (`renderer/downloads/`, reuses its tab). **The shortcut is
+  Ctrl+SHIFT+J, not Chrome's plain Ctrl+J, on purpose (the owner's decision):** one of the sites run
+  in this browser has its own Ctrl+J shortcut that opens a modal, and `before-input-event` runs
+  BEFORE the page, so claiming plain Ctrl+J would make that impossible (Chrome lets the page see it
+  first). Plain Ctrl+J must therefore stay UNCLAIMED and reach the page — `verify-browser.js` has a
+  page-side key listener proving that, and that Ctrl+Shift+J is swallowed by the browser. Do not
+  "restore Chrome parity" here; Chrome's Ctrl+Shift+J (DevTools console) is not implemented, devtools
+  are Ctrl+Shift+I / F12. The labels (toolbar tooltip in `shell.html`/`shell.js`, ⋮ menu hint in
+  `popup.js`) must say Ctrl+Shift+J. It goes straight to the PAGE; only the toolbar button opens
+  the bubble, and a bubble that is already open is closed first. A past change made the key toggle the
+  bubble and reach the page only on a second press; `verify-browser.js` guards page, reuse and bubble-open.
+  Page features: search, Clear all, day groups,
   filename link, "From <origin>", copy link / show in folder / remove, strike-through "Deleted" when
   the file is gone. `window.downloadsAPI` exists only on that file; `downloads:page-*` IPC re-checks the
   sender URL. In Restricted Mode the "From" address is withheld (`publicList`).
@@ -191,8 +270,38 @@ Two things define this browser against every mainstream one:
   spinner, close on hover, drag-reorder, middle-click close, right-click menu (new tab to right,
   reload, duplicate, close others/right). Omnibox: site-info icon (secure/"Not secure"), short
   address when unfocused, select-all on focus, star inside. Reload becomes Stop while loading.
-  Toolbar: downloads button (always shown), ⋮ menu. No History anywhere, and no
-  "reopen closed tab" (both would be history). Bookmarks bar toggle (Ctrl+Shift+B) persists in
+  Toolbar: downloads button (always shown), ⋮ menu. No History page anywhere. **Ctrl+Shift+T
+  (reopen closed tab) exists by the user's decision** and is the one deliberate exception to "keep
+  nothing about visited pages": `closedTabsHistory` in tabManager is a plain in-memory array (last 20
+  http/https URLs, each tab's slot index and its sessionStorage — see "Reopen closed tab brings the
+  LOGIN back"), never written to disk, and gone when the browser
+  closes. It must stay in memory only and must never feed a "recently closed" list or any UI.
+  **KEYBOARD FOCUS FOLLOWS EVERY TAB SWITCH** (`switchTab` ends with `focusActivePageUnlessShell()`, and
+  `createTab` repeats it once the load has started). Without it, after ANY switch that started from a
+  focused page or a popup — Ctrl+Shift+O, Ctrl+Shift+J, Ctrl+Tab, Ctrl+1..9, the ⋮ menu, tab search, closing
+  the active tab, Ctrl+Shift+T — focus sat on the old page at 5ms and was NOBODY by 100ms: `switchTab`
+  only ATTACHED the new view, and ~300ms later the old view (still holding focus) was detached. Every
+  later shortcut then reached no `before-input-event` handler until a mouse click gave focus back —
+  "the shortcut does nothing, opening it from the menu works", "Ctrl+W works once", "one Ctrl+Shift+T
+  works, then nothing". These all had ONE cause, which is why fixing them one call site at a time
+  (first Ctrl+W, then Ctrl+Shift+T) was not enough. **The rule:** the active page takes focus unless
+  the SHELL already has it (typing in the address bar, or just clicked the tab strip) — never steal
+  that. **Trap:** a brand-new view ignores `focus()` until its first load has started, and `createTab`
+  calls `switchTab` BEFORE `load()`, so the focus given inside `switchTab` is lost for new tabs;
+  `createTab` therefore repeats it after `load()` (measured: Ctrl+Shift+O, Ctrl+Shift+J and ⋮ → Settings stayed
+  dead with only the first). Closing a BACKGROUND tab does not switch, so it moves no focus. After a
+  close the tab to the right takes over, or the left one when the last tab was closed (Chrome).
+  `verify-tabs.js` "[reopen]", "[ctrl+w]", "[focus]" and "[flow]" send each keystroke ONLY to the
+  webContents that holds focus, like the OS, so lost focus shows up as a lost keystroke; "[flow]" is
+  the reported sequence (close down to one tab, restore them all, then open our pages by shortcut).
+  **Test traps:** (1) these checks need the window to stay OS-active, so they fail wholesale if the PC
+  is used while they run — the helpers print a `[diag]` line with the window's OS-active state when
+  nobody holds focus; (2) the suite's time limit has to fit it (now 360s). **Not measured:** whether
+  Chrome puts the cursor in the omnibox rather than the page when a close lands on a New Tab page —
+  `scripts/chrome-reference/capture-keys.ps1` drives a real Chrome to find out, but it refuses to send
+  keys unless the machine is idle (it must never fire Ctrl+W into a user's own windows), so run it
+  when nobody is using the PC.
+  Bookmarks bar toggle (Ctrl+Shift+B) persists in
   `settings.json`. Closing the last tab closes the window and quits (Chrome behaviour). Zoom chip
   in the omnibox when zoom is not 100%.
 - **Settings page** (`renderer/settings/`, address `pbcalc://settings`, ⋮ → Settings): Appearance
@@ -330,6 +439,74 @@ Two things define this browser against every mainstream one:
      sends the reply on the first assignment, so an early `e.returnValue = null` silently wins.
   Available in **both modes**: in Restricted Mode the copy inherits the source tab's `site`, so it
   stays confined to the same bookmark, and the tab right-click menu there is Duplicate + Close.
+- **Reopen closed tab brings the LOGIN back (sessionStorage), like Chrome.** The PB ERP
+  (mfg.pb.diamonds) keeps its login in `sessionStorage` (the sibling ERP shell reads
+  `fxCredentials` there), which belongs to the TAB and died with its `webContents`; the closed-tab
+  list only remembered the URL, so Ctrl+Shift+T showed the login page. Cookies/localStorage were never
+  lost (every tab shares one in-memory session — a cookie login survived in the repro). Now `closeTab`
+  removes the tab from the strip at once but lets its PAGE linger a few ms: it reads the tab's
+  `sessionStorage` (`snapshotSessionStorage`, async, so the page must outlive the call) into the
+  closed-tab entry (`entry.session`, `packSessionStorage`), and only then destroys the page and its
+  child window (`destroyPage`). `reopenClosedTab` waits for that snapshot (`entry.pending`) and hands
+  it to `createTab({sessionRestore})` — the same mechanism Duplicate uses. Rules that matter:
+  the snapshot has a 400ms timeout (`SESSION_SNAPSHOT_MS`) so a HUNG page still gets destroyed (tested
+  with a page that spins forever); only tabs that go into the restore list are snapshotted (internal
+  pages and blanks are destroyed immediately); anything over 512KB is dropped (`SESSION_SNAPSHOT_MAX_BYTES`,
+  the list lives in RAM); the entry is taken from the list synchronously and restores are chained
+  (`reopenChain`), so quick Ctrl+Shift+T presses stay LIFO and each tab keeps its OWN login; the data is
+  served once, only to that tab and only for its origin, so a later reload or another tab on the same
+  site does not inherit it. It stays in memory only and is gone when the browser closes — which is
+  the rule: closing a tab clears nothing, closing the BROWSER clears everything (`privacy.js`).
+  Test: `verify-tabs.js` "[restore]".
+- **"Download started" animation, like Chrome** (`electron/dlanimation.js`, `renderer/dlanim/`). With no
+  Save As dialog and no progress anywhere, nothing told you a download had begun. Chrome flies a circled
+  download arrow from the page up to the toolbar Downloads button. **Measured from a real Chrome, not
+  guessed** (`scripts/chrome-reference/capture-dlanim.ps1`, numbers in that folder's README): 64px circle,
+  centred on the button's column, starting ~46.5% of the way down the page, rising ~500ms, opacity ramping
+  0 -> 0.93 then fading out; light = pale blue circle + blue glyph, dark = grey circle + white glyph. It plays
+  for EVERY download here because PBCalc's Downloads button is always present (Chrome plays it only once the
+  button exists; a first download in a clean profile just fades the button in). Mechanics: the shell sits
+  UNDER the page views, so the animation is a small transparent `BrowserView` (like the hover card) kept
+  warm after startup (`warm()`, 2s after the window opens; `play()` builds it on demand if a download comes
+  sooner), attached to the window only for the flight (~640ms) and then taken off. It is positioned from
+  the Downloads button's REAL rectangle (read from the shell DOM; the toolbar is flexbox, not constants) and
+  driven by Web Animations keyframes (`dlanim.js`: the measured table, as fractions of the path so it scales
+  with the window). Triggered from `downloadManager`'s `will-download` at the moment the download really
+  starts (at once; after the Save As answer in "ask" mode), via `playFor(initiator)`: it plays for the
+  tab you are looking at, or a tab opened just for the download (which closes itself); NOT for a background
+  tab, not for a download the app itself starts (no initiator, e.g. Retry), not in full screen or when
+  minimised. A second download restarts the flight (never two overlays). **Known limit:** an Electron view
+  cannot be click-through, so a click in that 80px column during the half second goes to the overlay;
+  Chrome's is click-through. **Gotchas:** `capturePage` returns PREMULTIPLIED colour (at 93% opacity every
+  channel reads 7% darker — un-premultiply before comparing); capturing a view that is not attached never
+  resolves, so tests must read it while the flight is on. Test: `scripts/verify-dlanim.js` (renders the
+  circle at t=134/220/300ms in both themes and checks position, opacity, size and fill against the
+  measurements, plus the when-not-to-play rules).
+- **A page that ends itself takes its tab with it, like Chrome** (`closePageEndedTab`, `wc.once("destroyed")` in
+  `wireTabEvents`). An OAuth / sign-in popup (ChatGPT, Google) calls `window.close()` when it is done; Chromium
+  destroys its webContents, but the popup is wrapped as a TAB (`did-create-window`) and nothing told the strip, so the
+  tab stayed as the ACTIVE tab with no page ("New Tab", spinner) and the next reload / shortcut threw
+  "Cannot read properties of undefined (reading 'isDestroyed')" in the main process (an error dialog). Reproduced
+  with a local page whose popup closes itself, then fixed: the tab is removed, you return to the tab that opened it
+  (only if you were on the popup; if you moved on you are left alone), it is NOT offered by Ctrl+Shift+T, and
+  `view.webContents` may be `undefined` after this - `closeTab`, `activeWebContents` and `reload` tolerate that.
+  Our own `closeTab` takes the tab out of `state.tabs` BEFORE destroying its page, so the handler only ever fires for
+  pages that ended themselves. Test: `scripts/verify-popup-close.js` (11; fails without the handler).
+- **A tab opened only to start a download closes itself, like Chrome** (`closeTabOpenedForDownload`,
+  called from `downloadManager`'s `will-download` with the initiating webContents). A site's Download
+  button often does `window.open(url)` / `target=_blank` / a redirect that ends in a file; Chrome flashes
+  the new tab and closes it, the download carries on, and you are back on your page. PBCalc left a
+  blank tab behind. **The line it draws, measured** (`scripts/chrome-reference/README.md`): at
+  `will-download` such a tab has `wc.getURL() === ""` (nothing ever committed — it never showed a page),
+  whereas a same-tab link's download has the page's own URL. Only the first kind closes; a tab showing
+  a page stays, a `window.open` to a real page stays, and the LAST tab is never closed (it would quit
+  the app). It returns to the tab that opened it (`tab.openerId`, set in `did-create-window`) rather
+  than to whichever tab is last in the strip, but only if the user is still on the download tab. The
+  download is not cancelled by closing its tab (a slow one finishes in full). With "Ask where to save
+  each file" the close waits until the Save As dialog is answered or dismissed, because that dialog
+  hangs off the tab's window. The blank tab never enters the Ctrl+Shift+T list. Test:
+  `scripts/verify-download-tab.js` (also keeps its files out of the real Downloads folder — a probe
+  that did not left files there).
 - **Our own pages have their own tab icon**, not the default globe: magnifier (New Tab), gear
   (Settings), bookmark (Bookmark manager), download arrow (Downloads), grid ("Your sites").
   Built in the MAIN process (`internalFaviconFor` / `svgIcon` in tabManager) and set in
@@ -408,9 +585,23 @@ Two things define this browser against every mainstream one:
   dead for real mouse clicks while every synthetic-click test passed. Anything clickable in the
   strip needs `scripts/manual-os-click.sh` (real OS clicks, moves the mouse; do NOT run it while someone is using the computer, their mouse movement makes it fail), not just `sendInputEvent`.
 - Self-tests (run any with `env -u ELECTRON_RUN_AS_NODE ./node_modules/electron/dist/electron.exe scripts/<file>`):
-  `verify.js` (19), `verify-features.js` (35), `verify-downloads.js` (23), `verify-download-flow.js` (49), `verify-suggestions.js` (19), `verify-browser.js` (62, needs `openssl`; its window is
+  `verify.js` (19), `verify-features.js` (36), `verify-downloads.js` (23), `verify-dlanim.js` (41: the download-started flight, rendered and compared with Chrome's measurements), `verify-download-tab.js` (22: a download opened in a new tab closes that tab, a page tab stays), `verify-download-flow.js` (49), `verify-suggestions.js` (19), `verify-browser.js` (68, needs `openssl`; its window is
   off-screen and needs the occlusion-off switches at the top of the file or synthetic mouse input is
-  dropped), `verify-theme.js` (8: dark mode never reaches the page), `verify-datadir.js` (13, and 13 more with `BAD=1`: the `%LOCALAPPDATA%\PBCalc` rule, the Roaming fallback and the unwritable-folder warning), `verify-tabs.js` (92: favicons incl. internal pages and the app icon, many-tab compression and narrow-tab look, light/dark and reload, stale hover after a native menu, animations, Duplicate incl. session + Restricted Mode), `verify-restricted.js` (103 incl. a restart phase), `verify-ui.js` (117, real mouse events + Chrome tab geometry; `PBCALC_SHOTS=<dir>` saves screenshots). `verify-ui.js` is the only flaky one, and only because it uses the real pointer: a stray mouse move shows up as an odd hover colour or a wrong tab pitch, so re-run it before believing a failure.
+  dropped), `verify-theme.js` (8: dark mode never reaches the page), `verify-datadir.js` (13, and 13 more with `BAD=1`: the `%LOCALAPPDATA%\PBCalc` rule, the Roaming fallback and the unwritable-folder warning), `verify-tabs.js` (155: login restored by Ctrl+Shift+T incl. a hung page and quick close/restore order, keyboard focus after every tab switch incl. the close-all / restore-all / open-our-pages flow, Ctrl+W / Ctrl+Shift+T focus and tab slots, tab User-Agent + in-memory session, favicons incl. internal pages and the app icon, many-tab compression and narrow-tab look, light/dark and reload, stale hover after a native menu, animations, Duplicate incl. session + Restricted Mode), `verify-restricted.js` (103 incl. a restart phase), `verify-ui.js` (117, real mouse events + Chrome tab geometry; `PBCALC_SHOTS=<dir>` saves screenshots). `verify-ui.js` is the only flaky one, and only because it uses the real pointer: a stray mouse move shows up as an odd hover colour or a wrong tab pitch, so re-run it before believing a failure.
+- **Hover / cursor / contrast audit of every surface, light + dark + Restricted** (`scripts/verify-ui-states.js`,
+  40 checks; engine `scripts/audit-ui-states.js`, run it alone for the full per-surface table, env
+  `PBCALC_AUDIT_ONLY=<surface text>`, `PBCALC_AUDIT_VERBOSE=<element text>`). It hovers every interactive element with
+  synthetic input (the real mouse never moves, safe while the PC is in use) and reports: arrow cursor on something
+  clickable, no hover change, hover too faint, hover contrast < 3:1 (or washed out), element unreachable. It starts with a
+  **self-test**: a button planted with the wrong cursor and a pale hover under white text MUST be flagged, because this
+  auditor twice printed "0 issues" while testing nothing. Coverage minimums per surface fail the run if a surface comes
+  back empty. **Found and fixed with it:** `.btn:hover:not(:disabled)` (0,3,0) beat `.btn.primary` (0,2,0), turning every
+  primary button pale with white text on hover (Bookmark manager "Add", Settings, admin panel) - primary hover is now
+  `--accent-hover`; `#downloads.fresh` (id + class) beat `.icon-btn:hover`; omnibox rows had no hover. **Cursor:** every
+  button/link/row now shows the pointer (shared rule at the bottom of `renderer/common/theme.css`; disabled = default;
+  the Restricted lock `#unlock` is an indicator and stays default). That is the owner's explicit request and a
+  deliberate difference from Chrome's native toolbar, which keeps the arrow. A new button needs no CSS for it, but a new
+  `:hover` rule must not lose a specificity fight to a `.primary` rule: run the audit.
 - No settings window, no extensions. Not requested yet; do not add speculatively.
 
 ## App icon
@@ -472,7 +663,14 @@ too** (measured with `--force-dark-mode`), but Chrome still paints a page that s
 WHITE, while Chromium-in-Electron painted it #3C3C3C: ordinary light sites looked dark-themed.
 Every tab view therefore gets `setBackgroundColor("#ffffff")` in `createTab`. Do not "fix" this by
 dropping `themeSource` — the page is then told the wrong colour scheme and sites with a real dark
-design stop following the browser, which is not what Chrome does. Our own pages are unaffected
+design stop following the browser, which is not what Chrome does. **Re-measured with Chrome's own Appearance
+setting (not only `--force-dark-mode`)**, same probe page in every case: normal Chrome window with Mode = Dark
+tells pages `dark`; Mode = Light / Device tell `light` (Windows apps mode light); a Chrome **Incognito** window tells
+`light` even with Mode = Dark (its UI is dark, the page is not). PBCalc matches the normal window: Mode Dark -> pages
+`dark`, Device / Light -> `light`. So a site such as ChatGPT turning dark in PBCalc's Dark mode while it stays light
+in an Incognito window is NOT a bug - compare against a normal Chrome window. If the owner ever wants pages to stay
+light whatever the browser's mode (Incognito behaviour), that is a deliberate change to `themeSource` handling, not
+a fix. Our own pages are unaffected
 because each one sets its own background from the palette (`--frame` / `--toolbar`); any NEW
 internal page must do the same or it will be white in dark mode. Test: `scripts/verify-theme.js`.
 

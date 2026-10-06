@@ -58,6 +58,14 @@ function dataDir() {
 
 // Chrome-like chrome geometry (px). The tab view starts below TAB_STRIP + TOOLBAR (+ bookmarks bar
 // when shown); see chromeHeight() in tabs/tabManager.js. Must match renderer/shell/shell.css.
+// Every browsing tab runs in this one named session (NOT "persist:" — an in-memory partition, so
+// cookies/localStorage/HTTP cache live in RAM, speed up loads during the session, and vanish on
+// exit with zero disk trace). It is a single constant because SEVERAL subsystems must target the
+// SAME session as the tabs: the Chrome User-Agent / header spoofing (electron/main.js) and the
+// download manager's "will-download" (electron/downloads/downloadManager.js). Wiring those to
+// session.defaultSession while tabs used this partition is what silently broke UA spoofing (tabs
+// leaked the "Electron" token) and downloads (the manager never saw them). Keep them aligned here.
+const TAB_PARTITION = "pbcalc";
 const TAB_STRIP_HEIGHT = 40;
 const TOOLBAR_HEIGHT = 40;
 const BOOKMARKS_BAR_HEIGHT = 32;
@@ -86,6 +94,7 @@ module.exports = {
   dataDir,
   resolveDataDir, // exported for the tests: the probe-and-fallback rule itself
   PREFERRED_DATA_DIR,
+  TAB_PARTITION,
   DOWNLOADS_URL,
   MANAGER_URL,
   RESTRICTED_HOME_URL,

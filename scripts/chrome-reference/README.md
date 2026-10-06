@@ -105,3 +105,67 @@ background WHITE. PBCalc matched the first half and not the second: Chromium pai
 #3C3C3C (60,60,60 measured on screen), which made ordinary light sites look dark-themed. Fixed by
 `view.setBackgroundColor("#ffffff")` on every tab in `tabManager.createTab`. Verified the same way:
 PBCalc now paints 255,255,255 in both modes. Test: `scripts/verify-theme.js`.
+
+## A download that opens a new tab (probe: what the tab looks like at `will-download`)
+
+Chrome: a site's Download button does `window.open(url)` / `target=_blank`; a new tab flashes open, the
+response turns out to be a file, the tab closes itself, the download carries on and you are back on the
+page you were on. PBCalc left a blank tab behind. What the initiating tab looks like at the moment the
+download starts, measured per scenario (Electron 41, probe in a harness; `wc` = the webContents passed to
+`will-download`):
+
+| how the download starts | `wc.getURL()` | `tab.url` | verdict |
+|---|---|---|---|
+| `target=_blank` link to a file | `""` | `""` | opened only for the download -> closes |
+| `window.open(url)` of a file | `""` | `""` | closes |
+| `target=_blank` link -> 302 -> file | `""` | `""` | closes |
+| plain link on a page that is showing | the page's URL | the page's URL | stays |
+| `window.open(url)` of a real page | (no download) | the page's URL | stays |
+
+So the rule is exactly "nothing was ever committed in this tab" (`getURL()` is empty or `about:blank`):
+`closeTabOpenedForDownload` in `tabManager.js`, called from the download manager. It never closes the last
+tab, returns to the opener tab (not to the strip's last tab), and does not cancel the download (a slow
+file finished in full after its tab closed). Test: `scripts/verify-download-tab.js`.
+
+Not measured against real Chrome (the machine was in use, and the key-driven script refuses to run then):
+whether Chrome waits for a Save As answer before closing in "ask where to save" mode. PBCalc waits.
+
+## The "download started" animation (`capture-dlanim.ps1`, `dlserver.js`)
+
+When a download starts Chrome flies a circled download arrow from the page up to the toolbar Downloads
+button. Recorded frame by frame (58 fps, light theme, 1200x700 window, a 200x640 crop of the window along the
+button's column) and analysed in Electron (`nativeImage`): difference from the frame before the download.
+t = 0 is the circle's first visible frame (~35 ms after the download starts).
+
+| what | measured |
+|---|---|
+| circle | **64x64**, centred on the Downloads button's column (window x 974.5 for that button) |
+| glyph | the toolbar's own arrow-into-tray, ~25px wide, blue |
+| light colours | fill ~ `#ECF1FA`, glyph ~ `#0B51B8` (read at 93% opacity: 237,242,250 / 28,93,189) |
+| dark colours | fill ~ `#383A3E`, glyph white (sampled from the owner's dark-theme screenshot: 70,72,76 at ~93%) |
+| start | ~46.5% of the way down the page area (window y ~372), at the button's x |
+| motion | rises almost linearly at ~0.65 px/ms for ~270 ms, then ~0.45 px/ms; arrives at the button's centre |
+| opacity | linear 0.07 -> 0.93 over the first ~270 ms, then fades to nothing by ~500 ms |
+| positions (y of the centre, window px) | t=0: 350, 100: 284, 186: 221, 266: 156 (then read from frames: 332: ~125, 417: ~87) |
+| when | **only when the Downloads button already exists** (a first download in a clean profile just fades the button in with its progress ring and opens the bubble; nothing flies). PBCalc's button is always present, so it flies every time |
+
+The first ~270 ms are measured frame by frame; the last ~200 ms are read off the frames more coarsely, because
+the downloads card was drawn over that part of the path in the recording (the circle passes under it), so
+those numbers carry a few tens of ms of uncertainty. The user's dark-theme screenshot is consistent with the
+light-theme timeline: its circle is at the same phase as the recording's frame at t=266.
+
+**Capture traps, all hit while recording this** (they cost far more time than the measurement):
+* A fixed screen rectangle recorded the OWNER'S OWN window (private content). Chrome had put its window on the
+  second monitor, and `SetWindowPos(TOPMOST)` does not take from a background process. Never screen-grab a
+  guessed rectangle: read the browser window's real rectangle, and VERIFY every frame is Chrome (the
+  tab-strip pixel is Chrome's blue, active D3E3FD or inactive ~DDE3E9) or abort.
+* `PrintWindow` (window-only capture) returned false for this window; not worth fighting.
+* `Get-Process ...MainWindowHandle` returned a hidden helper window for Chrome. Enumerate the process's
+  top-level windows and take the visible, browser-sized one.
+* Chrome creates its window at the requested position and then moves it, so wait until the rectangle is stable.
+* A PowerShell variable named `$base` collided with a typed `[string]$Base` parameter (names are
+  case-insensitive; assigning `$null` to a typed string gives `""`), which made an "arm after N ms" trigger
+  fire on the very first frame.
+* A fixed recording schedule kept missing the second download (startup speed varies), so the script now keeps a
+  ~1 s ring buffer and triggers on the flight itself.
+Test of the implementation: `scripts/verify-dlanim.js` (renders the circle and compares with the table above).

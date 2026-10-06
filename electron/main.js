@@ -75,23 +75,37 @@ const { registerIpcHandlers } = require("./ipc/registerIpcHandlers");
 registerIpcHandlers();
 
 app.whenReady().then(() => {
+  // Present as plain Chrome, with NO "Electron" token — WAFs (Akamai on Meesho) 403 the Electron UA.
+  // Use the REAL Chromium version so navigator.userAgent, the Sec-Ch-Ua client hints and the sent
+  // header all agree (spoofing a lower version is itself detectable). Tabs run in the TAB_PARTITION
+  // session, NOT defaultSession, so the UA/header rules MUST be applied there too — otherwise tabs
+  // fall back to Electron's own UA. app.userAgentFallback covers every session app-wide; we also set
+  // each session explicitly so there is no ambiguity.
   const chromeVersion = process.versions.chrome || "128.0.6613.138";
   const cleanUA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
   try {
     const { session } = require("electron");
-    session.defaultSession.setUserAgent(cleanUA);
-    session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-      if (details.resourceType === "mainFrame") {
-        details.requestHeaders["Upgrade-Insecure-Requests"] = "1";
-        details.requestHeaders["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
-      }
-      callback({ requestHeaders: details.requestHeaders });
-    });
+    const { TAB_PARTITION } = require("./constants");
+    app.userAgentFallback = cleanUA;
+    const sessions = [session.defaultSession, session.fromPartition(TAB_PARTITION)];
+    for (const ses of sessions) {
+      ses.setUserAgent(cleanUA);
+      ses.webRequest.onBeforeSendHeaders((details, callback) => {
+        if (details.resourceType === "mainFrame") {
+          details.requestHeaders["Upgrade-Insecure-Requests"] = "1";
+          details.requestHeaders["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
+        }
+        callback({ requestHeaders: details.requestHeaders });
+      });
+    }
   } catch (_) {}
 
   warnIfDataFolderUnwritable();
   require("./downloads/downloadManager").init();
   createMainWindow();
+  // Build the "download started" animation view a moment after startup, off the critical path, so the
+  // FIRST download's flight does not wait for a page load (play() makes it on demand if one comes sooner).
+  setTimeout(() => { try { require("./dlanimation").warm(); } catch (_) {} }, 2000).unref();
 });
 
 app.on("window-all-closed", () => {

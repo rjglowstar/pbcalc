@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("popupAPI", {
   getData: () => ipcRenderer.invoke("popup:get-data"),
   action: (name, arg) => ipcRenderer.send("popup:action", name, arg),
   admin: (mode) => ipcRenderer.invoke("popup:admin", mode),
+  removeBookmark: () => ipcRenderer.invoke("popup:bookmark-remove"),
+  saveBookmark: (title, url) => ipcRenderer.invoke("popup:bookmark-save", title, url),
   onData: (cb) => { ipcRenderer.on("popup:data", (_e, d) => cb(d)); },
   onFindResult: (cb) => { ipcRenderer.on("popup:find-result", (_e, r) => cb(r)); },
   onFindFocus: (cb) => { ipcRenderer.on("popup:find-focus", () => cb()); },

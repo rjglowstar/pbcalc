@@ -104,7 +104,11 @@ app.whenReady().then(async () => {
   downloads.init();
 
   // ── downloads ──
-  session.defaultSession.on("will-download", (_e, item) => item.setSavePath(path.join(tmp, "saved-" + item.getFilename())));
+  // Tabs run in the in-memory TAB_PARTITION session, so that is where their downloads fire. Redirect
+  // the save path THERE; on defaultSession this handler never ran and the file landed in the real
+  // Downloads folder.
+  session.fromPartition(require("../electron/constants").TAB_PARTITION)
+    .on("will-download", (_e, item) => item.setSavePath(path.join(tmp, "saved-" + item.getFilename())));
   tabManager.createTab(base + "/login");
   await sleep(1200);
   const wc0 = tabManager.getActiveTab().view.webContents;
@@ -114,6 +118,14 @@ app.whenReady().then(async () => {
   const dl = downloads.publicList();
   check("download listed and completed", dl.length === 1 && dl[0].state === "completed" && dl[0].filename === "report.bin");
   check("downloaded file exists with full size", fs.existsSync(path.join(tmp, "saved-report.bin")) && fs.statSync(path.join(tmp, "saved-report.bin")).size === 50000);
+  // Tabs run in the in-memory TAB_PARTITION. UA spoofing and download capture used to be wired to
+  // defaultSession only, so tabs leaked the "Electron" token (Akamai/Meesho answer that with a 403)
+  // and page downloads were never seen. The partition itself must stay memory-only: no storage path.
+  const TAB_PARTITION = require("../electron/constants").TAB_PARTITION;
+  check("tabs run in the TAB_PARTITION session, and it is in-memory (no storage path = nothing on disk)",
+    wc0.session === session.fromPartition(TAB_PARTITION) && wc0.session.getStoragePath() === null);
+  // (The user-agent check lives in verify-tabs.js: the UA rules are installed by electron/main.js, and
+  // this suite builds its own harness without loading it.)
   const popup = require("../electron/popup");
   check("downloads bubble opened by the download", popup.isOpen("downloads"));
   check("no shelf: page view keeps its full height during a download", tabManager.getActiveTab().view.getBounds().height === heightBefore && tabManager.getActiveTab().view.getBounds().y === 112);
@@ -171,9 +183,11 @@ app.whenReady().then(async () => {
   // ── wipe of session data ──
   await wc.loadURL(base + "/home"); // sets cookie
   await sleep(500);
-  const before = (await session.defaultSession.cookies.get({})).length;
+  // the cookie lives in the tabs' session (the in-memory partition), which is what must be wiped
+  const tabSession = session.fromPartition(require("../electron/constants").TAB_PARTITION);
+  const before = (await tabSession.cookies.get({})).length;
   await privacy.clearSession();
-  const after = (await session.defaultSession.cookies.get({})).length;
+  const after = (await tabSession.cookies.get({})).length;
   check("cookie present before wipe", before >= 1);
   check("clearSession() removes cookies", after === 0);
 

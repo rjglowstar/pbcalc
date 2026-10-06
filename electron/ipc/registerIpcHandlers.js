@@ -99,6 +99,9 @@ function registerIpcHandlers() {
     else tabManager.leaveRestricted();
     return { ok: true };
   });
+  // "Edit bookmark" box: only the popup page, never in Restricted Mode (popup.saveBookmark re-checks too).
+  ipcMain.handle("popup:bookmark-save", (e, title, url) => (popup.isSender(e.sender) ? popup.saveBookmark(title, url) : { ok: false, error: "unavailable" }));
+  ipcMain.handle("popup:bookmark-remove", (e) => (popup.isSender(e.sender) ? popup.removeBookmark() : { ok: false, error: "unavailable" }));
   ipcMain.handle("popup:get-data", (e) => (popup.isSender(e.sender) ? popup.getData() : null));
   ipcMain.on("popup:action", (e, name, arg) => {
     if (popup.isSender(e.sender)) popup.handleAction(String(name), arg);
@@ -180,7 +183,13 @@ function registerIpcHandlers() {
   });
 
   ipcMain.on("bookmarks:open", (e, id, newTab) => { if (fromShell(e)) tabManager.openBookmark(String(id), newTab); });
-  ipcMain.on("bookmarks:context-menu", (_e, id) => tabManager.bookmarkContextMenu(String(id)));
+  // Drag to reorder on the bar: the shell only, and never in Restricted Mode (read and open only there).
+  ipcMain.on("bookmarks:move", (e, id, index) => {
+    if (!fromShell(e) || state.restricted) return;
+    bookmarks.moveTo(String(id), Number(index));
+    tabManager.broadcastBookmarks();
+  });
+  ipcMain.on("bookmarks:context-menu", (e, id) => { if (fromShell(e)) tabManager.bookmarkContextMenu(String(id)); });
   ipcMain.handle("bookmarks:remove", (_e, id) => {
     if (state.restricted) return bookmarks.list(); // read-only in Restricted Mode
     const list = bookmarks.remove(String(id));

@@ -100,7 +100,7 @@ main { max-width: 800px; margin: 24px auto; padding: 0 16px; }
   background: var(--popup);
   box-shadow: var(--shadow);
 }
-.rowmenu .mi { padding: 9px 16px; font-size: 13px; cursor: default; }
+.rowmenu .mi { padding: 9px 16px; font-size: 13px; cursor: pointer; }
 .rowmenu .mi:hover { background: var(--popup-hover); }
 .empty { padding: 48px 0; text-align: center; color: var(--muted); }
 .note { margin: 28px 0 8px; text-align: center; color: var(--muted); font-size: 12px; }

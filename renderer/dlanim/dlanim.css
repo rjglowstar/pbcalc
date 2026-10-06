@@ -1,0 +1,20 @@
+/* The circle is 64px (measured: 64x64 in Chrome). The view is 80px wide, so the circle sits 8px in. */
+html, body { margin: 0; background: transparent; overflow: hidden; }
+#c {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  opacity: 0;               /* invisible until dlanim.js starts the flight */
+  will-change: transform, opacity;
+  pointer-events: none;
+  /* light: pale blue circle, blue glyph (measured from Chrome light theme) */
+  background: #ecf1fa;
+  color: #0b51b8;
+}
+/* dark: grey circle, white glyph (sampled from the owner's dark-theme Chrome) */
+body.dark #c { background: #383a3e; color: #ffffff; }
+/* the glyph measures ~25px wide in a 64px circle: a 28px icon box whose artwork is 21.6/24 of it */
+#c svg { position: absolute; left: 18px; top: 18px; }

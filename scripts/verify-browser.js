@@ -216,14 +216,45 @@ app.whenReady().then(async () => {
   check("menu has no History entry (no-history browser)", !/History/i.test(mtxt));
   popup.close();
 
-  // ── Ctrl+J opens the Downloads page (Chrome) ──
-  key(wc(), "J", ["control"]);
+  // ── Ctrl+Shift+J opens the Downloads page; plain Ctrl+J belongs to the PAGE ──
+  // Chrome's own key for Downloads is plain Ctrl+J, but a site run in this browser uses Ctrl+J for its
+  // own modal, and before-input-event runs BEFORE the page (Chrome lets the page see it first). So the
+  // browser's shortcut is Ctrl+Shift+J, and plain Ctrl+J must reach the page untouched (shortcuts.js).
+  const DL_URL = require("../electron/constants").DOWNLOADS_URL;
+  const pageWc = wc();
+  await pageWc.executeJavaScript('window.__keys = []; window.addEventListener("keydown", (e) => window.__keys.push((e.ctrlKey ? "C" : "") + (e.shiftKey ? "S" : "") + "+" + e.key.toLowerCase())); 0');
+  const tabsBeforeJ = state.tabs.length;
+  key(pageWc, "J", ["control"]);
+  await sleep(700);
+  const keysSeen = await pageWc.executeJavaScript("window.__keys");
+  check("plain Ctrl+J is NOT claimed: the page receives it, so a site's own Ctrl+J shortcut works", keysSeen.includes("C+j"));
+  check("...and it opens no Downloads page and no new tab", state.tabs.length === tabsBeforeJ && !String(tabManager.getActiveTab().url).startsWith(DL_URL));
+  key(pageWc, "J", ["control", "shift"]);
   await sleep(1200);
   const dlTab = tabManager.getActiveTab();
-  check("Ctrl+J opens the Downloads page", dlTab.url.startsWith(require("../electron/constants").DOWNLOADS_URL));
+  check("Ctrl+Shift+J opens the Downloads page", dlTab.url.startsWith(DL_URL));
+  check("...and that key is the browser's: the page never sees it", !(await pageWc.executeJavaScript("window.__keys")).includes("CS+j"));
+  // a second press goes back to that same tab instead of piling up more of them
+  key(wc(), "J", ["control", "shift"]);
+  await sleep(800);
+  check("Ctrl+Shift+J again reuses the Downloads tab (still exactly one)", state.tabs.filter((t) => String(t.url).startsWith(DL_URL)).length === 1);
   // it opened in a NEW tab, so put the test page back in front for everything below
   const pageTabId = state.tabs.find((t) => t.id !== dlTab.id).id;
   tabManager.closeTab(dlTab.id);
+  tabManager.switchTab(pageTabId);
+  await sleep(600);
+  popup.close();
+  // with the downloads bubble already open, the shortcut still goes to the PAGE and leaves no bubble over it
+  // (an earlier version only closed the bubble on this second press and never opened the page first)
+  popup.open("downloads", null);
+  await sleep(800);
+  check("(setup) the downloads bubble is open", popup.isOpen("downloads"));
+  key(wc(), "J", ["control", "shift"]);
+  await sleep(1000);
+  check("Ctrl+Shift+J with the bubble open opens the page and closes the bubble",
+    String(tabManager.getActiveTab().url).startsWith(DL_URL) && !popup.isOpen("downloads"));
+  const dlTab2 = tabManager.getActiveTab();
+  tabManager.closeTab(dlTab2.id);
   tabManager.switchTab(pageTabId);
   await sleep(600);
   popup.close();
