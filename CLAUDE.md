@@ -86,7 +86,9 @@ Two things define this browser against every mainstream one:
 
 ### 4. Disk Cache & Startup Error Prevention
 - **Target File:** [main.js](file:///d:/Project/PBCalc/electron/main.js)
-- **Switches:** `app.commandLine.appendSwitch("disable-gpu-shader-disk-cache")` and `app.commandLine.appendSwitch("disable-http-cache")`.
+- **Switch:** `app.commandLine.appendSwitch("disable-gpu-shader-disk-cache")` only. (An earlier version of this note also listed
+  `disable-http-cache`; `main.js` does not set it, and measuring shows the page cache works: warm loads re-fetch ~0-120 KB
+  where cold loads fetch 4-6 MB. Do not add it: every revisit would download everything again.)
 - **Purpose:** Prevents Windows file locking collisions on Chromium cache files (`net\disk_cache` / `gpu_disk_cache` Access is denied console errors) during app launches or rapid restarts.
 
 ### 5. Google sign-in ("This browser or app may not be secure") — `window.chrome`
@@ -165,7 +167,16 @@ Two things define this browser against every mainstream one:
   `safeStorage` key; deleting it makes the vault undecryptable.
 - **Bookmarks** (`electron/bookmarks/`): user-curated, persisted in `bookmarks.json`; bar + star
   button in the shell. Stores only what was explicitly bookmarked (no visit data).
-  **Editing them is Chrome's, normal mode only** (`scripts/verify-bookmark-edit.js`, 36 checks):
+  **Editing them is Chrome's, normal mode only** (`scripts/verify-bookmark-edit.js`, 44 checks):
+  - **The bookmark box is a form: never rebuild it from pushed data.** Main re-sends every popup its data on
+    EVERY tab / title / favicon / download change (`notifyTabs` -> `popup.refresh`). The edit dialog and the star
+    bubble used to re-render from the stored values each time, so a page changing its own title (SPAs do) put the old
+    name back while the user was typing (measured: "typed by the user" -> "Original"). `render()` in
+    `renderer/popup/popup.js` now builds it once per bookmark (`panel.dataset.bookmarkId`); a bookmark deleted
+    meanwhile still closes it. Any NEW popup with an input has to do the same (tab search already keeps its input).
+  - The ⋮ menu entry is always "Bookmark this tab…" (same as the star: add + bubble, or edit/remove on a bookmarked
+    page). It used to say "Remove this bookmark" on a bookmarked page, which stopped being true when the star
+    stopped removing.
   - **The star / Ctrl+D** (`toggleBookmarkActive`): a page that is not bookmarked is added and Chrome's
     **"Bookmark added" bubble** opens under the star (page tile, Name pre-selected, Folder, Done / Remove, X);
     on a bookmarked page the same bubble opens as "Edit bookmark". **The star no longer removes by
@@ -507,6 +518,18 @@ Two things define this browser against every mainstream one:
   hangs off the tab's window. The blank tab never enters the Ctrl+Shift+T list. Test:
   `scripts/verify-download-tab.js` (also keeps its files out of the real Downloads folder — a probe
   that did not left files there).
+- **Reload, like Chrome** (`reload(mode)` and `reloadMenu` in tabManager). Three reloads: normal (Ctrl+R, F5),
+  hard (Ctrl+Shift+R, Ctrl+F5, Shift+F5: cache bypassed, `reloadIgnoringCache`) and "Empty Cache and Hard Reload"
+  (`session.clearCache()` first). **Right-click on the toolbar Reload button** opens Chrome's menu (Normal Reload
+  Ctrl+R / Hard Reload Ctrl+Shift+R / Empty Cache and Hard Reload) - **only while DevTools is open** for the page
+  (measured in a real Chrome: with DevTools closed the right-click does nothing; numbers in
+  `scripts/chrome-reference/README.md`), not while the button is Stop (loading), never in Restricted Mode (no
+  DevTools there), and `tabs:reload-menu` is accepted from the shell only. It is a native menu (like the tab and
+  bookmark menus), not Chrome's own rounded one, and the accelerator text is a hint only (`registerAccelerator:false`).
+  Before this, Ctrl+Shift+R and Ctrl+F5 were claimed but did a PLAIN reload (the shift/ctrl was ignored). Not built:
+  Chrome's press-and-hold on the button also opens the menu. Test: `scripts/verify-reload-menu.js` (32 checks that
+  MEASURE each reload from the requests a local server sees, plus the menu rules; negative controls fail the
+  matching check).
 - **Our own pages have their own tab icon**, not the default globe: magnifier (New Tab), gear
   (Settings), bookmark (Bookmark manager), download arrow (Downloads), grid ("Your sites").
   Built in the MAIN process (`internalFaviconFor` / `svgIcon` in tabManager) and set in

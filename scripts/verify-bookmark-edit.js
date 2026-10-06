@@ -37,7 +37,6 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
 
     // A popup closes when the window loses focus (intended, like Chrome). If the PC's owner clicks elsewhere mid-test,
     // refocus and open it again rather than report a false failure. `reset` undoes the first attempt's side effects.
-    if (process.env.PBCALC_TRACE_CLOSE) { const oc = popup.close; popup.close = (...x) => { console.log('   [trace] popup.close from: ' + new Error().stack.split(String.fromCharCode(10)).slice(2, 5).join(' | ')); return oc(...x); }; }
     const retryOpen = async (fn, reset) => {
       for (let i = 0; i < 3; i++) {
         if (i && reset) reset();
@@ -80,6 +79,14 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     const read = () => popupWc().executeJavaScript('({ head: (document.querySelector(".head")||{}).textContent, name: document.querySelectorAll(".bm-field input")[0].value, url: document.querySelectorAll(".bm-field input")[1].value, msg: document.querySelector(".bm-msg").textContent, active: document.activeElement && document.activeElement.parentElement.querySelector(".bm-label") && document.activeElement.parentElement.querySelector(".bm-label").textContent })');
     let v = await read();
     check("title is 'Edit bookmark', Name and URL are prefilled, Name has the focus", v.head === "Edit bookmark" && v.name === "Docs" && v.url === "https://docs.example.org/" && v.active === "Name");
+
+    // main re-sends the popup its data on every tab / title / download change; the form must not be rebuilt under the
+    // user's hands (it went back to the stored name, losing what they had typed)
+    await popupWc().executeJavaScript('document.querySelectorAll(".bm-field input")[0].value = "half typed"; 0');
+    await state.tabs.find((t) => t.id === state.activeTabId).view.webContents.executeJavaScript('document.title = "a page that changes its own title"; 0');
+    await sleep(900);
+    check("a title change in the page does not wipe what is being typed", popup.isOpen("bookmark-edit") && (await read()).name === "half typed");
+    await popupWc().executeJavaScript('document.querySelectorAll(".bm-field input")[0].value = "Docs"; 0');
 
     console.log("\n-- validation");
     const typeAndSave = (n, u) => popupWc().executeJavaScript(`(() => { const i = document.querySelectorAll(".bm-field input"); i[0].value = ${JSON.stringify(n)}; i[1].value = ${JSON.stringify(u)}; document.querySelector(".bm-buttons .primary").click(); return 0; })()`);

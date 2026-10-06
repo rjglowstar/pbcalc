@@ -780,17 +780,44 @@ function goForward() {
   const wc = activeWebContents();
   if (wc && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
 }
-function reload() {
+// Chrome's three reloads. mode: undefined/"normal" = Reload (Ctrl+R, F5); "hard" = Hard Reload (Ctrl+Shift+R, Ctrl+F5,
+// Shift+F5: the page and everything it uses is fetched again, not taken from the cache); "empty-cache" = Empty Cache
+// and Hard Reload (the right-click menu on the reload button while DevTools is open).
+function reload(mode) {
   const t = getActiveTab();
   if (!t || !t.view.webContents || t.view.webContents.isDestroyed()) return;
-  // On an error page, reloading means retrying the URL that failed, not reloading the data: page.
-  if (t.errorPage) {
-    const failed = t.errorPage.url;
-    t.errorPage = null;
-    load(t.view.webContents, failed);
-  } else {
-    t.view.webContents.reload();
-  }
+  const wc = t.view.webContents;
+  const go = () => {
+    if (wc.isDestroyed() || !state.tabs.includes(t)) return; // closed while the cache was being emptied
+    // On an error page, reloading means retrying the URL that failed, not reloading the data: page.
+    if (t.errorPage) {
+      const failed = t.errorPage.url;
+      t.errorPage = null;
+      load(wc, failed);
+    } else if (mode === "hard" || mode === "empty-cache") {
+      wc.reloadIgnoringCache();
+    } else {
+      wc.reload();
+    }
+  };
+  if (mode === "empty-cache") wc.session.clearCache().then(go, go); else go();
+}
+
+// Chrome's menu on the reload button: Normal Reload / Hard Reload / Empty Cache and Hard Reload. Measured in a real
+// Chrome (scripts/chrome-reference/README.md): it exists ONLY while DevTools is open for the page (with DevTools
+// closed, right-clicking Reload does nothing) and it hangs under the button, left edges aligned. Not while the
+// button is Stop (the page is loading), and never in Restricted Mode (no DevTools there). Returns whether it showed.
+function reloadMenu(rect) {
+  if (state.restricted || !state.mainWindow || state.mainWindow.isDestroyed()) return false;
+  const wc = activeWebContents();
+  if (!wc || !wc.isDevToolsOpened() || wc.isLoading()) return false;
+  const at = rect && Number.isFinite(rect.left) && Number.isFinite(rect.bottom) ? { x: Math.round(rect.left), y: Math.round(rect.bottom) } : {};
+  Menu.buildFromTemplate([
+    { label: "Normal Reload", accelerator: "CmdOrCtrl+R", registerAccelerator: false, click: () => reload() },
+    { label: "Hard Reload", accelerator: "CmdOrCtrl+Shift+R", registerAccelerator: false, click: () => reload("hard") },
+    { label: "Empty Cache and Hard Reload", click: () => reload("empty-cache") },
+  ]).popup({ window: state.mainWindow, ...at });
+  return true;
 }
 
 // ── Address bar / shell focus ───────────────────────────────────────────
@@ -1251,6 +1278,7 @@ module.exports = {
   tabContextMenu,
   bookmarkContextMenu,
   openBookmarkEdit,
+  reloadMenu,
   chromeHeight,
   siteKind,
   reopenClosedTab,

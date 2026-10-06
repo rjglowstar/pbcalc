@@ -81,6 +81,8 @@ function registerIpcHandlers() {
   // ── Popups (tab search, menu, downloads, site info, find bubble) ─────
   // Opening comes from the shell chrome only; the action channel from the popup page only.
   const fromShell = (e) => !!state.mainWindow && e.sender === state.mainWindow.webContents;
+  // Right-click on the reload button (the menu itself only exists while DevTools is open: tabManager.reloadMenu).
+  ipcMain.handle("tabs:reload-menu", (e, rect) => (fromShell(e) ? tabManager.reloadMenu(rect) : false));
   ipcMain.on("popup:open", (e, kind, rect) => {
     if (!fromShell(e)) return;
     // "unlock" is deliberately NOT here: the PIN box opens only from the hidden shortcut.

@@ -12,7 +12,7 @@ const popup = require("./popup");
 // Restricted Mode: only the "use the page" shortcuts remain (see RESTRICTED_OK); every other
 // shortcut — new tab, address bar, bookmarks, devtools, tab search... — is swallowed.
 const RESTRICTED_OK = new Set([
-  "back", "forward", "reload", "close-tab", "cycle-tab", "select-tab", "find", "find-close",
+  "back", "forward", "reload", "reload-hard", "close-tab", "cycle-tab", "select-tab", "find", "find-close",
   "print", "downloads", "zoom", "new-tab", "fullscreen",
   // Showing/hiding the bookmarks bar is just a view preference — it changes no bookmark and
   // reveals no address — so Ctrl+Shift+B works in Restricted Mode too (the user asked for it).
@@ -84,7 +84,8 @@ function handleInput(event, input) {
 
   if (alt && !ctrl && key === "ArrowLeft") return claim("back", tabManager.goBack);
   if (alt && !ctrl && key === "ArrowRight") return claim("forward", tabManager.goForward);
-  if (key === "F5") return claim("reload", tabManager.reload);
+  // Chrome: F5 / Ctrl+R reload; Ctrl+F5, Shift+F5 and Ctrl+Shift+R are the HARD reload (cache bypassed).
+  if (key === "F5") return ctrl || shift ? claim("reload-hard", () => tabManager.reload("hard")) : claim("reload", tabManager.reload);
   if (key === "F12") return claim("devtools", tabManager.openDevTools);
   if (key === "F11") return claim("fullscreen", () => state.mainWindow.setFullScreen(!state.mainWindow.isFullScreen()));
   if (key === "Escape" && state.findOpen) return claim("find-close", tabManager.closeFind);
@@ -105,7 +106,7 @@ function handleInput(event, input) {
   }
   if (k === "w") return claim("close-tab", () => tabManager.closeTab(state.activeTabId));
   if (k === "l") return claim("address-bar", tabManager.focusAddressBar);
-  if (k === "r") return claim("reload", tabManager.reload);
+  if (k === "r") return shift ? claim("reload-hard", () => tabManager.reload("hard")) : claim("reload", tabManager.reload);
   if (k === "f") return claim("find", tabManager.openFind);
   if (k === "d") return claim("bookmark", tabManager.toggleBookmarkActive);
   if (k === "p") return claim("print", tabManager.printActive);

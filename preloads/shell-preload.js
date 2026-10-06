@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("browserAPI", {
   back: () => ipcRenderer.send("tabs:back"),
   forward: () => ipcRenderer.send("tabs:forward"),
   reload: () => ipcRenderer.send("tabs:reload"),
+  reloadMenu: (rect) => ipcRenderer.invoke("tabs:reload-menu", rect),
   stop: () => ipcRenderer.send("tabs:stop"),
   // address-bar suggestions
   omniboxQuery: (text, rect) => ipcRenderer.send("omnibox:query", text, rect),

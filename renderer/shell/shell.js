@@ -529,6 +529,16 @@
     const tab = activeTab();
     if (tab && tab.loading) api.stop(); else api.reload();
   });
+  // Right-click on Reload: Chrome shows Normal / Hard / Empty Cache and Hard Reload, but only while DevTools is open.
+  // Main decides (it knows about DevTools); the native menu takes the pointer away from the page, so hover is
+  // suppressed afterwards like for the other native menus.
+  reloadBtn.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const tab = activeTab();
+    if (tabState.restricted || (tab && tab.loading)) return;
+    const r = reloadBtn.getBoundingClientRect();
+    api.reloadMenu({ left: r.left, bottom: r.bottom }).then((shown) => { if (shown) suppressHover(); }).catch(() => {});
+  });
   $("new-tab").addEventListener("click", () => api.newTab());
   starBtn.addEventListener("click", () => api.toggleBookmark());
   zoomBtn.addEventListener("click", () => api.resetZoom());

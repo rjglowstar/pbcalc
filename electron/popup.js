@@ -88,7 +88,6 @@ function buildData() {
     data.bookmarksBar = state.bookmarksBarVisible;
     data.fullscreen = !!(state.mainWindow && state.mainWindow.isFullScreen());
     const t = tm.getActiveTab();
-    data.bookmarked = !!t && bookmarks().list().some((b) => b.url === t.url);
     data.canBookmark = !!t && bookmarks().isBookmarkable(t.url);
   } else if (kind === "downloads") {
     data.items = downloads().publicList();

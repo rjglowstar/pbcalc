@@ -169,3 +169,22 @@ light-theme timeline: its circle is at the same phase as the recording's frame a
 * A fixed recording schedule kept missing the second download (startup speed varies), so the script now keeps a
   ~1 s ring buffer and triggers on the flight itself.
 Test of the implementation: `scripts/verify-dlanim.js` (renders the circle and compares with the table above).
+
+## Reload button menu (Chrome 154, measured)
+
+Real Chrome, throw-away profile, window on the second display, the toolbar's Reload button right-clicked with
+real OS input (SetCursorPos + a one-pixel mouse nudge so Chromium sees the pointer, then right button down/up) and
+the window captured with `CopyFromScreen`:
+
+| Situation | Result |
+|---|---|
+| DevTools open (`--auto-open-devtools-for-tabs`) | a rounded menu hangs under the button, left edge aligned with it: **Normal Reload** `Ctrl+R`, **Hard Reload** `Ctrl+Shift+R`, **Empty Cache and Hard Reload** (no shortcut) |
+| DevTools closed | nothing at all |
+
+So the menu exists only while DevTools is open. PBCalc: `reloadMenu` in tabManager (also not while the button is Stop, never
+in Restricted Mode); hard reload = `reloadIgnoringCache`, empty cache = `session.clearCache()` then hard reload; the
+shortcuts Ctrl+Shift+R / Ctrl+F5 / Shift+F5 are the hard reload as in Chrome (they used to do a plain reload).
+Not done: Chrome also opens the menu on a press-and-hold of the button (long press); only the right-click is built.
+Test: `scripts/verify-reload-menu.js` (measures what each reload sends to a local server).
+Traps found while measuring: PowerShell's `Move` is an alias of `Move-Item` (a helper named `Move` silently never moved
+the pointer); the pointer must land on the right WINDOW (`WindowFromPoint`) or the clicks go to whatever covers it.

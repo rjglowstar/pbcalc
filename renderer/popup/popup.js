@@ -105,7 +105,9 @@
     panel.appendChild(el("div", "sep"));
     panel.appendChild(menuItem("Downloads", "Ctrl+Shift+J", () => act("downloads")));
     if (!data.restricted) {
-      panel.appendChild(menuItem(data.bookmarked ? "Remove this bookmark" : "Bookmark this tab…", "Ctrl+D",
+      // Like the star: adds the page and opens the bubble, or on a bookmarked page opens it to edit/remove. It never
+      // removes by itself, so the label must not promise that.
+      panel.appendChild(menuItem("Bookmark this tab…", "Ctrl+D",
         () => act("bookmark-active"), { disabled: !data.canBookmark }));
     }
     // Hiding/showing the bar is allowed in Restricted Mode; EDITING bookmarks is not.
@@ -478,7 +480,14 @@
     else if (data.kind === "siteinfo") renderSiteInfo();
     else if (data.kind === "find") renderFind();
     else if (data.kind === "unlock") renderUnlock();
-    else if (data.kind === "bookmark-edit") renderBookmarkEdit();
+    else if (data.kind === "bookmark-edit") {
+      // Main re-sends data on every tab/title/download change (popup.refresh). The box is a FORM: rebuilding it from the
+      // stored values threw away what was being typed (measured: Name went back to the old title after the page changed
+      // its own title). Build it once per bookmark; a bookmark that is gone still closes it.
+      if (data.bookmark && panel.querySelector(".bm-edit, .bmb-body") && panel.dataset.bookmarkId === data.bookmark.id) return;
+      renderBookmarkEdit();
+      if (data.bookmark) panel.dataset.bookmarkId = data.bookmark.id;
+    }
   }
 
   backdrop.addEventListener("mousedown", () => act("close"));
