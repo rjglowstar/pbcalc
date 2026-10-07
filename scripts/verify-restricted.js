@@ -128,7 +128,8 @@ app.whenReady().then(async () => {
   await sleep(1800);
   const swc = twc();
   const api = (call) => swc.executeJavaScript(call);
-  check("settings page shows no PIN fields", (await swc.executeJavaScript('!document.querySelector("input[type=password]") && /Default Start Restricted/.test(document.body.innerText)')) === true);
+  // (the "Saved passwords" card has password boxes of its own, hidden until Change password is pressed: none may be VISIBLE)
+  check("settings page shows no PIN fields", (await swc.executeJavaScript('[...document.querySelectorAll("input[type=password]")].every((i) => i.offsetParent === null) && /Default Start Restricted/.test(document.body.innerText)')) === true);
   check("Default Start Restricted is off by default", (await swc.executeJavaScript('document.getElementById("rm-start").getAttribute("aria-checked")')) === "false");
   await swc.executeJavaScript('document.getElementById("rm-start").click(); 0');
   await sleep(700);

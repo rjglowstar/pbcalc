@@ -123,8 +123,8 @@ app.whenReady().then(async () => {
   // defaultSession only, so tabs leaked the "Electron" token (Akamai/Meesho answer that with a 403)
   // and page downloads were never seen. The partition itself must stay memory-only: no storage path.
   const TAB_PARTITION = require("../electron/constants").TAB_PARTITION;
-  check("tabs run in the TAB_PARTITION session, and it is in-memory (no storage path = nothing on disk)",
-    wc0.session === session.fromPartition(TAB_PARTITION) && wc0.session.getStoragePath() === null);
+  check("tabs run in the TAB_PARTITION session, a persistent one (Chromium's PDF viewer needs it) whose folder is inside the data folder (privacy.js wipes it)",
+    wc0.session === session.fromPartition(TAB_PARTITION) && !!wc0.session.getStoragePath() && wc0.session.getStoragePath().startsWith(app.getPath("userData")));
   // (The user-agent check lives in verify-tabs.js: the UA rules are installed by electron/main.js, and
   // this suite builds its own harness without loading it.)
   const popup = require("../electron/popup");
@@ -176,9 +176,20 @@ app.whenReady().then(async () => {
   const dd = await wc.executeJavaScript('(document.querySelector(".pbcalc-pm-dd")||{}).textContent||""');
   check("autofill dropdown lists saved username", /alice/.test(dd));
   check("no silent prefill on load", await wc.executeJavaScript('document.getElementById("u").value===""'));
+  // Picking a row now needs a REAL click and then the vault password (default 1234) in the browser's own dialog
+  // (scripts/verify-vault-lock.js tests that flow in depth); a script-made click does nothing.
   await wc.executeJavaScript('document.querySelector(".pbcalc-pm-row").dispatchEvent(new MouseEvent("mousedown",{bubbles:true,cancelable:true}));0');
-  await sleep(500);
-  check("picking a row fills username + password", await wc.executeJavaScript('document.getElementById("u").value==="alice"&&document.getElementById("p").value==="pw-123"'));
+  await sleep(400);
+  check("a script-made click on a row does not fill (needs a real click + the password)", await wc.executeJavaScript('document.getElementById("u").value===""&&document.getElementById("p").value===""'));
+  // (this test window is never shown, so real mouse input is dropped: the real-click flow is in verify-vault-lock.js; here the
+  // dialog is raised the way the main process does it and the saved password is read through the one-time grant)
+  const popupMod = require("../electron/popup");
+  const asked = popupMod.askVaultPassword(wc, base, "alice");
+  await sleep(900);
+  const pv = state.mainWindow.getBrowserViews().pop().webContents;
+  await pv.executeJavaScript('(() => { const i = document.querySelector(".vu input"); i.value = "1234"; [...document.querySelectorAll(".vu button")].find((b) => b.textContent === "Fill").click(); return 1; })()');
+  check("the password dialog + the right password grants the fill", (await asked) === true);
+  check("then the saved password is released (once) for that login", (await wc.executeJavaScript('window.vaultAPI.getPassword("alice")')) === "pw-123" && (await wc.executeJavaScript('window.vaultAPI.getPassword("alice")')) === null);
   check("page world has no require()", await wc.executeJavaScript('typeof require === "undefined"'));
 
   // ── wipe of session data ──

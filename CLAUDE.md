@@ -108,6 +108,102 @@ Two things define this browser against every mainstream one:
 - **Limit:** this is Google's heuristic, not a contract; it can change. Re-run the method above if sign-in breaks
   again. Repeated probing makes Google show a "type the text you hear or see" check for a while.
 
+### 6. PDFs, files from downloads, and being a Windows "default browser"
+
+- **A PDF opened as a page needs a PERSISTENT session** (`TAB_PARTITION = "persist:pbcalc"`). Chromium's built-in PDF
+  viewer starts but paints NOTHING in an in-memory (off-the-record) session - an empty dark page. Measured with the same
+  PDF in four setups: default session and `persist:` partition draw it (184 distinct colours); every in-memory
+  partition, with or without PBCalc's preload and with or without `plugins:true`, stays at 9. Pages that draw PDFs
+  themselves (smallpdf's editor) never needed it. **The owner chose this trade-off**: while PBCalc runs, cookies and cache
+  are on disk; they are deleted when it quits (the detached cleanup helper deletes everything not on the KEEP list) and
+  again at the next start (the startup sweep, for a crash or forced kill). Proven end to end with a real window close and
+  with a simulated crash (~1 MB of session files while running -> only the KEEP files after close; ~2 MB left by a
+  crash -> an empty fresh folder at the next start). Do NOT go back to an in-memory partition without another way to
+  draw PDFs.
+- **Clicking a finished download opens PDFs, images and text files in a PBCalc tab** (`downloadManager.open` ->
+  `tabManager.openLocalFile`; the list, the bubble and the Downloads page all use it). Windows' default app opened them
+  before - for the owner that is Chrome. Types: pdf png jpg jpeg gif webp bmp ico avif txt log json. NOT: html / htm / svg
+  (a local page would run scripts), csv / md (Chromium turns them into a download again), anything else - those still
+  go to Windows. **Restricted Mode opens them in a tab too** (owner's decision: files open there like in normal mode;
+  `openLocalFile` passes `allowRestricted`; such a tab has no `site`, so `blockIfOutside` refuses every later move away
+  from the file). The type lists live in ONE place, `electron/fileTypes.js` (`IN_TAB` = pdf/images/text, `FROM_USER` =
+  those + html/htm/xhtml/svg, `kindOf(ext)`); the Downloads list, `externalOpen.js`, drops and the registry all use it.
+  Test: `scripts/verify-open-downloads.js`.
+- **Files dragged in from Explorer open in a NEW tab, in both modes** (`electron/dropFiles.js`, the drag/drop block at the
+  end of `shell-preload.js` and `tab-preload.js`, IPC `files:dropped`). Before this a drop on the tab strip / toolbar
+  showed the "not allowed" cursor and one on a page made Chromium navigate that page to the file. The preload takes only a
+  TRUSTED, not-yet-handled drop carrying files (`webUtils.getPathForFile`; a file a page invents has no path), so a page's
+  own upload box keeps its drops; main accepts the paths only from the shell or a tab page, absolute, an existing FILE of a
+  `FROM_USER` type, at most 10. **Deliberate difference from Chrome:** Chrome replaces the page for a drop on the page area,
+  PBCalc always opens a new tab (safer: never loses the page you are on). The empty gap in the tab strip is an OS drag
+  region (`-webkit-app-region: drag`) and cannot receive drops. **Trap:** the tab's own `drop` handler (drag-reorder)
+  used to `preventDefault()` unconditionally, so the preload ignored every file dropped on a tab; it now does nothing unless
+  a tab is being dragged. Test: `scripts/verify-drop-files.js` (19; real trusted drags via CDP `Input.dispatchDragEvent`
+  with file paths - a genuine mouse drag from Explorer is NOT driven, check it by hand). Its "cannot navigate away" check
+  uses a page-initiated `location.href`: a main-process `loadURL` never fires `will-navigate` and proves nothing.
+  **Tab-strip drag UI, Chrome-style** (`scripts/verify-drop-ui.js`, 27 checks; from the owner's Chrome screenshots: drop arrow
+  + "Copy", while PBCalc showed the "not allowed" sign). ROOT CAUSE, measured with `WM_NCHITTEST` against the real window: the
+  empty strip is `-webkit-app-region: drag` = HTCAPTION (2) and Windows refuses an OLE drop on the caption (tabs, the + button
+  and the toolbar are CLIENT = 1). Fix: while a file drag is over the window, `body.file-drag` makes `.strip` no-drag. It is
+  switched on by the shell's own `dragenter/over` and by the tab pages through main (`files:drag-state`, repeated every 200ms),
+  and off by `dragleave` out of the window, `drop`, `dragend`, or **a 700ms silence watchdog** (a drag that ends without any
+  event - Esc, released elsewhere - must never leave the strip un-draggable; CDP's `dragCancel` sends no dragleave).
+  **Limit:** a drag entering straight onto the empty strip from outside the window is still refused until the pointer has
+  touched a client area first (the OS sees the caption before our page knows a drag exists). Over the strip a Chrome-style
+  arrow (`#drop-arrow`) marks the slot (between two tabs / after the last), and the file opens as a NEW tab AT that slot
+  (`files:dropped` carries `at`, written to `<html data-drop-index>` by the shell at the moment of the drop); toolbar / page
+  drops append. The owner chose "always a new tab" over Chrome's replace-the-tab/page. **Traps:** the arrow is an UNFILLED 12px line arrow measured from Chrome (tip y=45, grey #D2D2D2 in dark; the light colour #474747 is assumed); an `<svg>` has no `hidden`
+  property (the arrow was always visible; use the `.show` class); test points on the strip must be re-measured after every tab
+  opens (9 tabs leave no empty strip, and the point lands on the window buttons, hit-test 9); send each `dragOver` twice.
+- **Per-type file icons** (Explorer shows them once PBCalc is the default app for a type, like Chrome's page + logo +
+  label): `scripts/make-file-icons.js` renders `assets/file-icons/{pdf,html,image,text}.ico` (page, PBCalc logo, coloured
+  PDF / HTML / IMAGE / TEXT band; re-run after changing the logo). They ship OUTSIDE the asar as
+  `<install>\resources\file-icons\*.ico` (`build.extraResources`; verified in `release/win-unpacked/resources/file-icons`),
+  because Explorer reads an icon from a real file. Registry layout 3 (`REG_VERSION "3"`): extra ProgIds `PBCalcIMG` /
+  `PBCalcTXT`, every extension in `defaultBrowser.EXTENSIONS` listed under the ProgId of its `kindOf`, each ProgId's
+  `DefaultIcon` = its .ico (falls back to `exe,0` when the file is missing); installed copies re-register at next start;
+  `installer/installer.nsh` removes the new ProgIds on uninstall. **Not verifiable from here:** how Explorer draws them (icon
+  cache) - the owner looks. A type whose default is another app keeps THAT app's icon: PBCalc's only apply to types the
+  user set to PBCalc. **Update (layout 4):** a fifth icon `svg.ico` (orange "SVG" band) and ProgId `PBCalcSVG` - ONLY `.pdf` and
+  `.svg` have an icon of their own (owner's decision; other images keep the shared IMAGE one), `REG_VERSION "4"`.
+  **Trap, measured in the registry:** the icon applies only when the file type's ProgId is one of OURS. Choosing PBCalc via
+  file Properties > Opens with > Change makes Windows create `HKCU\Classes\pdf_auto_file` (command only, no icon) and
+  Explorer then shows the exe's calculator; choosing it in Settings > Default apps uses `PBCalcPDF` and its icon.
+  **Fixed in code (`repairOpenWithIcons`, run at every start of the installed copy):** for each listed extension it looks at
+  the ProgIds the type resolves to (UserChoice, `.ext` default, OpenWithProgids); a non-PBCalc ProgId whose open command is
+  PBCalc's and that has no `DefaultIcon` gets the type's .ico, and an icon of ours is removed again once the command no longer
+  is PBCalc's (type given to another app). Never touches PBCalc* ProgIds or someone else's icon. Test: the last block of
+  `verify-default-browser.js` (57 checks, test registry root; the real `pdf_auto_file` is asserted untouched).
+- **PBCalc lists itself in Windows Settings > Default apps** (the installed program only, per user, no admin):
+  `electron/defaultBrowser.js` writes the Chrome-style entries under HKCU (StartMenuInternet client + Capabilities for
+  http/https/.htm/.html/.pdf, three ProgIds, RegisteredApplications) the first time the installed copy runs
+  (`app.isPackaged`; a dev copy would register Electron's own exe), idempotent by exe path AND layout version
+  (`REG_VERSION`, stamped last as `RegistrationVersion`; bump it when the layout changes and installed copies
+  re-register at their next start). **The first layout did not make PBCalc appear in the Windows chooser** (the owner
+  checked Settings > Default apps > Web browser: Firefox, Chrome, IE, Edge, Opera - no PBCalc, although the keys existed).
+  Compared with the registry of the browsers Windows DOES list (Chrome, Opera, Firefox on that PC): all three have
+  `Capabilities\Startmenu\StartMenuInternet` and `InstallInfo`, which PBCalc lacked; Chrome's ProgIds also carry an
+  `Application` subkey. Layout 2 adds all of these plus `SHChangeNotify(SHCNE_ASSOCCHANGED)` so Windows rebuilds the list now.
+  **CONFIRMED by the owner on Windows 10 (build 18362): after the layout-2 entries were written, PBCalc appears under
+  Settings > Default apps > Web browser and could be selected.** (It cannot be checked from here: the chooser is a Windows
+  UI flyout that opens only with a real click - UI Automation `Invoke` did not open it and
+  `FindUriSchemeHandlersAsync` returns nothing on this build - so the owner looks at the list;
+  `installer/installer.nsh` (`nsis.include`) removes them on uninstall. Windows never lets an app make itself the default -
+  the user picks PBCalc there. A link / .html / .pdf handed over by Windows arrives as `PBCalc.exe <address-or-file>`:
+  `electron/externalOpen.js` accepts ONLY http(s) addresses and existing local files of an allowed type (never javascript:,
+  ftp:, .exe, a missing file), opens it as a new tab in the running window (or as the first tab at start-up, replacing the
+  lone New Tab page), and ignores it in Restricted Mode. **`app.requestSingleInstanceLock()` is the FIRST thing main.js does
+  after setting the data path - BEFORE the startup sweep**: that sweep deletes the session folder, so a second copy used to be
+  able to wipe a running one's data (it matters now that every link click launches a copy). The second launch quits and its
+  argv arrives in the `second-instance` event. **A failed lock only means "another copy" when the data folder is
+  writable** (`dataFolderProblem()`): the lock is a file INSIDE that folder, so an unwritable folder fails it too, and
+  quitting then would hide the "PBCalc cannot save your data" warning (caught by `verify-datadir.js` with `BAD=1`, which
+  printed nothing at all before this was fixed). Test: `scripts/verify-default-browser.js` (the registry part writes to a
+  TEST key, never the real Default-apps list). **Not driven:** the Windows Settings screen itself - the entries are checked,
+  not how Windows draws them. **Test trap:** launch the extra copies with async `spawn`, never `spawnSync`, from the
+  process that is playing the running browser - its blocked event loop can neither answer the second launch (20 s hang)
+  nor serve the test web server.
+
 ## Architecture
 
 - `electron/main.js` — entry point. Sets the `userData` path (`C:\PBCalc`) first, then wires up the
@@ -120,9 +216,9 @@ Two things define this browser against every mainstream one:
 - `electron/tabs/tabManager.js` — the tab engine. Each tab is a `BrowserView`. Deliberately **no
   per-tab** session partition: every tab shares ONE session, so logging into a site in one tab
   keeps you logged in in another tab of the same site, like a real browser. That shared session is
-  the named, **in-memory** partition `TAB_PARTITION` (`"pbcalc"`, no `persist:` prefix, so
-  `getStoragePath()` is `null` — cookies, localStorage and the HTTP cache live in RAM and are gone
-  on exit with nothing on disk). **It is NOT `session.defaultSession`, so anything that must see tab
+  the named, **persistent** partition `TAB_PARTITION` (`"persist:pbcalc"`: a folder under the data folder, see
+  "PDFs" below for why it is no longer in-memory — cookies, localStorage and the HTTP cache are ON DISK while
+  PBCalc runs and are deleted at quit and again at the next start). **It is NOT `session.defaultSession`, so anything that must see tab
   traffic has to target `TAB_PARTITION`:** the Chrome User-Agent / header rules (`main.js`), the
   download manager's `will-download` (`downloadManager.init`, which listens on both) and
   `privacy.clearSession()` (clears both). Wiring them to `defaultSession` alone silently broke two
@@ -161,8 +257,8 @@ Two things define this browser against every mainstream one:
 - **Wipe on exit** (`electron/privacy.js`): the user chose the strict policy — cookies, cache,
   localStorage, IndexedDB etc. never survive a restart, so logins do not persist either. On quit
   the session is cleared, then a detached helper process deletes everything in `userData` except
-  `password-vault.json`, `bookmarks.json`, `bookmarks-dummy.json`, `settings.json` and `Local State` once our PID is
-  gone (the `KEEP` set in privacy.js — five files); the same sweep
+  `password-vault.json`, `vault-lock.json`, `bookmarks.json`, `bookmarks-dummy.json`, `settings.json` and `Local State` once our PID is
+  gone (the `KEEP` set in privacy.js — six files); the same sweep
   runs at startup for crash leftovers. **`Local State` must stay in the keep list** — it holds the
   `safeStorage` key; deleting it makes the vault undecryptable.
 - **Bookmarks** (`electron/bookmarks/`): user-curated, persisted in `bookmarks.json`; bar + star
@@ -315,6 +411,24 @@ Two things define this browser against every mainstream one:
   Structure test: `verify-downloads.js`.
 - **Version row**: Settings → Privacy ends with "Version", read from `package.json` (`settingsSnapshot().version`;
   bump it there only). Not `app.getVersion()`, which reports Electron's version when run as a script.
+- **A PASSWORD IS ASKED BEFORE A SAVED LOGIN IS FILLED** (the owner's rule: whoever sits at the browser and does not know it
+  cannot auto-fill saved passwords). Default **1234**; digits 0-9 only, 4 to 8 of them; changed in Settings > Saved passwords with
+  Old / New / Confirm (`settings:change-vault-password`). Decisions (owner's answers): asked **EVERY time** a saved login is picked
+  (no unlock window), **no recovery** (nothing in the browser resets it; deleting the file would also lose nothing but the
+  password - see the limit below), **5 wrong tries = 30 s lockout, doubling each further round (cap 1 h)**, the dropdown still
+  shows usernames on a click in the field (like Chrome) and the dialog comes when a row is picked. `electron/vault/vaultLock.js`
+  keeps a salted scrypt hash in `vault-lock.json` (encrypted with `safeStorage`/DPAPI like the vault, on the keep list) plus the
+  failed-try counter and lockout so closing the browser does not give fresh guesses. The dialog is the popup kind `vault-unlock`
+  (`popup.askVaultPassword`, drawn by the BROWSER, allowed in Restricted Mode too); a correct password writes a ONE-TIME grant
+  (`electron/vault/fillGrants.js`: one webContents + origin + username, 30 s) and **`vault:get-password` refuses everything
+  without it** - which also closes a pre-existing hole: `window.vaultAPI` is exposed to page scripts, so any site could call
+  `vaultAPI.getPassword(...)` and read its own saved password with no user action (`getLastSaved` even returned the password;
+  it now returns the username only). The preload's row handler ignores untrusted (script-made) clicks, and `vault:request-fill`
+  refuses a page that is not the active tab. **Limit:** application-level, not OS security: someone with the user's Windows
+  session and the files can delete `vault-lock.json` (back to 1234) or read the vault through DPAPI. Test:
+  `scripts/verify-vault-lock.js` (55; negative controls: removing the grant check or the trusted-click check fails the matching
+  checks). `verify-features.js` raises the dialog from the main process because its window is never shown (real mouse input is
+  dropped there).
 - **Password-manager UI** (bottom of `preloads/tab-preload.js`): save prompt, autofill dropdown on
   click/typing. No silent pre-fill (untrusted sites). All `vault:*` IPC re-derives the origin from
   the sender's real URL in the main process; a typed credential crosses a navigation only via an
@@ -395,6 +509,15 @@ Two things define this browser against every mainstream one:
     tab" (`indexAfterOpener`, uses `tab.openerId`). It used to be appended at the END of the strip. Ctrl+T / the + button
     still append. Same test file.
   - Never pass `findNext:false` to `findInPage` (first search returns nothing). Zoom is per tab.
+  - **Zoom = Chrome's preset list, 25..500%** (`ZOOM_STEPS`, `zoomTab` in tabManager): 25 33 50 67 75 80 90 100 110 125 150 175 200 250 300 400 500,
+    shared by Ctrl+plus/minus/0, the ⋮ menu's +/- and **Ctrl+mouse wheel** (new: the tab preload reports a Ctrl+wheel to main
+    only if the PAGE did not preventDefault it - the decision runs in a `setTimeout(0)` because the preload's listener is registered
+    BEFORE the page's, so deciding inside it zoomed pages that use the wheel themselves; small touchpad deltas add up to 50 per step).
+    The old code stepped 0.5 zoom-levels clamped to -3..5 = only 58%..249% (the comment said 25..500). The percentage comes from
+    `getZoomFactor()`. Image tabs use the same (the owner's Chrome screenshots at 25% and 500%); Chromium's own click-on-image
+    fit<->actual-size toggle already works (measured on a 4000px image). **`sendInputEvent` wheel deltaY has the OPPOSITE sign to
+    the page's `event.deltaY`.** Zoom is per tab, but Chromium keeps it per HOST in the shared session, so a new tab on a host
+    already zoomed starts zoomed. Test: `scripts/verify-zoom.js` (22). Not built: Chrome's zoom bubble (25% - + Reset).
 - **Restricted Mode** (`electron/restricted.js`, `renderer/restricted/`, Settings → Restricted Mode):
   an admin-locked mode. The preset sites are simply the bookmarks. Users can open/close those and
   nothing else: no address bar (hidden and non-interactive, URL never sent to the shell), no
@@ -517,7 +640,7 @@ Two things define this browser against every mainstream one:
   (mfg.pb.diamonds) keeps its login in `sessionStorage` (the sibling ERP shell reads
   `fxCredentials` there), which belongs to the TAB and died with its `webContents`; the closed-tab
   list only remembered the URL, so Ctrl+Shift+T showed the login page. Cookies/localStorage were never
-  lost (every tab shares one in-memory session — a cookie login survived in the repro). Now `closeTab`
+  lost (every tab shares one session — a cookie login survived in the repro). Now `closeTab`
   removes the tab from the strip at once but lets its PAGE linger a few ms: it reads the tab's
   `sessionStorage` (`snapshotSessionStorage`, async, so the page must outlive the call) into the
   closed-tab entry (`entry.session`, `packSessionStorage`), and only then destroys the page and its

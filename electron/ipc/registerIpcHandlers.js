@@ -75,6 +75,7 @@ function registerIpcHandlers() {
     if (state.mainWindow && e.sender === state.mainWindow.webContents) require("../hovercard").hide();
   });
   ipcMain.on("tabs:reset-zoom", () => tabManager.zoom(0));
+  ipcMain.on("tabs:zoom-wheel", (e, deltaY) => tabManager.zoomWheel(e.sender, Number(deltaY)));
   ipcMain.on("tabs:move", (_e, id, index) => tabManager.moveTab(id, Number(index)));
   ipcMain.on("tabs:context-menu", (_e, id) => tabManager.tabContextMenu(id));
 
@@ -104,6 +105,7 @@ function registerIpcHandlers() {
   // "Edit bookmark" box: only the popup page, never in Restricted Mode (popup.saveBookmark re-checks too).
   ipcMain.handle("popup:bookmark-save", (e, title, url) => (popup.isSender(e.sender) ? popup.saveBookmark(title, url) : { ok: false, error: "unavailable" }));
   ipcMain.handle("popup:bookmark-remove", (e) => (popup.isSender(e.sender) ? popup.removeBookmark() : { ok: false, error: "unavailable" }));
+  ipcMain.handle("popup:vault-verify", (e, pw) => (popup.isSender(e.sender) ? popup.verifyVaultPassword(pw) : { ok: false, error: "unavailable" }));
   ipcMain.handle("popup:get-data", (e) => (popup.isSender(e.sender) ? popup.getData() : null));
   ipcMain.on("popup:action", (e, name, arg) => {
     if (popup.isSender(e.sender)) popup.handleAction(String(name), arg);
@@ -113,6 +115,13 @@ function registerIpcHandlers() {
   const fromSettingsPage = (e) => {
     try { return e.sender.getURL().startsWith(SETTINGS_URL); } catch (_) { return false; }
   };
+  // Change of the password asked before saved logins are filled (Settings > Saved passwords). Checked in vaultLock.
+  ipcMain.handle("settings:change-vault-password", (e, oldPw, newPw, confirmPw) => {
+    if (!fromSettingsPage(e)) return { ok: false, error: "unavailable" };
+    const r = require("../vault/vaultLock").change(String(oldPw), String(newPw), String(confirmPw));
+    if (r.ok) tabManager.broadcastSettings();
+    return r;
+  });
   ipcMain.handle("settings:get", (e) => {
     if (!fromSettingsPage(e)) return null;
     return tabManager.settingsSnapshot();
@@ -192,6 +201,17 @@ function registerIpcHandlers() {
     bookmarks.moveTo(String(id), Number(index));
     tabManager.broadcastBookmarks();
   });
+  // Files dropped on the window from Explorer (see electron/dropFiles.js): the shell or a tab page, never anything else.
+  ipcMain.on("files:dropped", (e, paths, at) => {
+    const df = require("../dropFiles");
+    if (df.isOurPage(e.sender)) df.openDropped(paths, at);
+  });
+  // A file drag from Explorer entered / left a tab page: the shell turns its tab strip into a drop target meanwhile.
+  ipcMain.on("files:drag-state", (e, active) => {
+    const df = require("../dropFiles");
+    if (!df.isOurPage(e.sender) || e.sender === (state.mainWindow && state.mainWindow.webContents)) return;
+    try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.webContents.send("files:drag-state", !!active); } catch (_) {}
+  });
   ipcMain.on("bookmarks:context-menu", (e, id) => { if (fromShell(e)) tabManager.bookmarkContextMenu(String(id)); });
   ipcMain.handle("bookmarks:remove", (_e, id) => {
     if (state.restricted) return bookmarks.list(); // read-only in Restricted Mode
@@ -248,13 +268,29 @@ function registerIpcHandlers() {
     const o = senderOrigin(e);
     return o ? vault.listUsernames(o) : [];
   });
+  // A saved password is released ONLY with the one-time grant that popup.askVaultPassword writes after the vault password was
+  // typed correctly (electron/vault/fillGrants.js) - so a page script calling window.vaultAPI.getPassword gets nothing.
   ipcMain.handle("vault:get-password", (e, _o, username) => {
     const o = senderOrigin(e);
-    return o ? vault.getPassword(o, username) : null;
+    if (!o || typeof username !== "string") return null;
+    if (!require("../vault/fillGrants").take(e.sender.id, o, username)) return null;
+    return vault.getPassword(o, username);
   });
+  // The preload asks for a fill (after the user picked a row): the dialog opens over the ACTIVE tab; resolves { ok } once the
+  // password was right. Only for a username that is saved for this page's own origin.
+  ipcMain.handle("vault:request-fill", async (e, username) => {
+    const o = senderOrigin(e);
+    if (!o || typeof username !== "string") return { ok: false };
+    if (!vault.listUsernames(o).some((i) => i.username === username)) return { ok: false };
+    const active = tabManager.getActiveTab();
+    if (!active || active.view.webContents !== e.sender) return { ok: false };
+    return { ok: await popup.askVaultPassword(e.sender, o, username) };
+  });
+  // Never hands out a password (it used to, to any page script): the username only.
   ipcMain.handle("vault:get-last-saved", (e) => {
     const o = senderOrigin(e);
-    return o ? vault.getLastSaved(o) : null;
+    const last = o ? vault.getLastSaved(o) : null;
+    return last ? { username: last.username } : null;
   });
   ipcMain.handle("vault:save", (e, cred) => {
     const o = senderOrigin(e);

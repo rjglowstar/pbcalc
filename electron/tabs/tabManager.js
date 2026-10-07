@@ -55,7 +55,7 @@ function displayUrlFor(u) {
 
 function zoomPercentOf(t) {
   const wc = t.view.webContents;
-  return wc.isDestroyed() ? 100 : Math.round(Math.pow(1.2, wc.getZoomLevel()) * 100);
+  return wc.isDestroyed() ? 100 : Math.round(wc.getZoomFactor() * 100);
 }
 
 // What the omnibox's leading icon should say about the page: "internal" (new tab / our error
@@ -141,10 +141,9 @@ function createTab(url, opts = {}) {
           // Only a duplicated tab carries this flag; its preload then asks for the source tab's
           // sessionStorage before any page script runs. Every other tab skips that round trip.
           additionalArguments: opts.sessionRestore ? ["--pbcalc-restore-session"] : [],
-          // The user specifically requested that cache is kept in memory to speed up page loads, but
-          // never touches the disk and is wiped completely on close. An ephemeral partition does exactly
-          // this. NOTE: main.js (UA/headers) and downloadManager (will-download) MUST target this same
-          // session (constants.TAB_PARTITION), or tabs leak the Electron UA and downloads are not caught.
+          // One shared session for all tabs (see constants.TAB_PARTITION: persistent on purpose, so Chromium's PDF viewer
+          // works; privacy.js wipes it on quit and at the next start). NOTE: main.js (UA/headers) and downloadManager
+          // (will-download) MUST target this same session, or tabs leak the Electron UA and downloads are not caught.
           partition: TAB_PARTITION,
           preload: path.join(__dirname, "..", "..", "preloads", "tab-preload.js"),
         },
@@ -230,6 +229,13 @@ function indexAfterOpener(opener) {
   let j = i + 1;
   while (j < state.tabs.length && state.tabs[j].openerId === opener.id) j++;
   return j;
+}
+
+// A file on this PC shown in a new tab (a finished download, a file dropped on the window, a file Windows hands over).
+// `allowRestricted`: opening a file is allowed in Restricted Mode too (the owner's decision); it is a tab with no site, so it
+// cannot navigate anywhere else (blockIfOutside refuses every later move).
+function openLocalFile(filePath, opts = {}) {
+  return createTab(require("url").pathToFileURL(filePath).href, { allowRestricted: true, ...opts });
 }
 
 function openInNewTab(url, background = false, opener = null) {
@@ -886,13 +892,31 @@ function closeFind() {
 }
 
 // ── Zoom / print / devtools ─────────────────────────────────────────────
-// dir: +1 / -1 step (0.5 zoom-level, ~20%), 0 = reset. Per tab, clamped to 25%..500%.
-function zoom(dir) {
-  const wc = activeWebContents();
-  if (!wc) return;
-  if (dir === 0) wc.setZoomLevel(0);
-  else wc.setZoomLevel(Math.max(-3, Math.min(5, wc.getZoomLevel() + dir * 0.5)));
+// Chrome's zoom steps (its zoom-preset list), the same for Ctrl+plus / Ctrl+minus, the menu's + / - and Ctrl+wheel. Per tab, 25%..500%.
+// (It used to be a 0.5-level step clamped to -3..5 = only 58%..249%, unlike Chrome and the "25%..500%" the comment claimed.)
+const ZOOM_STEPS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
+// dir: +1 = next step up, -1 = next step down (from wherever the zoom is now, even between steps), 0 = reset to 100%.
+function zoomTab(wc, dir) {
+  if (!wc || wc.isDestroyed()) return;
+  if (dir === 0) wc.setZoomFactor(1);
+  else {
+    const pct = Math.round(wc.getZoomFactor() * 100);
+    const next = dir > 0 ? ZOOM_STEPS.find((s) => s > pct) : [...ZOOM_STEPS].reverse().find((s) => s < pct);
+    if (next) wc.setZoomFactor(next / 100);
+  }
   notifyTabs();
+}
+function zoom(dir) { zoomTab(activeWebContents(), dir); }
+// Ctrl + mouse wheel over a page (reported by the tab preload only when the page itself did not use the wheel event), like
+// Chrome: one wheel notch = one step; small touchpad deltas add up until they make one.
+const wheelAcc = new WeakMap();
+function zoomWheel(wc, deltaY) {
+  if (!wc || wc.isDestroyed() || !state.tabs.some((t) => t.view && t.view.webContents === wc) || !Number.isFinite(deltaY)) return;
+  const now = Date.now(), a = wheelAcc.get(wc) || { sum: 0, at: 0 };
+  if (now - a.at > 400) a.sum = 0;
+  a.at = now; a.sum += -deltaY;
+  if (Math.abs(a.sum) >= 50) { zoomTab(wc, a.sum > 0 ? 1 : -1); a.sum = 0; }
+  wheelAcc.set(wc, a);
 }
 
 function printActive() {
@@ -1074,6 +1098,7 @@ function settingsSnapshot() {
     downloads: require("../downloads/downloadManager").config(), // { dir, ask } for Settings → Downloads
     showBookmarksBar: state.bookmarksBarVisible,
     restricted: !!state.restricted,
+    vaultPasswordIsDefault: require("../vault/vaultLock").isDefault(),
   };
 }
 
@@ -1307,6 +1332,7 @@ module.exports = {
   findText,
   closeFind,
   zoom,
+  zoomWheel,
   printActive,
   openDevTools,
   toggleBookmarkActive,
@@ -1335,6 +1361,7 @@ module.exports = {
   reloadMenu,
   toggleBookmarkMode,
   permissionRequestHandler,
+  openLocalFile,
   chromeHeight,
   siteKind,
   reopenClosedTab,

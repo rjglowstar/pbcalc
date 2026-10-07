@@ -112,5 +112,8 @@ h2 { margin: 0; padding: 16px 20px 8px; font-size: 14px; font-weight: 500; color
 .btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn:disabled { opacity: 0.5; }
 .msg { color: var(--muted); font-size: 12px; }
+.vault-fields { display: flex; flex-direction: column; gap: 8px; max-width: 260px; margin-bottom: 8px; }
+.msg.err { color: #d93025; }
+.msg.ok { color: #188038; }
 .btnrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 [hidden] { display: none !important; }

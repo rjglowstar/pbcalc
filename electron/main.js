@@ -19,6 +19,22 @@ const { dataDir } = require("./constants");
 // app.getPath("userData") — they simply inherit it.
 app.setPath("userData", dataDir());
 
+// ONE running PBCalc per data folder. A second launch (a link clicked in another program while PBCalc is the default
+// browser, a double-clicked .html / .pdf) must hand its address to the window that is already open and quit - and it must
+// do so BEFORE the startup sweep below, which deletes the running copy's session folder (it is meant for leftovers of a
+// crash, and would wipe a live session). Without this lock two copies fought over the same folder.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+// A failed lock means "another copy is running" ONLY if the data folder is usable: the lock is a file inside it, so an
+// unwritable folder fails it too - and then PBCalc must carry on and show its "cannot save your data" warning (below)
+// instead of silently quitting. (dataFolderProblem is a function declaration, hoisted from further down.)
+if (!gotSingleInstanceLock && !dataFolderProblem()) {
+  app.quit();
+  return;
+}
+app.on("second-instance", (_event, argv, workingDirectory) => {
+  try { require("./externalOpen").openFromOutside(argv, workingDirectory); } catch (_) {}
+});
+
 // Disable GPU disk cache to prevent Windows file-locking collisions and console warnings.
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
 
@@ -104,6 +120,15 @@ app.whenReady().then(() => {
   warnIfDataFolderUnwritable();
   require("./downloads/downloadManager").init();
   createMainWindow();
+  // PBCalc started BY a link / file from another program (Windows "Default apps"): open it as the first tab, once the
+  // window has its first tab (mainWindow creates that on "ready-to-show").
+  const firstWindow = require("./state").mainWindow;
+  if (firstWindow) firstWindow.once("ready-to-show", () => setTimeout(() => { try { require("./externalOpen").openFromOutside(process.argv, process.cwd(), { first: true }); } catch (_) {} }, 400));
+  // The installed program lists itself in Windows' Default apps (per user, no admin). Never for a development copy: it
+  // would register Electron's own exe. Off the critical path; failures are ignored (nothing depends on it).
+  if (app.isPackaged && process.platform === "win32") {
+    setTimeout(() => { try { const db = require("./defaultBrowser"); db.register(process.execPath); db.repairOpenWithIcons(process.execPath); } catch (_) {} }, 5000).unref();
+  }
   // Build the "download started" animation view a moment after startup, off the critical path, so the
   // FIRST download's flight does not wait for a page load (play() makes it on demand if one comes sooner).
   setTimeout(() => { try { require("./dlanimation").warm(); } catch (_) {} }, 2000).unref();

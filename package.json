@@ -1,6 +1,6 @@
 {
   "name": "pbcalc",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "PBCalc Secure Browser",
   "author": "PBCalc",
   "main": "electron/main.js",
@@ -34,6 +34,9 @@
       "!.git/**/*",
       "!.dev-userdata/**/*"
     ],
+    "extraResources": [
+      { "from": "assets/file-icons", "to": "file-icons", "filter": ["*.ico"] }
+    ],
     "asar": true,
     "win": {
       "target": "nsis",
@@ -46,7 +49,8 @@
       "createStartMenuShortcut": true,
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico",
-      "installerHeaderIcon": "assets/icon.ico"
+      "installerHeaderIcon": "assets/icon.ico",
+      "include": "installer/installer.nsh"
     }
   }
 }

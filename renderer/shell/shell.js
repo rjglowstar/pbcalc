@@ -184,9 +184,10 @@
     });
     el.addEventListener("dragleave", () => el.classList.remove("drop-before", "drop-after"));
     el.addEventListener("drop", (e) => {
+      if (dragId == null) return;   // not one of our tabs: a file from Explorer, handled by the preload (opens in a new tab)
       e.preventDefault();
       el.classList.remove("drop-before", "drop-after");
-      if (dragId == null || dragId === id) return;
+      if (dragId === id) return;
       const r = el.getBoundingClientRect();
       const before = e.clientX < r.left + r.width / 2;
       const ids = tabState.tabs.map((t) => t.id).filter((x) => x !== dragId);
@@ -563,6 +564,56 @@
     downloadsBtn.title = running.length ? "Downloads in progress (Ctrl+Shift+J)" : "Downloads (Ctrl+Shift+J)";
   }
   api.onDownloadsChanged(renderDownloadsBtn);
+
+  // ── Files dragged in from Explorer (Chrome's behaviour) ───────────────────────────────────────────────────────────────
+  // The strip's empty part is an OS drag region and refuses a file drop, so while such a drag is over the window (or a page, which
+  // main relays) the strip is an ordinary area (body.file-drag). Over the strip a Chrome-style arrow shows the slot the file's
+  // new tab will take (between two tabs, or after the last one); the slot is also written to <html data-drop-index> at the
+  // moment of the drop, where the preload reads it. Anywhere else the new tab goes to the end.
+  const dropArrow = $("drop-arrow");
+  const fileDrag = (e) => e.isTrusted && !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+  // A drag that ends without a dragleave (Esc, or dropped somewhere else) must not leave the strip un-draggable: a real drag keeps
+  // firing dragover ~20x/s while it is over us (the tab pages relay that every 200ms), so silence for 700ms means it is over.
+  let fileDragTimer = null;
+  function setFileDrag(on) {
+    document.body.classList.toggle("file-drag", on);
+    clearTimeout(fileDragTimer);
+    if (on) fileDragTimer = setTimeout(() => setFileDrag(false), 700);
+    else dropArrow.classList.remove("show");
+  }
+  // slot (0..n) and the x of the edge between the two tabs around it, for a pointer at (x, y); null when not over the strip
+  function stripSlot(x, y) {
+    if (y < 0 || y >= 40) return null;
+    const els = Array.from(tabsEl.querySelectorAll(".tab:not(.closing)")).map((el) => el.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+    if (!els.length) return null;
+    let slot = 0;
+    for (const r of els) if (x > r.left + r.width / 2) slot++;
+    const edge = slot === 0 ? els[0].left : slot >= els.length ? els[els.length - 1].right : els[slot].left;
+    return { slot, edge };
+  }
+  document.addEventListener("dragenter", (e) => { if (fileDrag(e)) setFileDrag(true); }, true);
+  document.addEventListener("dragover", (e) => {
+    if (!fileDrag(e)) return;
+    setFileDrag(true);
+    const s = stripSlot(e.clientX, e.clientY);
+    dropArrow.classList.toggle("show", !!s);
+    if (s) dropArrow.style.left = s.edge + "px";
+  }, true);
+  document.addEventListener("dragleave", (e) => {
+    if (!fileDrag(e)) return;
+    const outside = e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth - 1 || e.clientY >= innerHeight - 1;
+    if (e.relatedTarget === null || outside) setFileDrag(false);
+  }, true);
+  document.addEventListener("drop", (e) => {
+    if (!fileDrag(e)) return;
+    const s = stripSlot(e.clientX, e.clientY);
+    const root = document.documentElement;
+    if (s) root.dataset.dropIndex = String(s.slot); else delete root.dataset.dropIndex;
+    setTimeout(() => { delete root.dataset.dropIndex; }, 0);
+    setFileDrag(false);
+  }, true);
+  document.addEventListener("dragend", () => setFileDrag(false), true);
+  api.onFileDrag((on) => setFileDrag(!!on));
   api.getDownloads().then(renderDownloadsBtn);
 
   downloadsBtn.addEventListener("click", () => {

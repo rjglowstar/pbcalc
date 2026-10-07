@@ -91,6 +91,27 @@ body::before {
   -webkit-app-region: drag;
 }
 
+/* A file dragged in from Explorer: the strip's empty part is an OS drag region (window dragging) and the OS refuses a drop
+   there, so for the length of such a drag it is an ordinary area. */
+body.file-drag .strip { -webkit-app-region: no-drag; }
+/* Chrome's drop arrow: where in the strip the dropped file's tab will go */
+/* Measured from the owner's Chrome screenshots (dark): an UNFILLED line arrow - chevron head + 2px stem, no outline, no fill -
+   about 12x12px, tip 5px under the strip (y 45), light grey #D2D2D2 on dark (the light-mode colour is the bubble ink #474747,
+   not measured). */
+.drop-arrow {
+  position: fixed;
+  top: 45px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  z-index: 50;
+  pointer-events: none;
+  color: #474747;
+}
+@media (prefers-color-scheme: dark) { .drop-arrow { color: #d2d2d2; } }
+.drop-arrow { display: none; }   /* an SVG has no `hidden` property: shown with .show */
+.drop-arrow.show { display: block; }
+
 .strip-btn {
   flex: 0 0 auto;
   width: 28px;

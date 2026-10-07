@@ -19,6 +19,9 @@ let editBubble = null; // null = the Name+URL dialog; { added } = Chrome's star 
 let editId = null;   // bookmark being edited in the "bookmark-edit" box
 let hovered = false; // the mouse entered the downloads bubble: never dismiss it from under them
 
+// The dialog that asks for the vault password before a saved login is filled (askVaultPassword). Only one at a time.
+let vaultAsk = null;   // { wc, origin, username, resolve }
+
 const FIND_W = 380;
 const FIND_H = 48;
 
@@ -55,7 +58,7 @@ function defaultAnchor(k) {
   const [w] = contentSize();
   if (k === "tabsearch") return { left: 8, right: 36, top: 6, bottom: 38 };
   if (k === "siteinfo") return { left: 100, right: 130, top: 44, bottom: 76 };
-  if (k === "bookmark-edit") return { left: Math.round(w / 2 - 190), right: Math.round(w / 2 + 190), top: 0, bottom: tabManager().chromeHeight() };
+  if (k === "bookmark-edit" || k === "vault-unlock") return { left: Math.round(w / 2 - 190), right: Math.round(w / 2 + 190), top: 0, bottom: tabManager().chromeHeight() };
   return { left: w - 44, right: w - 12, top: 44, bottom: 76 }; // menu / downloads
 }
 
@@ -69,7 +72,7 @@ function siteInfo(tab) {
 function zoomPercent() {
   const t = tabManager().getActiveTab();
   if (!t || t.view.webContents.isDestroyed()) return 100;
-  return Math.round(Math.pow(1.2, t.view.webContents.getZoomLevel()) * 100);
+  return Math.round(t.view.webContents.getZoomFactor() * 100);   // the factor is what the zoom steps set (Chrome's preset list)
 }
 
 function buildData() {
@@ -94,6 +97,8 @@ function buildData() {
     data.partial = partial;
   } else if (kind === "siteinfo") {
     data.site = siteInfo(tm.getActiveTab());
+  } else if (kind === "vault-unlock") {
+    data.vault = vaultAsk ? { host: hostOf(vaultAsk.origin), username: vaultAsk.username, secs: require("./vault/vaultLock").lockedSecs() } : null;
   } else if (kind === "bookmark-edit") {
     const b = bookmarks().list().find((x) => x.id === editId);
     data.bookmark = b ? { id: b.id, title: b.title, url: b.url, favicon: b.favicon } : null;
@@ -102,7 +107,10 @@ function buildData() {
   return data;
 }
 
+function hostOf(origin) { try { return new URL(origin).host; } catch (_) { return String(origin); } }
+
 function close() {
+  if (vaultAsk) { const a = vaultAsk; vaultAsk = null; a.resolve(false); }   // closed without a correct password = no fill
   clearTimeout(autoTimer);
   autoTimer = null;
   hovered = false;
@@ -132,7 +140,7 @@ function close() {
 // Popups that exist in Restricted Mode: the ⋮ menu (ordinary browser settings only), downloads,
 // find, and the admin panel (which only exists there, and only the hidden shortcut opens it).
 // Tab search and site info stay out: they would list addresses.
-const RESTRICTED_KINDS = new Set(["menu", "downloads", "find", "unlock"]);
+const RESTRICTED_KINDS = new Set(["menu", "downloads", "find", "unlock", "vault-unlock"]);
 // Menu actions a locked-down user may use. Everything that edits bookmarks, shows the bookmark
 // manager, opens developer tools or turns the bookmarks bar off is refused here, and the menu page
 // does not even draw those entries.
@@ -188,6 +196,33 @@ function autoCloseDownloads(ms) {
   if (!isOpen("downloads") || !partial || hovered) return;
   clearTimeout(autoTimer);
   autoTimer = setTimeout(close, ms);
+}
+
+// Asks for the vault password before a saved login is filled into `wc` (the active tab). Resolves true only after a CORRECT
+// password: the grant for exactly this page + origin + username is then in fillGrants, nothing else. Cancel / Esc / click
+// outside / a second request while one is open / the window losing focus all resolve false.
+function askVaultPassword(wc, origin, username) {
+  if (!state.mainWindow || state.mainWindow.isDestroyed() || vaultAsk) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    if (isOpen()) close();
+    vaultAsk = { wc, origin, username, resolve };
+    open("vault-unlock", null, {});
+    if (!isOpen("vault-unlock")) { vaultAsk = null; resolve(false); }
+  });
+}
+
+// The dialog's Fill button (popup page only). The password is checked in vaultLock; on success the one-time grant is written
+// and the asking page's request resolves true.
+function verifyVaultPassword(pw) {
+  if (!isOpen("vault-unlock") || !vaultAsk) return { ok: false, error: "unavailable" };
+  const r = require("./vault/vaultLock").verify(typeof pw === "string" ? pw : "");
+  if (!r.ok) return r;
+  const a = vaultAsk;
+  vaultAsk = null;
+  require("./vault/fillGrants").grant(a.wc.id, a.origin, a.username);
+  close();
+  a.resolve(true);
+  return { ok: true };
 }
 
 // Page-side data + first render request.
@@ -298,4 +333,4 @@ function handleAction(name, arg) {
   }
 }
 
-module.exports = { open, autoCloseDownloads, close, isOpen, isSender, getData, refresh, sendFindResult, reposition, handleAction, saveBookmark, removeBookmark };
+module.exports = { askVaultPassword, verifyVaultPassword, open, autoCloseDownloads, close, isOpen, isSender, getData, refresh, sendFindResult, reposition, handleAction, saveBookmark, removeBookmark };

@@ -522,7 +522,7 @@ app.whenReady().then(async () => {
     });
     const tabWc = tm.getActiveTab().view.webContents;
     const pageUA = await tabWc.executeJavaScript("navigator.userAgent");
-    check("a tab's session is the in-memory TAB_PARTITION", tabWc.session === require("electron").session.fromPartition(require("../electron/constants").TAB_PARTITION) && tabWc.session.getStoragePath() === null);
+    check("a tab's session is the TAB_PARTITION (persistent, folder inside the data folder - wiped by privacy.js)", tabWc.session === require("electron").session.fromPartition(require("../electron/constants").TAB_PARTITION) && !!tabWc.session.getStoragePath() && tabWc.session.getStoragePath().startsWith(require("electron").app.getPath("userData")));
     check("the User-Agent a tab SENDS has no Electron token, and carries the real Chrome version",
       !!hdr && hdr !== "ERR" && !/Electron/i.test(hdr) && hdr.includes("Chrome/" + process.versions.chrome));
     check("...and navigator.userAgent in the page agrees with it", pageUA === hdr);

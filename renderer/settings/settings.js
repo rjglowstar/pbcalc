@@ -89,5 +89,39 @@
     // on success the browser switches modes and closes this page
   });
 
+  // ── Saved passwords: change the password asked before a saved login is filled ──
+  const vaultErr = {
+    "wrong-old": "The old password is wrong.",
+    "bad-format": "The new password must be 4 to 8 digits (0-9 only).",
+    mismatch: "The new password and the confirmation are not the same.",
+    same: "The new password must be different from the old one.",
+    "save-failed": "Could not save the new password.",
+    unavailable: "Not available right now.",
+  };
+  const digits = (id) => { const i = $(id); i.addEventListener("input", () => { i.value = i.value.replace(/[^0-9]/g, ""); }); return i; };
+  const vOld = digits("vault-old"), vNew = digits("vault-new"), vConfirm = digits("vault-confirm");
+  const vMsg = $("vault-msg");
+  const vSay = (text, cls) => { vMsg.textContent = text; vMsg.className = "msg" + (cls ? " " + cls : ""); };
+  function vReset() { $("vault-form").hidden = true; $("vault-open").hidden = false; vOld.value = vNew.value = vConfirm.value = ""; vSay(""); }
+  $("vault-open").addEventListener("click", () => { $("vault-form").hidden = false; $("vault-open").hidden = true; vOld.focus(); });
+  $("vault-cancel").addEventListener("click", vReset);
+  async function vSave() {
+    const r = await api.changeVaultPassword(vOld.value, vNew.value, vConfirm.value).catch(() => ({ ok: false, error: "unavailable" }));
+    if (r && r.ok) { vReset(); vSay("Password changed.", "ok"); return; }
+    if (r && (r.error === "locked" || r.secs)) { vSay("Too many wrong tries. Try again in " + (r.secs || 30) + " seconds.", "err"); }
+    else vSay((vaultErr[r && r.error] || vaultErr.unavailable) + (r && r.error === "wrong-old" && r.left ? " " + r.left + (r.left === 1 ? " try left." : " tries left.") : ""), "err");
+    vOld.value = vNew.value = vConfirm.value = "";
+    vOld.focus();
+  }
+  $("vault-save").addEventListener("click", vSave);
+  [vOld, vNew, vConfirm].forEach((i) => i.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); vSave(); } }));
+  function vRender(s) {
+    $("vault-desc").textContent = (s.vaultPasswordIsDefault
+      ? "The password is still the default, 1234 - change it. "
+      : "") + "Before a saved login is filled into a page, PBCalc asks for this password. Only the digits 0 to 9, 4 to 8 of them.";
+  }
+  api.get().then((s) => { if (s) vRender(s); });
+  api.onChanged((s) => vRender(s));
+
   refreshRestricted();
 })();

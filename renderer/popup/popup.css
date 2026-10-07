@@ -279,6 +279,7 @@ body.bubble .panel { inset: 4px; border-radius: 8px; }
 .bmb-buttons .secondary:hover:not(:disabled) { background: var(--hover); }
 
 /* edit bookmark (same pill buttons as the admin panel; hover colours must stay readable in both themes) */
+.vu-text { font-size: 13px; line-height: 18px; color: var(--muted, inherit); }
 .bm-edit { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 16px; }
 .bm-field { display: flex; flex-direction: column; gap: 4px; }
 .bm-label { color: var(--muted); font-size: 12px; }

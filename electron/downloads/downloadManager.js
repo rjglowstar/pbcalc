@@ -283,9 +283,18 @@ function retry(id) {
   notify();
 }
 
+// Clicking a finished download opens the files PBCalc can show itself (fileTypes.IN_TAB: PDF, images, plain text) in a PBCalc
+// TAB instead of handing them to whatever Windows has as the default app - for the owner that was Chrome, so a downloaded PDF
+// "opened directly in Chrome". Every other type still goes to Windows exactly as before. Restricted Mode opens them in a tab
+// as well (the owner's decision: files open there like in normal mode).
 function open(id) {
   const d = find(id);
-  if (d && d.state === "completed" && d.savePath && fs.existsSync(d.savePath)) shell.openPath(d.savePath);
+  if (!(d && d.state === "completed" && d.savePath && fs.existsSync(d.savePath))) return;
+  if (require("../fileTypes").IN_TAB.has(path.extname(d.savePath).toLowerCase())) {
+    require("../tabs/tabManager").openLocalFile(d.savePath);
+    return;
+  }
+  shell.openPath(d.savePath);
 }
 
 function showInFolder(id) {

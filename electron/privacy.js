@@ -15,7 +15,7 @@ const path = require("path");
 //   - Local State          holds the os_crypt key that Electron's safeStorage encrypts with. If it
 //                          is deleted, a new key is generated and the vault above can no longer be
 //                          decrypted. Never remove it.
-const KEEP = new Set(["password-vault.json", "bookmarks.json", "bookmarks-dummy.json", "settings.json", "Local State"]);
+const KEEP = new Set(["password-vault.json", "vault-lock.json", "bookmarks.json", "bookmarks-dummy.json", "settings.json", "Local State"]);
 
 // Startup sweep: removes leftovers from a crash / forced kill, and anything Chromium wrote during
 // the previous run's shutdown after we could clear it. Runs before app "ready", when nothing
@@ -37,9 +37,9 @@ function wipeLeftoversOnDisk() {
 }
 
 async function clearSession() {
-  // Tabs run in the in-memory TAB_PARTITION session (constants.js), not defaultSession, so clearing
-  // only defaultSession would wipe a session no tab uses. Clear both. (The partition has no storage
-  // path — nothing of it reaches disk — but this keeps clearSession() honest about what it clears.)
+  // Tabs run in the TAB_PARTITION session (constants.js), not defaultSession, so clearing only defaultSession would wipe
+  // a session no tab uses. Clear both. The partition lives in a folder under userData (persistent, so the PDF viewer
+  // works); this empties it, and the final sweep below deletes the folder itself once this process is gone.
   const { TAB_PARTITION } = require("./constants");
   const sessions = [session.defaultSession, session.fromPartition(TAB_PARTITION)];
   await Promise.allSettled(sessions.flatMap((ses) => [

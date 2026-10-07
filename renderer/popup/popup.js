@@ -472,6 +472,59 @@
   });
   api.onFindFocus(() => { if (findInput) { findInput.focus(); findInput.select(); } });
 
+  // The password asked before a saved login is filled. Digits only (0-9, 4 to 8). The answer comes from the main process; this page
+  // never sees the password it checks against. Built once: main re-sends data on every tab change and a rebuild would wipe the box.
+  let vaultTimer = null;
+  function renderVaultUnlock() {
+    if (!data.vault) { act("close"); return; }
+    if (panel.querySelector(".vu")) return;
+    panel.textContent = "";
+    place(380);
+    panel.appendChild(el("div", "head", "Enter your password"));
+    const box = el("div", "bm-edit vu");
+    box.appendChild(el("div", "vu-text", "To fill the saved password of " + data.vault.username + " for " + data.vault.host + ", enter your PBCalc password."));
+    const input = el("input");
+    input.type = "password"; input.inputMode = "numeric"; input.maxLength = 8; input.autocomplete = "off"; input.spellcheck = false;
+    input.placeholder = "Password";
+    input.addEventListener("input", () => { input.value = input.value.replace(/[^0-9]/g, ""); });
+    box.appendChild(input);
+    const msg = el("div", "bm-msg");
+    box.appendChild(msg);
+    const row = el("div", "bm-buttons");
+    const cancel = el("button", "secondary", "Cancel");
+    const ok = el("button", "primary", "Fill");
+    row.appendChild(cancel); row.appendChild(ok);
+    box.appendChild(row);
+    panel.appendChild(box);
+    const lock = (secs) => {
+      clearInterval(vaultTimer);
+      let left = secs;
+      const tick = () => {
+        if (left <= 0) { clearInterval(vaultTimer); input.disabled = false; ok.disabled = false; msg.textContent = ""; input.focus(); return; }
+        input.disabled = true; ok.disabled = true;
+        msg.textContent = "Too many wrong tries. Try again in " + left + (left === 1 ? " second." : " seconds.");
+        left--;
+      };
+      tick(); vaultTimer = setInterval(tick, 1000);
+    };
+    let busy = false;
+    const submit = async () => {
+      if (busy || input.disabled) return;
+      busy = true; ok.disabled = true;
+      const r = await api.vaultVerify(input.value).catch(() => ({ ok: false, error: "unavailable" }));
+      busy = false; ok.disabled = false;
+      if (r && r.ok) return;   // main closes the box and the page is filled
+      input.value = "";
+      if (r && (r.error === "locked" || r.secs)) return lock(r.secs || 30);
+      msg.textContent = r && r.error === "wrong" ? "Wrong password." + (r.left ? " " + r.left + (r.left === 1 ? " try left." : " tries left.") : "") : "Not available.";
+      input.focus();
+    };
+    cancel.addEventListener("click", () => act("close"));
+    ok.addEventListener("click", submit);
+    box.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    if (data.vault.secs) lock(data.vault.secs); else input.focus();
+  }
+
   function render() {
     if (!data) return;
     if (data.kind === "tabsearch") renderTabSearch();
@@ -480,6 +533,7 @@
     else if (data.kind === "siteinfo") renderSiteInfo();
     else if (data.kind === "find") renderFind();
     else if (data.kind === "unlock") renderUnlock();
+    else if (data.kind === "vault-unlock") renderVaultUnlock();
     else if (data.kind === "bookmark-edit") {
       // Main re-sends data on every tab/title/download change (popup.refresh). The box is a FORM: rebuilding it from the
       // stored values threw away what was being typed (measured: Name went back to the old title after the page changed

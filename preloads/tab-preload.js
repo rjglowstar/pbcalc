@@ -146,6 +146,7 @@ if (location.protocol === "file:" && /\/renderer\/settings\/settings\.html$/.tes
     restrictedStatus: () => ipcRenderer.invoke("settings:restricted-status"),
     restrictedEnable: () => ipcRenderer.invoke("settings:restricted-enable"),
     restrictedSetStart: (on) => ipcRenderer.invoke("settings:restricted-set-start", on),
+    changeVaultPassword: (oldPw, newPw, confirmPw) => ipcRenderer.invoke("settings:change-vault-password", oldPw, newPw, confirmPw),
   });
 }
 
@@ -338,6 +339,10 @@ if (location.protocol === "file:" && /\/renderer\/restricted\/home\.html$/.test(
   }
 
   async function fillCredential(fields, username) {
+    // The vault password is asked first (a dialog drawn by the browser, not by this page); the saved password is released only
+    // after a correct entry, and only for this one fill.
+    const ask = await ipcRenderer.invoke("vault:request-fill", username);
+    if (!ask || !ask.ok) return;
     const password = await vault.get(username);
     if (password == null) return;
     setValue(fields.user, username);
@@ -395,7 +400,7 @@ if (location.protocol === "file:" && /\/renderer\/restricted\/home\.html$/.test(
       row.appendChild(del);
       // mousedown (not click) so it lands before the input blur closes the dropdown.
       row.addEventListener("mousedown", (e) => {
-        if (e.target === del) return;
+        if (!e.isTrusted || e.target === del) return;   // only a real click: a page script must not be able to raise the password dialog
         e.preventDefault();
         fillCredential(fields, item.username);
       });
@@ -591,4 +596,50 @@ if (location.protocol === "file:" && /\/renderer\/restricted\/home\.html$/.test(
 
   if (document.readyState === "loading") window.addEventListener("DOMContentLoaded", init);
   else init();
+})();
+
+// ── Files dragged in from Explorer ──────────────────────────────────────────────────────────────────────────────────────
+// Without this a dropped file either bounced off ("not allowed" sign over the page) or made Chromium navigate THIS page to
+// the file. A page that handles the drop itself (an upload box calls preventDefault) keeps it; otherwise the file's real path
+// (webUtils: only a genuine drag from the OS has one, a file a page makes up gets "") goes to the main process, which opens it
+// in a new tab (electron/dropFiles.js). Only trusted events count.
+(() => {
+  const { webUtils } = require("electron");
+  const hasFiles = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+  window.addEventListener("dragover", (e) => {
+    if (!e.isTrusted || e.defaultPrevented || !hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  window.addEventListener("drop", (e) => {
+    if (!e.isTrusted || e.defaultPrevented || !hasFiles(e)) return;
+    e.preventDefault();   // never let Chromium navigate this page to the file
+    const paths = [];
+    for (const f of Array.from(e.dataTransfer.files || [])) {
+      try { const p = webUtils.getPathForFile(f); if (p) paths.push(p); } catch (_) {}
+    }
+    if (paths.length) ipcRenderer.send("files:dropped", paths.slice(0, 10));
+  });
+  // Ctrl + mouse wheel zooms the page, as in Chrome - unless the page used the wheel event itself (maps, editors): then it keeps it.
+  // The decision waits until the event has been through EVERY listener: this one is registered before the page's scripts run, so it
+  // would otherwise run first and never see the page's preventDefault (measured: a page using Ctrl+wheel was zoomed as well).
+  window.addEventListener("wheel", (e) => {
+    if (!e.isTrusted || !e.ctrlKey) return;
+    const dy = e.deltaY;
+    setTimeout(() => { if (!e.defaultPrevented) ipcRenderer.send("tabs:zoom-wheel", dy); }, 0);
+  }, { passive: true });
+  // The shell's tab strip is an OS drag region (window dragging), and the OS refuses a file drop on one. While a file drag is
+  // over a PAGE the shell is told, so it can turn the strip into an ordinary drop target before the pointer gets there.
+  // While the drag is over the page the shell is told again every 200ms (a real drag fires dragover ~20x/s even when the pointer
+  // rests), so it can also notice by itself when the drag has ended without a dragleave (Esc, a drop elsewhere).
+  let announced = false, lastSent = 0;
+  const announce = (on) => {
+    const now = Date.now();
+    if (announced !== on || (on && now - lastSent > 200)) { announced = on; lastSent = now; ipcRenderer.send("files:drag-state", on); }
+  };
+  window.addEventListener("dragenter", (e) => { if (e.isTrusted && hasFiles(e)) announce(true); }, true);
+  window.addEventListener("dragover", (e) => { if (e.isTrusted && hasFiles(e)) announce(true); }, true);
+  window.addEventListener("dragleave", (e) => { if (e.isTrusted && e.relatedTarget === null) announce(false); }, true);
+  window.addEventListener("dragend", () => announce(false), true);
+  window.addEventListener("drop", () => announce(false), true);
 })();
