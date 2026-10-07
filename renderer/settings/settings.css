@@ -112,7 +112,16 @@ h2 { margin: 0; padding: 16px 20px 8px; font-size: 14px; font-weight: 500; color
 .btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn:disabled { opacity: 0.5; }
 .msg { color: var(--muted); font-size: 12px; }
-.vault-fields { display: flex; flex-direction: column; gap: 8px; max-width: 260px; margin-bottom: 8px; }
+/* Saved passwords: a labelled form - label column, field column, then hint, message and the buttons under the fields */
+.vault-grid { display: grid; grid-template-columns: 190px 240px auto; gap: 12px 16px; align-items: center; }
+.vault-grid .vault-buttons { grid-column: 3; grid-row: 2 / span 3; flex-direction: column; align-self: start; }
+.vault-grid label { font-size: 13px; color: var(--text); }
+.vault-grid input { height: 38px; box-sizing: border-box; width: 100%; padding: 0 12px; font-size: 15px; letter-spacing: 2px; }
+/* hint and message sit under the FIELD column; the message is a small banner that only exists while there is something to say */
+.vault-grid input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent); }
+.vault-hint { margin: -2px 0 0 206px; font-size: 12px; color: var(--muted); }
+.vault-buttons { display: flex; gap: 10px; }
+.vault-buttons .btn { height: 38px; min-width: 150px; padding: 0 22px; }
 .msg.err { color: #d93025; }
 .msg.ok { color: #188038; }
 .btnrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

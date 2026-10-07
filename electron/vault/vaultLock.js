@@ -77,7 +77,9 @@ function verify(pw) {
   const c = load();
   const secs = lockedSecs();
   if (secs) return { ok: false, error: "locked", secs };
-  if (typeof pw === "string" && validFormat(pw) && matches(pw)) {
+  // Something that cannot be a password at all (empty, letters, wrong length) is not a "try": no counter, no lockout.
+  if (typeof pw !== "string" || !validFormat(pw)) return { ok: false, error: "format" };
+  if (matches(pw)) {
     if (c.state.failed || c.state.round || c.state.lockedUntil) { c.state = { failed: 0, round: 0, lockedUntil: 0 }; save(); }
     return { ok: true };
   }

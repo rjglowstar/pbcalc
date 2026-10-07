@@ -479,18 +479,34 @@
     if (!data.vault) { act("close"); return; }
     if (panel.querySelector(".vu")) return;
     panel.textContent = "";
-    place(380);
-    panel.appendChild(el("div", "head", "Enter your password"));
-    const box = el("div", "bm-edit vu");
-    box.appendChild(el("div", "vu-text", "To fill the saved password of " + data.vault.username + " for " + data.vault.host + ", enter your PBCalc password."));
+    panel.classList.add("vu-panel");
+    panel.style.width = "360px";
+    panel.style.top = data.anchor.bottom + 8 + "px";
+    panel.style.left = Math.max(8, Math.round((window.innerWidth - 360) / 2)) + "px";
+    const box = el("div", "vu");
+    const top = el("div", "vu-top");
+    const badge = el("span", "vu-badge");
+    badge.appendChild(I.icon("lock"));
+    top.appendChild(badge);
+    const heads = el("div", "vu-heads");
+    heads.appendChild(el("div", "vu-title", "Enter your auto-fill password"));
+    heads.appendChild(el("div", "vu-sub", "to fill the saved login for " + data.vault.host));
+    top.appendChild(heads);
+    box.appendChild(top);
+    box.appendChild(el("div", "vu-user", data.vault.username));
+    const field = el("div", "vu-field");
+    const fi = el("span", "vu-fi");
+    fi.appendChild(I.icon("lock"));
+    field.appendChild(fi);
     const input = el("input");
     input.type = "password"; input.inputMode = "numeric"; input.maxLength = 8; input.autocomplete = "off"; input.spellcheck = false;
     input.placeholder = "Password";
     input.addEventListener("input", () => { input.value = input.value.replace(/[^0-9]/g, ""); });
-    box.appendChild(input);
-    const msg = el("div", "bm-msg");
+    field.appendChild(input);
+    box.appendChild(field);
+    const msg = el("div", "bm-msg vu-msg");
     box.appendChild(msg);
-    const row = el("div", "bm-buttons");
+    const row = el("div", "vu-buttons");
     const cancel = el("button", "secondary", "Cancel");
     const ok = el("button", "primary", "Fill");
     row.appendChild(cancel); row.appendChild(ok);
@@ -510,13 +526,18 @@
     let busy = false;
     const submit = async () => {
       if (busy || input.disabled) return;
+      if (!/^[0-9]{4,8}$/.test(input.value)) {   // nothing / too short: say so, do not even ask (and never count it as a wrong try)
+        msg.textContent = input.value ? "Enter 4 to 8 digits." : "Enter your password.";
+        input.focus();
+        return;
+      }
       busy = true; ok.disabled = true;
       const r = await api.vaultVerify(input.value).catch(() => ({ ok: false, error: "unavailable" }));
       busy = false; ok.disabled = false;
       if (r && r.ok) return;   // main closes the box and the page is filled
       input.value = "";
       if (r && (r.error === "locked" || r.secs)) return lock(r.secs || 30);
-      msg.textContent = r && r.error === "wrong" ? "Wrong password." + (r.left ? " " + r.left + (r.left === 1 ? " try left." : " tries left.") : "") : "Not available.";
+      msg.textContent = r && r.error === "format" ? "Enter 4 to 8 digits." : r && r.error === "wrong" ? "Wrong password." + (r.left ? " " + r.left + (r.left === 1 ? " try left." : " tries left.") : "") : "Not available.";
       input.focus();
     };
     cancel.addEventListener("click", () => act("close"));

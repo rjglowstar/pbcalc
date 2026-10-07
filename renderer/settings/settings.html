@@ -52,19 +52,21 @@
           </div>
           <button type="button" class="btn" id="vault-open">Change password</button>
         </div>
-        <div class="row" id="vault-form" hidden>
-          <div class="text">
-            <div class="vault-fields">
-              <input type="password" id="vault-old" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="Old password" aria-label="Old password" />
-              <input type="password" id="vault-new" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="New password" aria-label="New password" />
-              <input type="password" id="vault-confirm" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="Confirm new password" aria-label="Confirm new password" />
+        <div class="row col" id="vault-form" hidden>
+          <div class="vault-grid">
+            <label for="vault-old">Old password</label>
+            <input type="password" id="vault-old" inputmode="numeric" maxlength="8" autocomplete="off" />
+            <div></div>
+            <label for="vault-new">New password</label>
+            <input type="password" id="vault-new" inputmode="numeric" maxlength="8" autocomplete="off" />
+            <label for="vault-confirm">Confirm new password</label>
+            <input type="password" id="vault-confirm" inputmode="numeric" maxlength="8" autocomplete="off" />
+            <div class="vault-buttons">
+              <button type="button" class="btn" id="vault-cancel">Cancel</button>
+              <button type="button" class="btn primary" id="vault-save">Save password</button>
             </div>
-            <div class="msg" id="vault-msg"></div>
           </div>
-          <div class="btnrow">
-            <button type="button" class="btn" id="vault-cancel">Cancel</button>
-            <button type="button" class="btn primary" id="vault-save">Save</button>
-          </div>
+          <div class="vault-hint">4 to 8 digits, 0 to 9 only.</div>
         </div>
       </section>
 
@@ -123,6 +125,7 @@
         </div>
       </section>
     </main>
+    <script src="../common/toast.js"></script>
     <script src="./settings.js"></script>
   </body>
 </html>

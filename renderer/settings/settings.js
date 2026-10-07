@@ -79,13 +79,13 @@
   $("rm-start").addEventListener("click", async () => {
     const next = $("rm-start").getAttribute("aria-checked") !== "true";
     const r = await api.restrictedSetStart(next);
-    if (!r.ok) $("rm-msg").textContent = ERR[r.error] || "Could not change that.";
+    if (!r.ok) window.PBToast.error(ERR[r.error] || "Could not change that.");
     refreshRestricted();
   });
 
   $("rm-enable").addEventListener("click", async () => {
     const r = await api.restrictedEnable();
-    if (!r.ok) $("rm-msg").textContent = ERR[r.error] || "Could not turn on Restricted Mode.";
+    if (!r.ok) window.PBToast.error(ERR[r.error] || "Could not turn on Restricted Mode.");
     // on success the browser switches modes and closes this page
   });
 
@@ -100,12 +100,16 @@
   };
   const digits = (id) => { const i = $(id); i.addEventListener("input", () => { i.value = i.value.replace(/[^0-9]/g, ""); }); return i; };
   const vOld = digits("vault-old"), vNew = digits("vault-new"), vConfirm = digits("vault-confirm");
-  const vMsg = $("vault-msg");
-  const vSay = (text, cls) => { vMsg.textContent = text; vMsg.className = "msg" + (cls ? " " + cls : ""); };
-  function vReset() { $("vault-form").hidden = true; $("vault-open").hidden = false; vOld.value = vNew.value = vConfirm.value = ""; vSay(""); }
+  // Results are shown as common notifications (renderer/common/toast.js): green for success, red for an error. They are not part of the
+  // form, so "Password changed." is still on screen after the form has closed.
+  const vSay = (text, cls) => { if (text) window.PBToast.show(text, { type: cls === "ok" ? "success" : "error", key: "vault-password" }); };
+  function vReset() { $("vault-form").hidden = true; $("vault-open").hidden = false; vOld.value = vNew.value = vConfirm.value = ""; }
   $("vault-open").addEventListener("click", () => { $("vault-form").hidden = false; $("vault-open").hidden = true; vOld.focus(); });
   $("vault-cancel").addEventListener("click", vReset);
+  // The old password is required: an empty / impossible one is marked on the field itself and nothing is sent or announced.
+  [vOld, vNew, vConfirm].forEach((i) => i.addEventListener("input", () => i.classList.remove("invalid")));
   async function vSave() {
+    if (!/^[0-9]{4,8}$/.test(vOld.value)) { vOld.classList.add("invalid"); vOld.focus(); return; }
     const r = await api.changeVaultPassword(vOld.value, vNew.value, vConfirm.value).catch(() => ({ ok: false, error: "unavailable" }));
     if (r && r.ok) { vReset(); vSay("Password changed.", "ok"); return; }
     if (r && (r.error === "locked" || r.secs)) { vSay("Too many wrong tries. Try again in " + (r.secs || 30) + " seconds.", "err"); }

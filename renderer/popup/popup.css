@@ -279,7 +279,36 @@ body.bubble .panel { inset: 4px; border-radius: 8px; }
 .bmb-buttons .secondary:hover:not(:disabled) { background: var(--hover); }
 
 /* edit bookmark (same pill buttons as the admin panel; hover colours must stay readable in both themes) */
-.vu-text { font-size: 13px; line-height: 18px; color: var(--muted, inherit); }
+/* "Enter your password": light and dark come from the theme variables */
+.panel.vu-panel { border-radius: 14px; padding: 24px 24px 20px; overflow: visible; border: 1px solid var(--border); }
+.vu-top { display: flex; align-items: center; gap: 14px; }
+.vu-badge { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.vu-badge svg { width: 22px; height: 22px; fill: currentColor; }
+.vu-title { font-size: 17px; line-height: 22px; font-weight: 600; color: var(--text); }
+.vu-sub { margin-top: 2px; font-size: 12.5px; line-height: 18px; color: var(--muted); overflow-wrap: anywhere; }
+.vu-user { display: inline-block; margin-top: 16px; padding: 3px 12px; border-radius: 12px; font-size: 12.5px;
+  background: var(--popup-hover); color: var(--text); border: 1px solid var(--border); }
+.vu-field { position: relative; margin-top: 12px; }
+.vu-fi { position: absolute; left: 14px; top: 0; bottom: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+.vu-fi svg { width: 18px; height: 18px; fill: currentColor; }
+.vu-field input {
+  width: 100%; box-sizing: border-box; height: 46px; padding: 0 14px 0 42px;
+  background: var(--popup-hover); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+  font: 17px "Segoe UI", system-ui, sans-serif; letter-spacing: 3px; outline: none; transition: border-color .12s, box-shadow .12s, background .12s;
+}
+.vu-field input::placeholder { letter-spacing: 0; font-size: 14px; color: var(--muted); }
+.vu-field input:hover:not(:disabled) { border-color: var(--muted); }
+.vu-field input:focus { background: var(--popup); border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
+.vu-field input:disabled { opacity: 0.55; }
+.vu-msg { min-height: 20px; margin-top: 8px; font-size: 12.5px; line-height: 20px; color: var(--danger); }
+.vu-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.vu-buttons button { height: 38px; min-width: 88px; padding: 0 22px; border-radius: 19px; font: 600 13.5px "Segoe UI", system-ui, sans-serif; cursor: pointer; }
+.vu-buttons .secondary { border: 1px solid var(--border); background: none; color: var(--accent); }
+.vu-buttons .secondary:hover:not(:disabled) { background: var(--hover); }
+.vu-buttons .primary { border: none; background: var(--accent); color: var(--accent-text); }
+.vu-buttons .primary:hover:not(:disabled) { background: var(--accent-hover); }
+.vu-buttons button:disabled { opacity: 0.5; cursor: default; }
 .bm-edit { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 16px; }
 .bm-field { display: flex; flex-direction: column; gap: 4px; }
 .bm-label { color: var(--muted); font-size: 12px; }

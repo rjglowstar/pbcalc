@@ -102,6 +102,12 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     await clickAt(row.x, row.y);
     check("picking the row opens the password dialog", popup.isOpen("vault-unlock") === true);
     check("...and NOTHING is filled yet", (await val("u")) === "" && (await val("p")) === "");
+    await dialogClick("Fill");
+    const failedTries = () => (fs.existsSync(lockFile) ? JSON.parse(fs.readFileSync(lockFile, "utf8")).state.failed : 0);
+    check("Fill with an EMPTY box asks for the password and does not count as a wrong try", popup.isOpen("vault-unlock") && /Enter your password/.test(await dialogMsg()) && failedTries() === 0);
+    await typeInDialog("12"); await dialogClick("Fill");
+    check("too few digits: 'Enter 4 to 8 digits.', still not a try", /Enter 4 to 8 digits/.test(await dialogMsg()) && failedTries() === 0);
+    check("main refuses an empty / invalid password without counting it", (() => { const r = lock.verify(""); return r.ok === false && r.error === "format" && failedTries() === 0; })());
     await typeInDialog("1111"); await dialogClick("Fill");
     check("a wrong password: the dialog stays, says so, and nothing is filled", popup.isOpen("vault-unlock") && /Wrong password\. 4 tries left/.test(await dialogMsg()) && (await val("u")) === "" && (await val("p")) === "");
     await typeInDialog("12a4");
@@ -154,11 +160,24 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     await sjs('document.getElementById("vault-open").click()'); await sleep(200);
     check("Change password opens old / new / confirm", (await sjs('!document.getElementById("vault-form").hidden && ["vault-old","vault-new","vault-confirm"].every((i) => document.getElementById(i).type === "password")')) === true);
     check("letters typed into those boxes are dropped (digits only)", (await setv("vault-new", "5a6b7")) === "567");
-    const save = async (o, n, c) => { await setv("vault-old", o); await setv("vault-new", n); await setv("vault-confirm", c); await sjs('document.getElementById("vault-save").click()'); await sleep(500); return sjs('document.getElementById("vault-msg").textContent'); };
+    const save = async (o, n, c) => { await setv("vault-old", o); await setv("vault-new", n); await setv("vault-confirm", c); await sjs('document.getElementById("vault-save").click()'); await sleep(500); return sjs('(() => { const t = [...document.querySelectorAll(".pb-toast")].pop(); return t ? t.textContent.replace(/×$/, "") : ""; })()'); };
+    const toastKind = () => sjs('(() => { const t = [...document.querySelectorAll(".pb-toast")].pop(); return t ? t.className : ""; })()');
+    const nToasts = () => sjs('document.querySelectorAll(".pb-toast").length');
+    const t0 = await nToasts();
+    await save("", "5678", "5678");
+    check("Save with the OLD password empty: no notification, the field is marked, nothing counted", (await nToasts()) === t0 && (await sjs('document.getElementById("vault-old").classList.contains("invalid")')) === true && (!fs.existsSync(lockFile) || JSON.parse(fs.readFileSync(lockFile, "utf8")).state.failed === 0));
+    await setv("vault-old", "1"); check("typing in the field clears the mark", (await sjs('document.getElementById("vault-old").classList.contains("invalid")')) === false);
+    await save("9999", "5678", "5678"); await save("9999", "5678", "5678"); await save("9999", "5678", "5678");
+    check("the same error three times shows ONE notification (not a stack)", (await sjs('[...document.querySelectorAll(".pb-toast.error")].filter((t) => /old password is wrong/.test(t.textContent)).length')) === 1);
+    lock._reset(); try { fs.unlinkSync(lockFile); } catch (_) {}
     check("wrong old password: refused with a message", /old password is wrong/i.test(await save("9999", "5678", "5678")));
     check("mismatching confirmation: refused with a message", /not the same/.test(await save("1234", "5678", "5679")));
     check("too short new password: refused with a message", /4 to 8 digits/.test(await save("1234", "567", "567")));
-    check("correct old + new + confirm: 'Password changed.'", (await save("1234", "5678", "5678")) === "Password changed." && !lock.isDefault());
+    check("an error is a RED notification (not part of the form)", /pb-toast.* error|error/.test(await toastKind()) && !(await sjs('document.getElementById("vault-form").hidden')));
+    check("correct old + new + confirm: 'Password changed.' in a GREEN notification", (await save("1234", "5678", "5678")) === "Password changed." && /success/.test(await toastKind()) && !lock.isDefault());
+    check("...and it is still on screen although the password form has closed", (await sjs('document.getElementById("vault-form").hidden')) === true && (await sjs('document.querySelectorAll(".pb-toast.success").length')) >= 1);
+    await sleep(4600);
+    check("...and it closes by itself after a few seconds", (await sjs('document.querySelectorAll(".pb-toast.success").length')) === 0);
     check("the 'still the default' notice is gone", !/still the default/.test(await sjs('document.getElementById("vault-desc").textContent')));
     // use the new one in the dialog
     tm.switchTab(bg.id); await sleep(600);

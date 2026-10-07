@@ -101,3 +101,29 @@ button:disabled, [aria-disabled="true"], input:disabled, select:disabled { curso
   fill: currentColor;
   flex: 0 0 auto;
 }
+
+/* ── Common notification (renderer/common/toast.js) ───────────────────────────────────────────────────────────────────── */
+:root {
+  --toast-success: #188038; --toast-error: #d93025; --toast-warning: #b06000; --toast-info: #1a73e8;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --toast-success: #81c995; --toast-error: #f28b82; --toast-warning: #fdd663; --toast-info: #8ab4f8; }
+}
+.pb-toasts { position: fixed; top: 72px; right: 24px; z-index: 2147483647; display: flex; flex-direction: column; gap: 10px; width: 360px; max-width: calc(100vw - 32px); pointer-events: none; }
+.pb-toast {
+  --c: var(--toast-info);
+  pointer-events: auto; display: flex; align-items: flex-start; gap: 12px; padding: 12px 8px 12px 14px;
+  background: color-mix(in srgb, var(--c) 12%, var(--popup, #fff)); color: var(--text, #202124);
+  border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); border-left: 4px solid var(--c); border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); font: 13.5px/20px "Segoe UI", system-ui, sans-serif;
+  opacity: 0; transform: translateX(24px); transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+.pb-toast.success { --c: var(--toast-success); }
+.pb-toast.error { --c: var(--toast-error); }
+.pb-toast.warning { --c: var(--toast-warning); }
+.pb-toast.in { opacity: 1; transform: none; }
+.pb-toast.out { opacity: 0; transform: translateX(24px); }
+.pb-toast-icon { flex: 0 0 auto; width: 20px; height: 20px; margin-top: 0; fill: var(--c); }
+.pb-toast-text { flex: 1 1 auto; min-width: 0; padding-top: 0; overflow-wrap: anywhere; }
+.pb-toast-x { flex: 0 0 auto; width: 26px; height: 26px; margin-top: -3px; border: none; border-radius: 50%; background: none; color: var(--muted, #5f6368); font-size: 20px; line-height: 24px; cursor: pointer; }
+.pb-toast-x:hover { background: var(--hover, rgba(0, 0, 0, 0.08)); }

@@ -429,6 +429,11 @@ Two things define this browser against every mainstream one:
   `scripts/verify-vault-lock.js` (55; negative controls: removing the grant check or the trusted-click check fails the matching
   checks). `verify-features.js` raises the dialog from the main process because its window is never shown (real mouse input is
   dropped there).
+- **Common notification (toast)** for PBCalc's own pages: `renderer/common/toast.js` + the `.pb-toast` block at the end of `theme.css`;
+  `PBToast.success/error/warning/info(text)`: green / red / amber / blue, top right, closes by itself (4 s, errors 6 s; hover pauses),
+  close button, stacks up to 4. Load `toast.js` after `theme.css` in a page to use it (no inline styles: the pages' CSP forbids them).
+  Settings uses it for the password change result and the Restricted Mode errors - the result must live OUTSIDE the form, which
+  closes on success (an inline message vanished with it). Test: the Settings part of `verify-vault-lock.js`.
 - **Password-manager UI** (bottom of `preloads/tab-preload.js`): save prompt, autofill dropdown on
   click/typing. No silent pre-fill (untrusted sites). All `vault:*` IPC re-derives the origin from
   the sender's real URL in the main process; a typed credential crosses a navigation only via an
