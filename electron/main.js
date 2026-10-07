@@ -127,7 +127,7 @@ app.whenReady().then(() => {
   // The installed program lists itself in Windows' Default apps (per user, no admin). Never for a development copy: it
   // would register Electron's own exe. Off the critical path; failures are ignored (nothing depends on it).
   if (app.isPackaged && process.platform === "win32") {
-    setTimeout(() => { try { const db = require("./defaultBrowser"); db.register(process.execPath); db.repairOpenWithIcons(process.execPath); } catch (_) {} }, 5000).unref();
+    setTimeout(async () => { try { const db = require("./defaultBrowser"); await db.register(process.execPath); await db.repairOpenWithIcons(process.execPath); } catch (_) {} }, 5000).unref();   // async: reg.exe runs beside the app, never on its thread
   }
   // Build the "download started" animation view a moment after startup, off the critical path, so the
   // FIRST download's flight does not wait for a page load (play() makes it on demand if one comes sooner).

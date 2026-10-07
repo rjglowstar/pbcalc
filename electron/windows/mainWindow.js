@@ -33,9 +33,11 @@ function createMainWindow() {
     },
   });
 
-  // Every tab view added to the window registers a "closed" listener on it; with more than 10 tabs
-  // Node warns about a "leak" that is not one.
-  state.mainWindow.setMaxListeners(100);
+  // Each ATTACHED view adds a "closed" and a "resize" listener to the window. viewHost.js removes the "closed" one (Electron never
+  // does) on detach, so the count follows the number of attached views - normally 1-3. Opening many tabs at once keeps their old
+  // views attached for up to 300ms (the thumbnail is taken first), which can briefly pass Node's default of 10 and print a warning
+  // that is not a leak (measured: the counts return to the baseline, scripts/verify-leaks.js).
+  state.mainWindow.setMaxListeners(40);
   state.mainWindow.removeMenu();
   theme.watch(state.mainWindow, TAB_STRIP_HEIGHT);
   require("../shortcuts").attachShortcuts(state.mainWindow.webContents);

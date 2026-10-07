@@ -169,7 +169,6 @@ app.whenReady().then(async () => {
   const before = state.tabs.length;
   tm.createTab("https://example.com/");
   await js('window.browserAPI.newTab("https://example.com/"); 0');
-  await js('window.browserAPI.navigate("https://example.com/"); 0');
   tm.navigate("https://example.com/");
   key(hwc, "L", ["control"]);
   key(hwc, "D", ["control"]);

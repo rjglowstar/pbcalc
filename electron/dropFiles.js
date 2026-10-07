@@ -36,4 +36,4 @@ function openDropped(paths, at) {
   return opened;
 }
 
-module.exports = { isOurPage, openDropped, MAX_FILES };
+module.exports = { isOurPage, openDropped };

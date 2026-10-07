@@ -23,4 +23,4 @@ function kindOf(ext) {
   return null;
 }
 
-module.exports = { IN_TAB, FROM_USER, IMAGES, TEXT, PDF, WEB, kindOf };
+module.exports = { IN_TAB, FROM_USER, TEXT, PDF, kindOf };

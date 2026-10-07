@@ -1,4 +1,4 @@
-const { execFileSync } = require("child_process");
+const { execFile } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const { kindOf } = require("./fileTypes");
@@ -33,7 +33,26 @@ const iconFor = (exe, kind) => {
 // every extension PBCalc lists under Default apps (its kind decides the ProgId, so the icon)
 const EXTENSIONS = [".htm", ".html", ".xhtml", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif", ".svg", ".txt", ".log", ".json"];
 
-const reg = (args) => execFileSync("reg", args, { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).toString();
+// EVERYTHING here runs reg.exe / powershell.exe as a separate process and WAITS FOR IT WITHOUT BLOCKING the app: the first version used
+// execFileSync, i.e. the main thread (windows, tabs, clicks) stood still for the whole time. Measured on the owner's PC: the "repair"
+// pass alone blocked it for 4.4 s on EVERY start and the registration for 1.8 s more - five seconds after launch Windows showed "Not
+// responding" (Event Log: AppHangTransient, PBCalc.exe) while the owner was clicking. Now at most 8 reg.exe run at once, asynchronously.
+const MAX_PARALLEL = 8;
+let running = 0;
+const waiting = [];
+function pump() {
+  while (running < MAX_PARALLEL && waiting.length) {
+    const job = waiting.shift();
+    running++;
+    execFile(job.file, job.args, { windowsHide: true, timeout: job.timeout }, (err, stdout) => {
+      running--;
+      pump();
+      if (err) job.reject(err); else job.resolve(String(stdout));
+    });
+  }
+}
+const run = (file, args, timeout = 15000) => new Promise((resolve, reject) => { waiting.push({ file, args, timeout, resolve, reject }); pump(); });
+const reg = (args) => run("reg", args);
 const addDefault = (key, value) => reg(["add", key, "/ve", "/t", "REG_SZ", "/d", value, "/f"]);
 const addValue = (key, name, value) => reg(["add", key, "/v", name, "/t", "REG_SZ", "/d", value, "/f"]);
 const addDword = (key, name, value) => reg(["add", key, "/v", name, "/t", "REG_DWORD", "/d", String(value), "/f"]);
@@ -52,72 +71,73 @@ function keys(software) {
   };
 }
 
-function isRegistered(exe, software = "Software") {
+async function isRegistered(exe, software = "Software") {
   try {
     const k = keys(software);
-    const out = reg(["query", k.client + "\\shell\\open\\command", "/ve"]);
+    const out = await reg(["query", k.client + "\\shell\\open\\command", "/ve"]);
     if (!out.includes(exe)) return false;
-    return /REG_SZ\s+4\s*$/m.test(reg(["query", k.client, "/v", "RegistrationVersion"]));
+    return /REG_SZ\s+4\s*$/m.test(await reg(["query", k.client, "/v", "RegistrationVersion"]));
   } catch (_) { return false; }
 }
 
 // Tells Explorer / Settings that file and protocol associations changed, so the Default apps list is rebuilt now instead of
 // at the next sign-in (what Chrome's installer does). Best effort.
-function notifyAssociationsChanged() {
+async function notifyAssociationsChanged() {
   try {
-    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
-      'Add-Type -Namespace W -Name N -MemberDefinition \'[DllImport("shell32.dll")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);\'; [W.N]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)'],
-    { windowsHide: true, stdio: "ignore", timeout: 15000 });
+    await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
+      'Add-Type -Namespace W -Name N -MemberDefinition \'[DllImport("shell32.dll")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);\'; [W.N]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)'], 15000);
   } catch (_) {}
 }
 
-// Returns true when it wrote something (false when everything was already in place for this exe path and layout version).
-function register(exe, software = "Software", { notify = software === "Software" } = {}) {
-  if (isRegistered(exe, software)) return false;
+// Resolves true when it wrote something (false when everything was already in place for this exe path and layout version).
+async function register(exe, software = "Software", { notify = software === "Software" } = {}) {
+  if (await isRegistered(exe, software)) return false;
   const k = keys(software);
   const progIds = [[k.url, "PBCalc URL", null], ...Object.keys(KINDS).map((kind) => [k[kind], LABELS[kind], kind])];
+  const writes = [];
   for (const [key, label, kind] of progIds) {
-    addDefault(key, label);
-    addValue(key, "FriendlyTypeName", label);
-    addValue(key, "AppUserModelId", APP_ID);
-    addDefault(key + "\\DefaultIcon", kind ? iconFor(exe, kind) : exe + ",0");
-    addDefault(key + "\\shell\\open\\command", command(exe));
+    writes.push(addDefault(key, label));
+    writes.push(addValue(key, "FriendlyTypeName", label));
+    writes.push(addValue(key, "AppUserModelId", APP_ID));
+    writes.push(addDefault(key + "\\DefaultIcon", kind ? iconFor(exe, kind) : exe + ",0"));
+    writes.push(addDefault(key + "\\shell\\open\\command", command(exe)));
     // like Chrome's ProgIds: who this document type belongs to
-    addValue(key + "\\Application", "AppUserModelId", APP_ID);
-    addValue(key + "\\Application", "ApplicationName", NAME);
-    addValue(key + "\\Application", "ApplicationDescription", DESCRIPTION);
-    addValue(key + "\\Application", "ApplicationIcon", exe + ",0");
+    writes.push(addValue(key + "\\Application", "AppUserModelId", APP_ID));
+    writes.push(addValue(key + "\\Application", "ApplicationName", NAME));
+    writes.push(addValue(key + "\\Application", "ApplicationDescription", DESCRIPTION));
+    writes.push(addValue(key + "\\Application", "ApplicationIcon", exe + ",0"));
   }
-  addValue(k.url, "URL Protocol", "");
-  addDefault(k.client, NAME);
-  addDefault(k.client + "\\DefaultIcon", exe + ",0");
-  addDefault(k.client + "\\shell\\open\\command", '"' + exe + '"');
-  addDword(k.client + "\\InstallInfo", "IconsVisible", 1);
+  writes.push(addValue(k.url, "URL Protocol", ""));
+  writes.push(addDefault(k.client, NAME));
+  writes.push(addDefault(k.client + "\\DefaultIcon", exe + ",0"));
+  writes.push(addDefault(k.client + "\\shell\\open\\command", '"' + exe + '"'));
+  writes.push(addDword(k.client + "\\InstallInfo", "IconsVisible", 1));
   const cap = k.client + "\\Capabilities";
-  addValue(cap, "ApplicationName", NAME);
-  addValue(cap, "ApplicationDescription", DESCRIPTION);
-  addValue(cap, "ApplicationIcon", exe + ",0");
-  addValue(cap + "\\Startmenu", "StartMenuInternet", NAME);
-  addValue(cap + "\\URLAssociations", "http", "PBCalcURL");
-  addValue(cap + "\\URLAssociations", "https", "PBCalcURL");
-  for (const ext of EXTENSIONS) addValue(cap + "\\FileAssociations", ext, KINDS[kindOfExt(ext)]);
-  addValue(k.registered, NAME, k.capabilitiesPath);
-  addValue(k.client, "RegistrationVersion", REG_VERSION);   // written LAST: its presence means the layout above is complete
-  if (notify) notifyAssociationsChanged();
+  writes.push(addValue(cap, "ApplicationName", NAME));
+  writes.push(addValue(cap, "ApplicationDescription", DESCRIPTION));
+  writes.push(addValue(cap, "ApplicationIcon", exe + ",0"));
+  writes.push(addValue(cap + "\\Startmenu", "StartMenuInternet", NAME));
+  writes.push(addValue(cap + "\\URLAssociations", "http", "PBCalcURL"));
+  writes.push(addValue(cap + "\\URLAssociations", "https", "PBCalcURL"));
+  for (const ext of EXTENSIONS) writes.push(addValue(cap + "\\FileAssociations", ext, KINDS[kindOfExt(ext)]));
+  writes.push(addValue(k.registered, NAME, k.capabilitiesPath));
+  await Promise.all(writes);
+  await addValue(k.client, "RegistrationVersion", REG_VERSION);   // written LAST, after everything above is in: its presence means the layout is complete
+  if (notify) await notifyAssociationsChanged();
   return true;
 }
 
 // Reads one registry value as text (null = missing). name omitted = the key's (Default).
-function readReg(key, name) {
+async function readReg(key, name) {
   try {
-    const out = reg(name ? ["query", key, "/v", name] : ["query", key, "/ve"]);
+    const out = await reg(name ? ["query", key, "/v", name] : ["query", key, "/ve"]);
     const line = out.split(/\r?\n/).find((l) => /REG_\w+/.test(l));
     return line ? line.replace(/^\s*(\(Default\)|\S+)\s+REG_\w+\s*/, "").trim() : null;
   } catch (_) { return null; }
 }
 // Names of the subkeys / values listed under a key ("" lines skipped); [] when it does not exist.
-function listValueNames(key) {
-  try { return reg(["query", key]).split(/\r?\n/).map((l) => l.match(/^\s{4}(\S+)\s+REG_/)).filter(Boolean).map((m) => m[1]); } catch (_) { return []; }
+async function listValueNames(key) {
+  try { return (await reg(["query", key])).split(/\r?\n/).map((l) => l.match(/^\s{4}(\S+)\s+REG_/)).filter(Boolean).map((m) => m[1]); } catch (_) { return []; }
 }
 
 // When the user picks PBCalc through a file's Properties > "Opens with" > Change (instead of Settings > Default apps), Windows
@@ -125,38 +145,41 @@ function listValueNames(key) {
 // exe's calculator and never pdf.ico (measured in the registry: HKCU\Classes\pdf_auto_file had no DefaultIcon). Here we put
 // the type's icon on such a ProgId - but ONLY while its open command is PBCalc's, and only when it has no icon of its own - and
 // take it off again once the command no longer is (the user moved the type to another app), so no stale PBCalc icon stays
-// behind. Our own PBCalc* ProgIds are never touched. Runs at every start of the installed copy. Returns the number of changes.
-function repairOpenWithIcons(exe, software = "Software", { notify = software === "Software" } = {}) {
+// behind. Our own PBCalc* ProgIds are never touched. Runs at every start of the installed copy. Resolves the number of changes.
+async function repairOpenWithIcons(exe, software = "Software", { notify = software === "Software" } = {}) {
   const S = "HKCU\\" + software, classes = S + "\\Classes";
   const exts = S + "\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts";
   const ours = (cmd) => !!cmd && cmd.toLowerCase().includes(exe.toLowerCase());
   const myIcons = new Set(Object.keys(KINDS).map((kind) => iconFor(exe, kind).toLowerCase()));
-  let changed = 0;
-  for (const ext of EXTENSIONS) {
-    const candidates = new Set([
+  const perExtension = await Promise.all(EXTENSIONS.map(async (ext) => {
+    const found = await Promise.all([
       readReg(exts + "\\" + ext + "\\UserChoice", "ProgId"),
       readReg(classes + "\\" + ext),
-      ...listValueNames(exts + "\\" + ext + "\\OpenWithProgids"),
-      ...listValueNames(classes + "\\" + ext + "\\OpenWithProgids"),
-    ].filter((p) => p && !/^PBCalc/i.test(p) && !/^Applications\\/i.test(p)));
+      listValueNames(exts + "\\" + ext + "\\OpenWithProgids"),
+      listValueNames(classes + "\\" + ext + "\\OpenWithProgids"),
+    ]);
+    const candidates = new Set([found[0], found[1], ...found[2], ...found[3]]
+      .filter((p) => p && !/^PBCalc/i.test(p) && !/^Applications\\/i.test(p)));
+    let changed = 0;
     for (const progId of candidates) {
       const key = classes + "\\" + progId;
-      const cmd = readReg(key + "\\shell\\open\\command");
-      const icon = readReg(key + "\\DefaultIcon");
+      const [cmd, icon] = await Promise.all([readReg(key + "\\shell\\open\\command"), readReg(key + "\\DefaultIcon")]);
       try {
-        if (ours(cmd) && !icon) { addDefault(key + "\\DefaultIcon", iconFor(exe, kindOfExt(ext))); changed++; }
-        else if (!ours(cmd) && icon && myIcons.has(icon.toLowerCase())) { reg(["delete", key + "\\DefaultIcon", "/f"]); changed++; }
+        if (ours(cmd) && !icon) { await addDefault(key + "\\DefaultIcon", iconFor(exe, kindOfExt(ext))); changed++; }
+        else if (!ours(cmd) && icon && myIcons.has(icon.toLowerCase())) { await reg(["delete", key + "\\DefaultIcon", "/f"]); changed++; }
       } catch (_) {}
     }
-  }
-  if (changed && notify) notifyAssociationsChanged();
+    return changed;
+  }));
+  const changed = perExtension.reduce((a, b) => a + b, 0);
+  if (changed && notify) await notifyAssociationsChanged();
   return changed;
 }
 
-function unregister(software = "Software") {
+async function unregister(software = "Software") {
   const k = keys(software);
-  for (const key of [k.html, k.url, k.pdf, k.image, k.text, k.svg, k.client]) { try { reg(["delete", key, "/f"]); } catch (_) {} }
-  try { reg(["delete", k.registered, "/v", NAME, "/f"]); } catch (_) {}
+  await Promise.all([k.html, k.url, k.pdf, k.image, k.text, k.svg, k.client].map((key) => reg(["delete", key, "/f"]).catch(() => {})));
+  await reg(["delete", k.registered, "/v", NAME, "/f"]).catch(() => {});
 }
 
-module.exports = { register, unregister, isRegistered, repairOpenWithIcons, keys, REG_VERSION, EXTENSIONS, iconFor };
+module.exports = { register, unregister, isRegistered, repairOpenWithIcons, keys, REG_VERSION, EXTENSIONS };

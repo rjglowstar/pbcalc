@@ -57,4 +57,4 @@ function openFromOutside(argv, cwd, { first = false } = {}) {
   return true;
 }
 
-module.exports = { targetFromArgv, openFromOutside, LOCAL_OK };
+module.exports = { targetFromArgv, openFromOutside };

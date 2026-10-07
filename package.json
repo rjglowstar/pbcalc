@@ -1,6 +1,6 @@
 {
   "name": "pbcalc",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "PBCalc Secure Browser",
   "author": "PBCalc",
   "main": "electron/main.js",
@@ -17,6 +17,7 @@
   "build": {
     "appId": "com.pbcalc.browser",
     "productName": "PBCalc",
+    "electronDist": "node_modules/electron/dist",
     "directories": {
       "app": "build-dist",
       "output": "release"
@@ -26,6 +27,9 @@
       "preloads/**/*",
       "renderer/**/*",
       "assets/**/*",
+      "!assets/icon.svg",
+      "!assets/icon.ico",
+      "!assets/file-icons/**",
       "package.json",
       "!CLAUDE.md",
       "!ANTIGRAVITY.md",

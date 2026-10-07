@@ -124,7 +124,7 @@ function close() {
   kind = null;
   anchor = null;
   try {
-    if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.removeBrowserView(v);
+    if (state.mainWindow && !state.mainWindow.isDestroyed()) require("./viewHost").detach(state.mainWindow, v);
   } catch (_) {}
   try {
     if (!v.webContents.isDestroyed()) v.webContents.destroy();
@@ -179,7 +179,7 @@ function open(k, rect, opts = {}) {
   });
   view.setBackgroundColor("#00000000");
   require("./shortcuts").attachShortcuts(view.webContents);
-  state.mainWindow.addBrowserView(view); // added last = on top of the page view
+  require("./viewHost").attach(state.mainWindow, view); // added last = on top of the page view
   view.setBounds(bounds());
   view.webContents.loadFile(path.join(__dirname, "..", "renderer", "popup", "popup.html"));
   view.webContents.once("did-finish-load", () => {

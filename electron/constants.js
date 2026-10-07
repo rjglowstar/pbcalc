@@ -76,7 +76,6 @@ const BOOKMARKS_BAR_HEIGHT = 32;
 // with ~82 tabs: 18px each). This is only a safety ceiling so a runaway page calling window.open
 // cannot spawn renderer processes without end; nobody reaches it by hand.
 const MAX_TABS = 150;
-const HOME_URL = "https://www.google.com/";
 // Local new-tab page (no history, no most-visited tiles).
 const NEWTAB_URL = require("url").pathToFileURL(path.join(__dirname, "..", "renderer", "newtab", "newtab.html")).href;
 
@@ -106,6 +105,5 @@ module.exports = {
   TOOLBAR_HEIGHT,
   BOOKMARKS_BAR_HEIGHT,
   MAX_TABS,
-  HOME_URL,
   NEWTAB_URL,
 };

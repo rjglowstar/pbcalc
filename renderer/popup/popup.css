@@ -227,7 +227,6 @@ body.bubble .panel { inset: 4px; border-radius: 8px; }
   user-select: text;
 }
 .unlock input:focus { border-color: var(--accent); }
-.unlock-msg { min-height: 16px; color: var(--danger); font-size: 12px; }
 .unlock .primary {
   height: 34px;
   border: none;

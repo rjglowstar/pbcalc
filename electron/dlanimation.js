@@ -55,7 +55,7 @@ function warm() {
 function detach() {
   clearTimeout(timer);
   if (alive() && attached) {
-    try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.removeBrowserView(view); } catch (_) {}
+    try { if (state.mainWindow && !state.mainWindow.isDestroyed()) require("./viewHost").detach(state.mainWindow, view); } catch (_) {}
   }
   attached = false;
 }
@@ -96,7 +96,7 @@ async function play() {
   lastGeometry = { startY, endY, contentW: w, contentH: h, chromeH, btnX: btn.x, btnY: btn.y, viewX, viewY, viewH };
   view.setBounds({ x: viewX, y: viewY, width: VIEW_W, height: viewH });
   if (!attached) {
-    try { win.addBrowserView(view); attached = true; } catch (_) { return false; }
+    try { require("./viewHost").attach(win, view); attached = true; } catch (_) { return false; }
   }
   try {
     await view.webContents.executeJavaScript("window.__start(" + JSON.stringify({

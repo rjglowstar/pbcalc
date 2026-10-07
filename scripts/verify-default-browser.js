@@ -122,8 +122,8 @@ if (PHASE === "second") return;
     const realPdfCmd = q("HKCU\\Software\\Classes\\pdf_auto_file\\shell\\open\\command");
     const realBefore =q("HKCU\\Software\\RegisteredApplications", "PBCalc");
     const k = db.keys(sw);
-    check("not registered at first", db.isRegistered(fakeExe, sw) === false);
-    check("register() writes", db.register(fakeExe, sw) === true);
+    check("not registered at first", (await db.isRegistered(fakeExe, sw)) === false);
+    check("register() writes", (await db.register(fakeExe, sw)) === true);
     check("the browser entry opens PBCalc", q(k.client + "\\shell\\open\\command") === '"' + fakeExe + '"');
     check("http and https both point at the URL handler", q(k.client + "\\Capabilities\\URLAssociations", "http") === "PBCalcURL" && q(k.client + "\\Capabilities\\URLAssociations", "https") === "PBCalcURL");
     check(".htm / .html / .pdf point at their handlers", q(k.client + "\\Capabilities\\FileAssociations", ".htm") === "PBCalcHTML" && q(k.client + "\\Capabilities\\FileAssociations", ".html") === "PBCalcHTML" && q(k.client + "\\Capabilities\\FileAssociations", ".pdf") === "PBCalcPDF");
@@ -143,13 +143,26 @@ if (PHASE === "second") return;
     check("every extension in EXTENSIONS is registered", db.EXTENSIONS.every((ext) => !!q(FA, ext)));
     check("the image / text handlers launch PBCalc with the file", [k.image, k.text].every((key) => q(key + "\\shell\\open\\command") === '"' + fakeExe + '" "%1"'));
     check("without icon files the handlers fall back to the exe's icon", [k.pdf, k.image, k.text, k.html].every((key) => q(key + "\\DefaultIcon") === fakeExe + ",0"));
-    check("calling register() again changes nothing (idempotent)", db.register(fakeExe, sw) === false);
+    check("calling register() again changes nothing (idempotent)", (await db.register(fakeExe, sw)) === false);
     // an installed copy that registered with the FIRST layout (no version stamp) is upgraded at its next start
     try { execFileSync("reg", ["delete", k.client, "/v", "RegistrationVersion", "/f"], { stdio: "ignore" }); } catch (_) {}
-    check("an old registration (no version stamp) is NOT taken for current", db.isRegistered(fakeExe, sw) === false);
-    check("...and register() rewrites it", db.register(fakeExe, sw) === true && db.isRegistered(fakeExe, sw) === true);
-    db.unregister(sw);
-    check("unregister() removes the entries", db.isRegistered(fakeExe, sw) === false && q(k.registered, "PBCalc") === null && q(k.url + "\\shell\\open\\command") === null);
+    check("an old registration (no version stamp) is NOT taken for current", (await db.isRegistered(fakeExe, sw)) === false);
+    check("...and register() rewrites it", (await db.register(fakeExe, sw)) === true && (await db.isRegistered(fakeExe, sw)) === true);
+    // The start-up registration used execFileSync: the app stood still for ~6 s, 5 s after launch ("Not responding"). Now the event loop
+    // must keep turning while it works: a 10 ms timer is watched while the full pass runs against the REAL registry (read-only here:
+    // a made-up exe path owns nothing, so nothing is written).
+    {
+      let last = Date.now(), worst = 0;
+      const lag = setInterval(() => { const n = Date.now(); worst = Math.max(worst, n - last); last = n; }, 10);
+      const t0 = Date.now();
+      await db.repairOpenWithIcons("C:\\Nonexistent\\PBCalc.exe", "Software", { notify: false });
+      await db.isRegistered("C:\\Nonexistent\\PBCalc.exe", "Software");
+      clearInterval(lag);
+      console.log("   (repair pass over the real registry took " + (Date.now() - t0) + " ms; longest event-loop gap " + worst + " ms)");
+      check("the registry work does NOT block the main thread (longest event-loop gap under 250 ms)", worst < 250);
+    }
+    await db.unregister(sw);
+    check("unregister() removes the entries", (await db.isRegistered(fakeExe, sw)) === false && q(k.registered, "PBCalc") === null && q(k.url + "\\shell\\open\\command") === null);
     check("unregister() removes the image / text handlers too", q(k.image + "\\shell\\open\\command") === null && q(k.text + "\\shell\\open\\command") === null);
     // installed layout: <install>\PBCalc.exe with <install>\resources\file-icons\*.ico beside it -> each type gets its own icon
     const inst = fs.mkdtempSync(path.join(os.tmpdir(), "pbcalc-inst-"));
@@ -158,7 +171,7 @@ if (PHASE === "second") return;
     for (const kind of ["pdf", "html", "image", "text", "svg"]) fs.copyFileSync(path.join(realIcons, kind + ".ico"), path.join(inst, "resources", "file-icons", kind + ".ico"));
     const exe2 = path.join(inst, "PBCalc.exe");
     check("the four shipped .ico files exist and start with a valid ICO header", ["pdf", "html", "image", "text", "svg"].every((kind) => { const b = fs.readFileSync(path.join(realIcons, kind + ".ico")); return b.readUInt16LE(0) === 0 && b.readUInt16LE(2) === 1 && b.readUInt16LE(4) === 7; }));
-    db.register(exe2, sw);
+    await db.register(exe2, sw);
     const icon = (key) => q(key + "\\DefaultIcon");
     check("with the icon files present each handler gets ITS OWN icon", icon(k.pdf) === path.join(inst, "resources", "file-icons", "pdf.ico") && icon(k.html).endsWith("html.ico") && icon(k.image).endsWith("image.ico") && icon(k.text).endsWith("text.ico") && icon(k.svg).endsWith("svg.ico"));
     check("only .pdf and .svg have an icon of their own: .png / .jpg share the IMAGE one", q(FA, ".png") === "PBCalcIMG" && q(FA, ".jpg") === "PBCalcIMG" && q(FA, ".svg") === "PBCalcSVG" && q(FA, ".pdf") === "PBCalcPDF");
@@ -171,22 +184,22 @@ if (PHASE === "second") return;
     add(T + "\\Classes\\pdf_auto_file\\shell\\open\\command", null, '"' + exe2 + '" "%1"');
     const pdfIcon = path.join(inst, "resources", "file-icons", "pdf.ico");
     check("before: the Windows-made ProgId has no icon (the reported bug)", q(T + "\\Classes\\pdf_auto_file\\DefaultIcon") === null);
-    check("repairOpenWithIcons puts the PDF icon on it", db.repairOpenWithIcons(exe2, sw) === 1 && q(T + "\\Classes\\pdf_auto_file\\DefaultIcon") === pdfIcon);
-    check("...and running it again changes nothing", db.repairOpenWithIcons(exe2, sw) === 0);
+    check("repairOpenWithIcons puts the PDF icon on it", (await db.repairOpenWithIcons(exe2, sw)) === 1 && q(T + "\\Classes\\pdf_auto_file\\DefaultIcon") === pdfIcon);
+    check("...and running it again changes nothing", (await db.repairOpenWithIcons(exe2, sw)) === 0);
     add(T + "\\Classes\\otherfile\\shell\\open\\command", null, '"C:\\Other\\App.exe" "%1"');
     add(T + "\\Classes\\otherfile\\DefaultIcon", null, "C:\\Other\\App.exe,0");
     add(FE + "\\.png\\UserChoice", "ProgId", "otherfile");
-    check("a ProgId that opens ANOTHER app is left alone (icon and command untouched)", db.repairOpenWithIcons(exe2, sw) === 0 && q(T + "\\Classes\\otherfile\\DefaultIcon") === "C:\\Other\\App.exe,0");
+    check("a ProgId that opens ANOTHER app is left alone (icon and command untouched)", (await db.repairOpenWithIcons(exe2, sw)) === 0 && q(T + "\\Classes\\otherfile\\DefaultIcon") === "C:\\Other\\App.exe,0");
     add(T + "\\Classes\\ownicon\\shell\\open\\command", null, '"' + exe2 + '" "%1"');
     add(T + "\\Classes\\ownicon\\DefaultIcon", null, "C:\\Mine\\mine.ico");
     add(FE + "\\.txt\\UserChoice", "ProgId", "ownicon");
-    check("a ProgId that already has an icon of its own keeps it", db.repairOpenWithIcons(exe2, sw) === 0 && q(T + "\\Classes\\ownicon\\DefaultIcon") === "C:\\Mine\\mine.ico");
+    check("a ProgId that already has an icon of its own keeps it", (await db.repairOpenWithIcons(exe2, sw)) === 0 && q(T + "\\Classes\\ownicon\\DefaultIcon") === "C:\\Mine\\mine.ico");
     // the user moves .pdf to another app: Windows repoints the ProgId's command; our icon must not stay on it
     add(T + "\\Classes\\pdf_auto_file\\shell\\open\\command", null, '"C:\\Other\\Reader.exe" "%1"');
-    check("when the type is given to another app the PBCalc icon is taken off again", db.repairOpenWithIcons(exe2, sw) === 1 && q(T + "\\Classes\\pdf_auto_file\\DefaultIcon") === null);
-    check("our own PBCalc* ProgIds are never touched by it", (() => { db.register(exe2, sw); add(FE + "\\.svg\\UserChoice", "ProgId", "PBCalcSVG"); const before = q(k.svg + "\\DefaultIcon"); db.repairOpenWithIcons(exe2, sw); return q(k.svg + "\\DefaultIcon") === before && !!before; })());
+    check("when the type is given to another app the PBCalc icon is taken off again", (await db.repairOpenWithIcons(exe2, sw)) === 1 && q(T + "\\Classes\\pdf_auto_file\\DefaultIcon") === null);
+    check("our own PBCalc* ProgIds are never touched by it", (await (async () => { await (await db.register(exe2, sw)); add(FE + "\\.svg\\UserChoice", "ProgId", "PBCalcSVG"); const before = q(k.svg + "\\DefaultIcon"); await (await db.repairOpenWithIcons(exe2, sw)); return q(k.svg + "\\DefaultIcon") === before && !!before; })()));
     check("the REAL pdf_auto_file was not touched by this test", q("HKCU\\Software\\Classes\\pdf_auto_file\\shell\\open\\command") === realPdfCmd);
-    db.unregister(sw);
+    await db.unregister(sw);
     try { fs.rmSync(inst,{ recursive: true, force: true }); } catch (_) {}
     try { execFileSync("reg", ["delete", "HKCU\\" + sw, "/f"], { stdio: "ignore" }); } catch (_) {}
     check("the REAL Default-apps list is exactly as it was before this test", q("HKCU\\Software\\RegisteredApplications", "PBCalc") === realBefore);

@@ -124,5 +124,4 @@ h2 { margin: 0; padding: 16px 20px 8px; font-size: 14px; font-weight: 500; color
 .vault-buttons .btn { height: 38px; min-width: 150px; padding: 0 22px; }
 .msg.err { color: #d93025; }
 .msg.ok { color: #188038; }
-.btnrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 [hidden] { display: none !important; }

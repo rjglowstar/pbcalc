@@ -179,6 +179,8 @@ function createTab(url, opts = {}) {
     isHome: !!(state.restricted && !url),
   };
   if (opts.sessionRestore) {
+    const now = Date.now();
+    for (const [id, p] of state.pendingSessionRestore) if (now - p.at > 60000) state.pendingSessionRestore.delete(id);
     state.pendingSessionRestore.set(view.webContents.id, {
       origin: opts.sessionRestore.origin,
       data: opts.sessionRestore.data,
@@ -370,6 +372,14 @@ function wireTabEvents(tab) {
   // the tab and goes back to the page that opened it. Our own closeTab removes the tab from the list BEFORE it
   // destroys the page, so this only fires for pages that ended themselves.
   wc.once("destroyed", () => closePageEndedTab(tab));
+  // Whatever was keyed by this page's id must not outlive it: a typed login waiting for the next load, a fill grant, a
+  // sessionStorage snapshot waiting to be collected (up to 512KB each) - measured to stay behind for ever when never collected.
+  const wcId = wc.id;
+  wc.once("destroyed", () => {
+    require("../vault/pendingCredentials").clear(wcId);
+    require("../vault/fillGrants").clear(wcId);
+    state.pendingSessionRestore.delete(wcId);
+  });
   wc.on("page-title-updated", (_e, title) => { if (!tab.errorPage) tab.title = title; notifyTabs(); });
   wc.on("page-favicon-updated", (_e, favicons) => {
     tab.favicon = (favicons && favicons[0]) || "";
@@ -594,12 +604,12 @@ function switchTab(id) {
 
   state.activeTabId = next.id;
   try {
-    state.mainWindow.addBrowserView(next.view);
+    require("../viewHost").attach(state.mainWindow, next.view);
   } catch (_) {}
   if (leaving) {
     Promise.race([pictureTaken, new Promise((r) => setTimeout(r, 300))]).then(() => {
       if (state.activeTabId === leaving.id) return; // switched back in the meantime: keep it
-      try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.removeBrowserView(leaving.view); } catch (_) {}
+      try { if (state.mainWindow && !state.mainWindow.isDestroyed()) require("../viewHost").detach(state.mainWindow, leaving.view); } catch (_) {}
     });
   }
   // KEYBOARD FOCUS FOLLOWS THE SWITCH — unless the user is working in the shell (typing in the
@@ -661,7 +671,7 @@ function closeTab(id, opts = {}) {
   if (state.adminTabId === removed.id) state.adminTabId = null; // admin session ends with its tab
   if (state.mainWindow && !state.mainWindow.isDestroyed()) {
     try {
-      state.mainWindow.removeBrowserView(removed.view);
+      require("../viewHost").detach(state.mainWindow, removed.view);
     } catch (_) {}
   }
   // The tab disappears from the strip and the window right now; only the page behind it lingers for

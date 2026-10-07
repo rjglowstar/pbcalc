@@ -17,7 +17,6 @@ contextBridge.exposeInMainWorld("browserAPI", {
   closeTab: (id) => ipcRenderer.invoke("tabs:close", id),
   moveTab: (id, index) => ipcRenderer.send("tabs:move", id, index),
   tabContextMenu: (id) => ipcRenderer.send("tabs:context-menu", id),
-  navigate: (url) => ipcRenderer.send("tabs:navigate", url),
   back: () => ipcRenderer.send("tabs:back"),
   forward: () => ipcRenderer.send("tabs:forward"),
   reload: () => ipcRenderer.send("tabs:reload"),

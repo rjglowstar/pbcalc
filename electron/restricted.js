@@ -1,5 +1,4 @@
 const settings = require("./settings");
-const state = require("./state");
 
 // ── Restricted Mode ────────────────────────────────────────────────────────
 // A locked-down mode: the user can only open the preset (bookmarked) sites, sees no address bar,
@@ -15,10 +14,6 @@ const state = require("./state");
 // Restricted Mode itself lasts for the session. The only thing saved is the "Default Start
 // Restricted" switch: when it is on, every launch begins in Restricted Mode, even if an admin left
 // it during the previous session.
-
-function isEnabled() {
-  return !!state.restricted;
-}
 
 function getStartRestricted() {
   const c = settings.get("restricted");
@@ -64,10 +59,8 @@ function sameSite(url, site) {
 }
 
 module.exports = {
-  isEnabled,
   getStartRestricted,
   setStartRestricted,
   siteOf,
   sameSite,
-  isWebUrl,
 };

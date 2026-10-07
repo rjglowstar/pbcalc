@@ -111,4 +111,4 @@ function change(oldPw, newPw, confirmPw) {
 const isDefault = () => !load().rec;
 function _reset() { cache = null; }   // tests
 
-module.exports = { verify, change, lockedSecs, isDefault, validFormat, MIN_LEN, MAX_LEN, TRIES, BASE_LOCK_MS, _reset, FILE };
+module.exports = { verify, change, lockedSecs, isDefault, _reset, FILE };

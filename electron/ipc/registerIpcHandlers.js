@@ -5,7 +5,6 @@ const bookmarks = require("../bookmarks/bookmarkStore");
 const downloads = require("../downloads/downloadManager");
 const state = require("../state");
 const popup = require("../popup");
-const settings = require("../settings");
 const restricted = require("../restricted");
 const { SETTINGS_URL, RESTRICTED_HOME_URL, DOWNLOADS_URL } = require("../constants");
 
@@ -21,12 +20,7 @@ function senderOrigin(e) {
   }
 }
 
-// Credentials typed into a login form, held only in memory between the form submit and the next
-// page load (a real navigation destroys the page's JS, so it cannot carry them itself). Keyed by
-// the sender's webContents id; expires after 60s; never written to disk, and never handed to page
-// scripts — only back to the same tab's preload.
-const pending = new Map(); // webContentsId -> { origin, username, password, at }
-const PENDING_TTL = 60 * 1000;
+const pendingCredentials = require("../vault/pendingCredentials");
 
 function notifyBookmarks() {
   const win = state.mainWindow;
@@ -47,7 +41,6 @@ function registerIpcHandlers() {
   });
   ipcMain.handle("tabs:switch", (_e, id) => tabManager.switchTab(id));
   ipcMain.handle("tabs:close", (_e, id) => tabManager.closeTab(id));
-  ipcMain.on("tabs:navigate", (_e, url) => tabManager.navigate(url));
   ipcMain.on("tabs:back", () => tabManager.goBack());
   ipcMain.on("tabs:forward", () => tabManager.goForward());
   ipcMain.on("tabs:reload", () => tabManager.reload());
@@ -213,12 +206,6 @@ function registerIpcHandlers() {
     try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.webContents.send("files:drag-state", !!active); } catch (_) {}
   });
   ipcMain.on("bookmarks:context-menu", (e, id) => { if (fromShell(e)) tabManager.bookmarkContextMenu(String(id)); });
-  ipcMain.handle("bookmarks:remove", (_e, id) => {
-    if (state.restricted) return bookmarks.list(); // read-only in Restricted Mode
-    const list = bookmarks.remove(String(id));
-    notifyBookmarks();
-    return list;
-  });
 
   // ── Downloads ────────────────────────────────────────────────────────
   ipcMain.handle("downloads:get", () => downloads.publicList());
@@ -255,10 +242,6 @@ function registerIpcHandlers() {
     return pending.data;
   }
 
-  ipcMain.on("downloads:cancel", (_e, id) => downloads.cancel(id));
-  ipcMain.on("downloads:open", (_e, id) => downloads.open(id));
-  ipcMain.on("downloads:show", (_e, id) => downloads.showInFolder(id));
-  ipcMain.on("downloads:dismiss", (_e, id) => downloads.dismiss(id));
 
   // ── Password vault ──────────────────────────────────────────────────
   // Every vault call is scoped to senderOrigin(e); any origin argument the preload sends is
@@ -316,20 +299,10 @@ function registerIpcHandlers() {
   ipcMain.on("vault:stash-pending", (e, cred) => {
     const o = senderOrigin(e);
     if (!o || !cred || !cred.username || !cred.password) return;
-    pending.set(e.sender.id, {
-      origin: o,
-      username: String(cred.username),
-      password: String(cred.password),
-      at: Date.now(),
-    });
+    pendingCredentials.stash(e.sender.id, o, cred.username, cred.password);
   });
   // One-shot: hands the stashed credential back only if this tab is still on the same origin.
-  ipcMain.handle("vault:take-pending", (e) => {
-    const p = pending.get(e.sender.id);
-    pending.delete(e.sender.id);
-    if (!p || Date.now() - p.at > PENDING_TTL || p.origin !== senderOrigin(e)) return null;
-    return { username: p.username, password: p.password };
-  });
+  ipcMain.handle("vault:take-pending", (e) => pendingCredentials.take(e.sender.id, senderOrigin(e)));
 }
 
 module.exports = { registerIpcHandlers };

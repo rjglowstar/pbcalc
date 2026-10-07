@@ -798,6 +798,7 @@ Two things define this browser against every mainstream one:
   descendant must opt out explicitly (`.tab *`). Opting out only on `.tab` left the tab's close X
   dead for real mouse clicks while every synthetic-click test passed. Anything clickable in the
   strip needs `scripts/manual-os-click.sh` (real OS clicks, moves the mouse; do NOT run it while someone is using the computer, their mouse movement makes it fail), not just `sendInputEvent`.
+- Also: `verify-leaks.js` (11, memory/leaks, see "Memory and leaks"), `verify-vault-lock.js` (64), `verify-zoom.js` (23), `verify-drop-files.js` (19), `verify-drop-ui.js` (27), `verify-default-browser.js` (57), `verify-open-downloads.js` (17), `verify-features.js` (38). Full battery last run: 26 suites, 0 failures (`verify-ui.js` and `manual-os-click.sh` need the real pointer and were not run).
 - Self-tests (run any with `env -u ELECTRON_RUN_AS_NODE ./node_modules/electron/dist/electron.exe scripts/<file>`):
   `verify.js` (19), `verify-features.js` (36), `verify-downloads.js` (23), `verify-dlanim.js` (41: the download-started flight, rendered and compared with Chrome's measurements), `verify-download-tab.js` (22: a download opened in a new tab closes that tab, a page tab stays), `verify-download-flow.js` (49), `verify-suggestions.js` (19), `verify-browser.js` (68, needs `openssl`; its window is
   off-screen and needs the occlusion-off switches at the top of the file or synthetic mouse input is
@@ -887,6 +888,40 @@ light whatever the browser's mode (Incognito behaviour), that is a deliberate ch
 a fix. Our own pages are unaffected
 because each one sets its own background from the palette (`--frame` / `--toolbar`); any NEW
 internal page must do the same or it will be white in dark mode. Test: `scripts/verify-theme.js`.
+
+## Memory and leaks (audited with `scripts/verify-leaks.js`, 11 checks)
+
+The test runs the same heavy workload 5 times (many tabs of every kind, hover cards, every popup, find, duplicate/close/reopen,
+window.open popups, a download, password stash and fill grants, settings, file tabs), closes everything and, after a forced GC,
+compares live webContents, BrowserViews, the module-level Maps, the window's listener counts, the main heap and the memory of ALL
+processes with the baseline. What it found and what was fixed (each measured, not assumed):
+- **`addBrowserView` leaks a "closed" listener on the window per call and `removeBrowserView` never takes it off** (Electron
+  internal; the closure keeps the view alive). PBCalc attaches/detaches views constantly (every tab switch, popup, hover card,
+  omnibox list, download animation): measured +1 listener per tab switch and per popup, 46 after ~40 operations, and Node's
+  "possible EventEmitter memory leak" warning - which `mainWindow.js` had silenced with `setMaxListeners(100)`. All attach/detach now
+  go through `electron/viewHost.js`, which removes the listener its attach added; the count stays at the number of attached views.
+  **Use `viewHost.attach/detach`, never `win.addBrowserView/removeBrowserView` directly.** The limit is 40, not 100: many tabs opened
+  at once keep their old views attached ~300ms and can pass Node's default of 10 for a moment (not a leak: counts return to baseline).
+- Entries keyed by a page's webContents id were never removed when the page died before collecting them: `fillGrants` (one per
+  password fill), the typed-login stash (a typed PASSWORD in memory for ever; now `electron/vault/pendingCredentials.js`, 60s TTL,
+  swept on every stash) and `state.pendingSessionRestore` (up to 512KB each). All three are cleared when the page is destroyed
+  (`wireTabEvents`) and swept by TTL.
+- Not leaks (measured flat): heap after GC, webContents, BrowserViews, closed-tab list (capped at 20), thumbnails (die with the tab).
+  The 1s login-form poll in `tab-preload.js` runs for as long as a page that ever showed a login form stays open: light, left as is.
+
+## Dead code removed in the audit (each checked by grep for senders/callers first)
+`preloads/tab-preload-test.js` (a debug interval logger that was packaged into the app), the IPC channels nobody sent
+(`tabs:navigate` + `browserAPI.navigate`, `bookmarks:remove`, `downloads:cancel|open|show|dismiss`), `constants.HOME_URL`,
+`restricted.isEnabled`, the `closeCircle` icon, two dead CSS rules (`.unlock-msg`, `.btnrow`), unused imports, unused exports, the
+preview PNGs of `make-file-icons.js`. `assets/icon.svg`, `icon.ico` and `file-icons/` no longer go into app.asar (the .ico files ship
+as `resources/file-icons`; the others are only used by tools/the installer). **Kept on purpose (owner's decision):** `window.vaultAPI`,
+exposed to page scripts and unused by PBCalc itself - passwords are protected by the fill password, not by hiding the API.
+
+**`npm run dist` and the network:** `build.electronDist` is `node_modules/electron/dist`, so the builder packages the Electron files already installed (same 41.7.1) instead of downloading them. Without it the build died with `read ECONNRESET` while fetching Electron's checksum file from GitHub (curl worked, Node's downloader did not). After upgrading Electron (`npm install`) the installed dist follows automatically.
+
+**Never run `reg.exe` / `powershell.exe` with `execFileSync` (or any sync call) in the main process.** `defaultBrowser.js` did, five seconds after every start of the installed copy: the repair pass blocked the main thread 4.4 s and the registration 1.8 s, and Windows showed "PBCalc (Not responding)" (Event Log: `AppHangTransient`, PBCalc.exe) - the owner thought the 3-click bookmark switch caused it, but that switch takes 4 ms (measured); it only coincided. All of `defaultBrowser.js` is now async (at most 8 `reg.exe` at once; the repair pass took 1.2 s and the longest event-loop gap was 44 ms) and `verify-default-browser.js` fails if the loop stalls over 250 ms. A dev copy never runs this code (`app.isPackaged`), so such a freeze only shows in the INSTALLED app.
+
+**Uninstall** (`installer/installer.nsh`, `scripts/verify-uninstall.js`, 15 checks): ALWAYS removes PBCalc's Windows registration (Default apps entries, every `PBCalc*` ProgId, `ApplicationsPBCalc.exe`, and - by a PowerShell pass - any Windows-made "Opens with" ProgId whose open command is in this install, plus every `DefaultIcon` pointing into it). Then it ASKS "Also delete all of your PBCalc data?" (Yes/No, default No): Yes removes `%LOCALAPPDATA%PBCalc` and the fallback `%APPDATA%PBCalc` (saved passwords, the fill password, bookmarks, settings, cache, cookies, crash reports) and nothing else; downloaded files are never touched. A silent uninstall (`/S`, which is also how an update replaces the old version) never asks and never deletes data. The NSIS script itself could not be run end to end without uninstalling the owner's real PBCalc: it is compiled by `npm run dist`, its structure is checked, and the PowerShell command is executed for real against a made-up registry area.
 
 ## Notable gotchas
 

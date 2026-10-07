@@ -4,7 +4,11 @@
 const TTL_MS = 30 * 1000;
 const grants = new Map();   // webContentsId -> { origin, username, exp }
 
-function grant(wcId, origin, username) { grants.set(wcId, { origin, username, exp: Date.now() + TTL_MS }); }
+function grant(wcId, origin, username) {
+  const now = Date.now();
+  for (const [id, g] of grants) if (g.exp <= now) grants.delete(id);   // never-collected grants do not pile up
+  grants.set(wcId, { origin, username, exp: now + TTL_MS });
+}
 
 // true once, and only for exactly what was granted
 function take(wcId, origin, username) {
@@ -16,4 +20,4 @@ function take(wcId, origin, username) {
 function clear(wcId) { grants.delete(wcId); }
 function _size() { return grants.size; }
 
-module.exports = { grant, take, clear, TTL_MS, _size };
+module.exports = { grant, take, clear, _size };

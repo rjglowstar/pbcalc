@@ -127,7 +127,7 @@ function destroyView() {
   const v = view;
   view = null;
   shown = false;
-  try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.removeBrowserView(v); } catch (_) {}
+  try { if (state.mainWindow && !state.mainWindow.isDestroyed()) require("./viewHost").detach(state.mainWindow, v); } catch (_) {}
   try { if (!v.webContents.isDestroyed()) v.webContents.destroy(); } catch (_) {}
 }
 
@@ -153,7 +153,7 @@ function show() {
   ensureView();
   layout();
   if (!shown) {
-    state.mainWindow.addBrowserView(view); // on top of the page view; NEVER focused (typing stays in the address bar)
+    require("./viewHost").attach(state.mainWindow, view); // on top of the page view; NEVER focused (typing stays in the address bar)
     shown = true;
   }
   push();
@@ -164,7 +164,7 @@ function hide() {
   st = null;
   seqCounter++;
   clearTimeout(idleTimer);
-  if (alive() && shown) { try { state.mainWindow.removeBrowserView(view); } catch (_) {} }
+  if (alive() && shown) { try { require("./viewHost").detach(state.mainWindow, view); } catch (_) {} }
   shown = false;
   if (alive()) idleTimer = setTimeout(destroyView, 30000);
 }
@@ -272,4 +272,4 @@ function isSender(wc) {
   return alive() && wc === view.webContents;
 }
 
-module.exports = { query, move, accept, pick, hide, warm, isOpen, isSender, buildRows, rowText, LIMIT };
+module.exports = { query, move, accept, pick, hide, warm, isOpen, isSender, buildRows };

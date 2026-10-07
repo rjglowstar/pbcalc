@@ -339,4 +339,4 @@ async function chooseDir() {
   return config();
 }
 
-module.exports = { _items: items, init, publicList, cancel, togglePause, retry, open, showInFolder, copyLink, dismiss, clearAll, config, setAsk, chooseDir, uniquePath };
+module.exports = { _items: items, init, publicList, cancel, togglePause, retry, open, showInFolder, copyLink, dismiss, clearAll, config, setAsk, chooseDir };

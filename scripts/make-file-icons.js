@@ -1,5 +1,5 @@
 // Generates the per-file-type icons Explorer shows for files PBCalc is the default app for (PDF, web page, image, text), like
-// Chrome's "page with the browser logo and a type label". Output: assets/file-icons/<kind>.ico (+ a 256px .png to look at).
+// Chrome's "page with the browser logo and a type label". Output: assets/file-icons/<kind>.ico (no preview PNGs: nothing uses them).
 // The ProgIds' DefaultIcon (electron/defaultBrowser.js) points at the installed copy of these files.
 //   env -u ELECTRON_RUN_AS_NODE ./node_modules/electron/dist/electron.exe scripts/make-file-icons.js
 const { app, BrowserWindow } = require("electron");
@@ -40,7 +40,6 @@ app.whenReady().then(async () => {
     await win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
     await new Promise((r) => setTimeout(r, 400));
     const full = await win.webContents.capturePage({ x: 0, y: 0, width: 256, height: 256 });
-    fs.writeFileSync(path.join(OUT, kind + ".png"), full.toPNG());
     fs.writeFileSync(path.join(OUT, kind + ".ico"), buildIco(SIZES.map((size) => ({ size, data: full.resize({ width: size, height: size, quality: "best" }).toPNG() }))));
     console.log(kind + ".ico " + fs.statSync(path.join(OUT, kind + ".ico")).size + " bytes");
   }

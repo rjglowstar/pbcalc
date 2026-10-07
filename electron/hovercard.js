@@ -49,7 +49,7 @@ function destroyView() {
   const v = view;
   view = null;
   shown = false;
-  try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.removeBrowserView(v); } catch (_) {}
+  try { if (state.mainWindow && !state.mainWindow.isDestroyed()) require("./viewHost").detach(state.mainWindow, v); } catch (_) {}
   try { if (!v.webContents.isDestroyed()) v.webContents.destroy(); } catch (_) {}
 }
 
@@ -57,7 +57,7 @@ function hide() {
   token += 1;
   clearTimeout(idleTimer);
   if (alive() && shown) {
-    try { state.mainWindow.removeBrowserView(view); } catch (_) {}
+    try { require("./viewHost").detach(state.mainWindow, view); } catch (_) {}
   }
   shown = false;
   if (alive()) idleTimer = setTimeout(destroyView, 30000);
@@ -77,7 +77,7 @@ async function show(tabId, rect) {
   const x = Math.max(0, Math.min(Math.round(rect.left), w - CARD_W));
   view.setBounds({ x, y: TAB_STRIP_BOTTOM, width: CARD_W, height: info.thumb ? H_THUMB : H_NO_THUMB });
   if (!shown) {
-    state.mainWindow.addBrowserView(view); // added last = on top of the page view
+    require("./viewHost").attach(state.mainWindow, view); // added last = on top of the page view
     shown = true;
   }
   if (!view.webContents.isLoading()) view.webContents.send("card:data", info);
