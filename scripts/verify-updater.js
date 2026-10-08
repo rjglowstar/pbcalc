@@ -46,15 +46,17 @@ process.on("exit", cleanup);
     async function run(name, files, opts = {}) {
       folder = files; hits.length = 0; state.quitting = false;
       const store = { v: opts.declinedBefore || "" };
-      const seen = { notified: [], installed: [], logs: [], declined: store };
+      const seen = { notified: [], installed: [], logs: [], declined: store, progress: [], progressClosed: 0, startup: undefined };
       const u = updater.setup({
         feedUrl, delayMs: 3600000, currentVersion: opts.current || "0.1.5",
+        showProgress: (o) => { seen.progress.push(o); return { close: () => { seen.progressClosed++; } }; },   // never a real window in a test
         ask: async (i) => { seen.notified.push(i.version); if (opts.answer === "throw") throw new Error("no window"); return opts.answer !== "cancel"; },
         install: (i) => { seen.installed.push(i.version); },
         log: (m) => seen.logs.push(m),
         declined: { get: () => store.v, set: (v) => { store.v = v; } },
       });
-      await (opts.manual ? u.checkNow() : u.check());
+      if (opts.startup) { seen.pending = u.startupPending(); if (seen.pending) seen.startup = await u.startupInstall(); }
+      else await (opts.manual ? u.checkNow() : u.check());
       await sleep(opts.waitMs || 2500);
       u.autoUpdater.removeAllListeners();
       return { seen, hits: hits.slice(), u };
@@ -105,16 +107,39 @@ process.on("exit", cleanup);
     const origQuit = real.quitAndInstall; let qargs = null; real.quitAndInstall = (a, b) => { qargs = [a, b]; };
     for (const yes of [true, false]) {
       qargs = null; folder = yml("0.2.0"); hits.length = 0; state.quitting = false;
-      const u2 = updater.setup({ feedUrl, delayMs: 3600000, currentVersion: "0.1.5", log: () => {}, ask: async () => yes, declined: { get: () => "", set: () => {} } });
-      await u2.check(); await sleep(2500); real.removeAllListeners();
+      const shown = []; const t0 = Date.now(); let quitAt = 0; real.quitAndInstall = (a, b) => { qargs = [a, b]; quitAt = Date.now(); };
+      const u2 = updater.setup({ feedUrl, delayMs: 3600000, currentVersion: "0.1.5", log: () => {}, ask: async () => yes, declined: { get: () => "", set: () => {} }, showProgress: (o) => { shown.push({ o, at: Date.now() }); return { close() {} }; } });
+      await u2.check(); await sleep(5200); real.removeAllListeners();
       if (yes) {
+        check("Update: the 'Updating PBCalc' window is started (from 0.1.5 to 0.2.0) ...", shown.length === 1 && shown[0].o.from === "0.1.5" && shown[0].o.to === "0.2.0", JSON.stringify(shown.map((x) => x.o)));
+        check("...and PBCalc quits only ~2 s AFTER it (there is never a moment with nothing on screen)", quitAt && shown.length && quitAt - shown[0].at >= 1800 && quitAt - shown[0].at < 4000, String(quitAt - (shown[0] && shown[0].at)));
         check("Update: the installer runs SILENT and PBCalc is started again afterwards: quitAndInstall(true, true)", qargs && qargs[0] === true && qargs[1] === true, JSON.stringify(qargs));
         check("...and the program knows it is really quitting", state.quitting === true);
       } else {
         check("Cancel: quitAndInstall is not called and the app is not quitting", qargs === null && state.quitting === false, JSON.stringify(qargs));
+        check("Cancel: no 'Updating PBCalc' window is shown", shown.length === 0);
       }
     }
     real.quitAndInstall = origQuit;
+
+    console.log("\n-- START after a Cancel: the main window is held back, no flicker");
+    check("versionCmp: 0.1.10 is newer than 0.1.9, equal versions are equal", updater.versionCmp("0.1.10", "0.1.9") === 1 && updater.versionCmp("0.1.2", "0.1.2") === 0 && updater.versionCmp("0.1.1", "0.2.0") === -1);
+    r = await run("start: nothing postponed", yml("0.2.0"), { startup: true });
+    check("nothing postponed: start-up is not held back (no check, no window)", r.seen.pending === false && !r.seen.progress.length && !r.hits.length, JSON.stringify(r.seen));
+    r = await run("start: postponed but already installed", yml("0.2.0"), { startup: true, declinedBefore: "0.1.5" });
+    check("a postponed version that is not newer than the running one is forgotten, no hold-back", r.seen.pending === false && r.seen.declined.v === "" && !r.seen.progress.length, JSON.stringify(r.seen.declined));
+    r = await run("start: postponed 0.2.0", yml("0.2.0"), { startup: true, declinedBefore: "0.2.0", waitMs: 800 });
+    check("postponed 0.2.0 and the server has it: the start-up is held back and the update is installed (resolves true)", r.seen.pending === true && r.seen.startup === true, JSON.stringify({ p: r.seen.pending, s: r.seen.startup }));
+    check("...WITHOUT asking again (the rule: Cancel = it installs by itself the next time PBCalc is opened)", !r.seen.notified.length && r.seen.installed.join() === "0.2.0", JSON.stringify(r.seen));
+    check("...one 'Updating PBCalc' window, shown with the versions BEFORE anything else (0.1.5 -> 0.2.0), and it stays up (PBCalc is about to quit)", r.seen.progress.length === 1 && r.seen.progress[0].to === "0.2.0" && r.seen.progress[0].from === "0.1.5" && r.seen.progressClosed === 0, JSON.stringify({ p: r.seen.progress, c: r.seen.progressClosed }));
+    r = await run("start: postponed, nothing newer", yml("0.1.5"), { startup: true, declinedBefore: "0.2.0", waitMs: 600 });
+    check("postponed but the server has nothing newer now: start normally (false), nothing installed, the window is closed again", r.seen.startup === false && !r.seen.installed.length && r.seen.progress.length === 1 && r.seen.progressClosed === 1, JSON.stringify(r.seen));
+    r = await run("start: server gives a web page", { "pbcalc.yml": { body: "<html></html>", type: "text/html" } }, { startup: true, declinedBefore: "0.2.0", waitMs: 600 });
+    check("a server that answers wrongly: start normally, window closed, nothing installed", r.seen.startup === false && !r.seen.installed.length && r.seen.progressClosed === 1, JSON.stringify(r.seen));
+    { const t1 = Date.now(); r = await run("start: no file", {}, { startup: true, declinedBefore: "0.2.0", waitMs: 300 });
+      check("no file (404): start normally at once, not after the whole waiting time", r.seen.startup === false && r.seen.progressClosed === 1 && Date.now() - t1 < 4500, String(Date.now() - t1)); }
+    r = await run("start: newer than postponed", yml("0.3.0"), { startup: true, declinedBefore: "0.2.0", waitMs: 600 });
+    check("the server has an even NEWER version than the postponed one: not installed behind the user's back, start normally (the 5 s check asks)", r.seen.startup === false && !r.seen.installed.length && !r.seen.notified.length && r.seen.progressClosed === 1, JSON.stringify(r.seen));
 
     console.log("\n-- nothing to do");
     r = await run("same", yml("0.1.5"));

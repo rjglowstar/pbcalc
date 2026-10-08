@@ -49,7 +49,7 @@ const server = http.createServer((q, r) => {
       state.quitting = false;
       let qargs = null; const orig = real.quitAndInstall; real.quitAndInstall = (a, b) => { qargs = [a, b]; };
       const store = { v: declinedBefore };
-      const u = updater.setup({ feedUrl, delayMs: 3600000, currentVersion: "0.1.5", log: () => {}, declined: { get: () => store.v, set: (v) => { store.v = v; } } });
+      const u = updater.setup({ feedUrl, delayMs: 3600000, currentVersion: "0.1.5", log: () => {}, declined: { get: () => store.v, set: (v) => { store.v = v; } }, showProgress: () => ({ close() {} }) });
       const first = dlg._last();
       await u.check();
       const win = button ? await waitDialog(first) : null;
@@ -66,7 +66,8 @@ const server = http.createServer((q, r) => {
       await sleep(300);
       out.dialogShown = !!(dlg._last() && dlg._last() !== first);
       out.before = { qargs, quitting: state.quitting, declined: store.v };
-      out.closeHook = () => { out.afterClose = { result: u.installIfPending(), qargs }; };
+      // the installer starts 2 s after the "Updating PBCalc" window (updater.js PROGRESS_LEAD_MS), so qargs is read later
+      out.closeHook = () => { out.afterClose = { result: u.installIfPending() }; out.readQargs = () => { out.afterClose.qargs = qargs; }; };
       out.restore = () => { real.removeAllListeners(); real.quitAndInstall = orig; };
       return out;
     }
@@ -80,6 +81,7 @@ const server = http.createServer((q, r) => {
     check("Cancel (real click): the installer is NOT started and the program is not quitting", r.before.qargs === null && r.before.quitting === false, JSON.stringify(r.before));
     check("Cancel: the postponed version is remembered for the next start", r.before.declined === "0.2.0", r.before.declined);
     r.closeHook();
+    await sleep(2600); r.readQargs();
     check("...and when the browser is closed afterwards, the postponed update installs: quitAndInstall(true, true)", r.afterClose.result === true && r.afterClose.qargs && r.afterClose.qargs[0] === true && r.afterClose.qargs[1] === true, JSON.stringify(r.afterClose));
     r.restore();
 

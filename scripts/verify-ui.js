@@ -60,7 +60,7 @@ app.whenReady().then(async () => {
   check("window is frameless with native buttons over the tab strip (titleBarStyle hidden)", win.getBounds().width > 0 && !win.isMenuBarVisible());
   check("starts with one New Tab", state.tabs.length === 1 && (await js('document.querySelectorAll(".tab").length')) === 1);
   check("tab title shown", (await js('document.querySelector(".tab-title").textContent')) === "New Tab");
-  check("omnibox empty with Chrome placeholder on new tab", (await js('document.getElementById("url-input").value')) === "" && /Search Google or type a URL/.test(await js('document.getElementById("url-input").placeholder')));
+  check("omnibox empty with Chrome placeholder on new tab", (await js('document.getElementById("url-input").value')) === "" && /Ask Google or type a URL/.test(await js('document.getElementById("url-input").placeholder')));
   check("toolbar icons are SVG (back/forward/reload/menu)", (await js('["back","forward","reload","menu","tab-search","new-tab"].every(id=>document.getElementById(id).querySelector("svg"))')) === true);
   check("page view starts below the 112px chrome", state.tabs[0].view.getBounds().y === 112);
 

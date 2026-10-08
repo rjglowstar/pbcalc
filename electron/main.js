@@ -96,7 +96,7 @@ const { registerIpcHandlers } = require("./ipc/registerIpcHandlers");
 
 registerIpcHandlers();
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Present as plain Chrome, with NO "Electron" token — WAFs (Akamai on Meesho) 403 the Electron UA.
   // Use the REAL Chromium version so navigator.userAgent, the Sec-Ch-Ua client hints and the sent
   // header all agree (spoofing a lower version is itself detectable). Tabs run in the TAB_PARTITION
@@ -130,6 +130,14 @@ app.whenReady().then(() => {
   // the installer's two answers (calculator start / default browser): read once at the first start after an install (installed copy only)
   let installAnswers = null;
   if (app.isPackaged) { try { installAnswers = require("./installChoices").apply(); } catch (_) {} }
+  // In-app updates (electron/updater.js): the installed program only. Set up BEFORE the window exists, because of the next lines: when the user
+  // pressed Cancel on the update popup in an earlier session the update installs now, at start - and the browser window must not appear first
+  // and vanish a moment later (that flicker was the bug): an "Updating PBCalc" window (its own process) is shown instead, and PBCalc quits into the
+  // installer. When there is nothing to install (server not reachable, no newer version) it is closed again and PBCalc starts as usual.
+  let updatingAtStart = false;
+  if (app.isPackaged && process.platform === "win32") { try { require("./updater").setup(); } catch (_) {} }
+  if (app.isPackaged && process.platform === "win32") { try { const up = require("./updater"); if (up.startupPending()) updatingAtStart = await up.startupInstall(); } catch (_) {} }
+  if (updatingAtStart) return;
   createMainWindow();
   // PBCalc started BY a link / file from another program (Windows "Default apps"): open it as the first tab, once the
   // window has its first tab (mainWindow creates that on "ready-to-show").
@@ -144,8 +152,6 @@ app.whenReady().then(() => {
       // by itself, so it does not: PBCalc is only LISTED there, and can be chosen later in Settings > Default apps > Web browser.)
     }, 5000).unref();
   }
-  // In-app updates (electron/updater.js): the installed program only, a few seconds after start. Never for a development copy.
-  if (app.isPackaged && process.platform === "win32") { try { require("./updater").setup(); } catch (_) {} }
   // Build the "download started" animation view a moment after startup, off the critical path, so the
   // FIRST download's flight does not wait for a page load (play() makes it on demand if one comes sooner).
   setTimeout(() => { try { require("./dlanimation").warm(); } catch (_) {} }, 2000).unref();

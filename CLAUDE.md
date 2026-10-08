@@ -498,7 +498,7 @@ Two things define this browser against every mainstream one:
   so outside clicks close them; the find bubble is only its own small rect so the page stays
   clickable. Created on open, destroyed on close. `popup:open` is accepted from the shell only,
   `popup:action` from the popup only.
-- **New tab page** (`renderer/newtab/`): local page (logo + search box), no tiles, no history.
+- **New tab page** (`renderer/newtab/`): local page (logo + search box), no tiles, no history. The address bar's and the page's box say **"Ask Google or type a URL"** (what Chrome 15x shows; it was "Search Google or type a URL"; `verify-ui.js` checks it).
   Address bar shows empty for it.
 - **Browser essentials** (`tabManager.js`, `shortcuts.js`, `contextMenu.js`, `pages/errorPage.js`):
   - Shortcuts live in one `before-input-event` handler attached to the shell, every tab and popups (Ctrl+T/W/L/R/F/D/P/J/Tab/1-9, Ctrl+Shift+A/B/I, Alt+←/→, F5, F11, F12, Ctrl+=/−/0).
@@ -979,7 +979,7 @@ the 5-press code rely on (`.c-tab`, `.c-update`, `.c-sum`, `.c-card`, `.c-wheel*
 now has 81 checks (layout fills the window, tabs, Update Price stamp, every settings control, narrow window); its real-mouse wheel/drag checks can fail once in a while when someone moves the real
 mouse over the test window (re-run).
 
-## In-app updates (`electron/updater.js`, dialog `electron/updateDialog.js`; tests `verify-updater.js` 28, `verify-updater-popup.js` 10, `verify-update-dialog.js` 23, installer part of `verify-uninstall.js`)
+## In-app updates (`electron/updater.js`, dialog `electron/updateDialog.js`; tests `verify-updater.js` 50, `verify-updater-popup.js` 10, `verify-update-dialog.js` 23, installer part of `verify-uninstall.js`)
 Built like the ERP shell (`PBERP-EXE - Barcode/electron/updater/autoUpdater.js`: electron-updater + a plain web folder). **The admin puts the THREE files that
 `npm run dist` writes into `release/` on the server: `pbcalc.yml`, `PBCalc Setup <version>.exe`, `PBCalc Setup <version>.exe.blockmap`** (names must stay exactly as
 built, spaces included). The address is `package.json -> build.publish` (generic, `channel: "pbcalc"`; now the owner's test server `http://192.168.0.8:9995/assets/`)
@@ -1010,6 +1010,28 @@ and is baked into the installed app as `resources/app-update.yml`. A release = r
   with `autoDownload` a corrupt download rejects `downloadPromise` as well as the "error" event - the promise is caught; the modal popup is listed by UI Automation INSIDE the main window
   with `CCPushButton` buttons (not as a top-level window, not `ControlType.Button`); dev runs need `dev-app-update.yml` next to the script (the tests write and delete it); build the
   test installers with a local `publish.url` (`127.0.0.1`) and RESTORE package.json (version + production URL), and clear `release/` of them before the real build.
+- **"Updating PBCalc" window - the user must always see that the update is working** (`electron/updateProgress.js`, tests `verify-update-progress.js` 15 + `verify-update-flow.js` 10).
+  ROOT CAUSE of "PBCalc closes, opens again and I have no idea whether it works": the update installs SILENTLY, so from the quit until the installer starts PBCalc again NOTHING was
+  on screen (no window of ours - the program is gone - and a silent installer has none). The same gap was the FLICKER at the start after Cancel (see below). A window can only outlive
+  PBCalc if it belongs to ANOTHER process: a small Windows PowerShell + WinForms/GDI+ window (powershell.exe ships with Windows) with PBCalc's update-dialog look (blue disc with the
+  update arrow and pulsing rings, v0.1.2 -> v0.1.3 chips, light / dark like the browser) and three steps read from the REAL processes: *Closing PBCalc* (until the old PBCalc process
+  is gone) -> *Installing the new version* (while the installer process "PBCalc Setup*" runs) -> *Opening PBCalc again*; all three ticked, then it closes by itself when a NEW
+  "PBCalc" process with a window exists (the old one's id is passed in). If PBCalc does not come back (installer gone + 40 s, or 5 min) it says "The update did not finish" with a Close
+  button instead of vanishing. It is shown by `updater.install()` 2 s BEFORE `quitAndInstall` (`PROGRESS_LEAD_MS`), so there is no empty moment (measured by the flow test: window on
+  screen from ~0.6 s after Update, no sample without it between the old app's exit and the new app's window), and the taskbar button shows "busy" meanwhile.
+  **Traps found by measuring:** (1) a window started as an ordinary child process DIED with PBCalc - exactly when it is needed (also with `detached`; a detached console-less powershell ends at
+  once) -> it is started through `cmd /c start "" /b powershell ...` and survives; because of that PBCalc does not know its pid: the window writes `<script>.pid` and closes when
+  `<script>.stop` appears (`close()`); (2) `windowsHide:true` hides the first window the child shows (no window for 27 s) -> the form calls ShowWindow a second time in `OnShown`;
+  (3) `-EncodedCommand` is over the 32 KB command-line limit with the C# in it -> the script is a temp FILE that deletes itself; (4) the failure screen must keep checking the stop file.
+  Tests give `opts.showProgress` / `opts.progressOptions` (other process names) so a PBCalc the owner has open never matters. **Not covered:** the real NSIS installer replacing the real
+  files (it would replace the PBCalc installed on this PC): the flow test uses stand-ins for the installer and the new PBCalc and the real updater, download and window.
+- **START after Cancel: no flicker** (`updater.startupPending()` / `startupInstall()`, called by `main.js` BEFORE `createMainWindow()`). Cancel saves the version (`updateDeclined`); the next
+  start used to open the browser, and ~5 s later the 5 s check installed it and the window vanished (flicker). Now, when a newer postponed version is waiting, the main window is NOT
+  created: the same "Updating PBCalc" window is shown, the server is asked (up to 6 s; a running download up to 10 min), and if the postponed version is there it installs at once WITHOUT asking
+  again (Cancel = it installs by itself the next time PBCalc is opened) and PBCalc quits without ever having shown a window. If there is nothing to install (server not reachable, no newer
+  version, an error) the window is closed again and PBCalc starts as usual (the 5 s check still runs). A NEWER version than the postponed one is not installed behind the user's back: PBCalc starts
+  and the usual popup asks. A postponed version that is already installed (quit-time install) is forgotten. Test: the "START after a Cancel" block of `verify-updater.js` and case 3 of
+  `verify-update-flow.js` (the child process reports `BrowserWindow.getAllWindows().length === 0` at the answer and at the quit).
 - **Checks happen at START only, plus the Settings button.** There is no timer: the one automatic check runs 5 s after the window opens. **Settings > Privacy > Version has a "Check for update" button**
   (`updater.checkNow`, IPC `settings:check-update` from the settings page only, `settingsAPI.checkUpdate`): the same check at once. A newer version is downloaded and PBCalc's update popup comes when it is ready
   (a version declined earlier is asked AGAIN on a button press instead of being installed at once - `manual` flag); no newer version, a server error or a web page instead of `pbcalc.yml` = NOTHING is shown (owner's

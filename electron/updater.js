@@ -25,6 +25,22 @@ const settings = require("./settings");
 //    file - measured on the test server) is an error that is logged and ignored: nothing is shown, the program just starts as usual.
 const CHANNEL = "pbcalc";
 const CHECK_DELAY_MS = 5000;
+// The silent installer shows nothing, and PBCalc is gone while it works: electron/updateProgress.js puts an "Updating PBCalc" window on screen
+// (a separate process, so it survives the quit). It is started PROGRESS_LEAD_MS before PBCalc quits, so there is never a moment with nothing.
+const PROGRESS_LEAD_MS = 2000;
+// At START with an update the user postponed (Cancel): the main window is NOT created until we know (no flicker: the browser used to appear,
+// then vanish 5 s later when the update installed). Up to STARTUP_WAIT_MS for the server to answer; once a download is running up to
+// STARTUP_DOWNLOAD_MAX_MS; if there is nothing to install (server not reachable, no newer version) PBCalc simply starts as usual.
+const STARTUP_WAIT_MS = 6000;
+const STARTUP_DOWNLOAD_MAX_MS = 10 * 60 * 1000;
+
+// "0.1.10" > "0.1.9": numeric comparison of x.y.z (a missing or odd part counts as 0)
+function versionCmp(a, b) {
+  const n = (v) => String(v || "").split("-")[0].split(".").map((x) => parseInt(x, 10) || 0);
+  const x = n(a), y = n(b);
+  for (let i = 0; i < Math.max(x.length, y.length, 3); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
+  return 0;
+}
 
 const TITLE = "PBCalc update";
 const detailFor = () =>
@@ -50,15 +66,23 @@ function setup(opts = {}) {
   if (opts.currentVersion) autoUpdater.currentVersion = opts.currentVersion;
 
   let announced = false;
+  let progress = null;                          // the "Updating PBCalc" window (updateProgress.js), once an update is really starting
+  let startup = null;                           // { finish(handled) } while the main window is held back at start (startupInstall)
   let manual = false;                           // the user pressed "Check for update" in Settings: this answer is asked for, never skipped
   let pending = null;                           // a downloaded update the user postponed with Cancel
+
+  function startProgress(info) {
+    if (!progress) progress = (opts.showProgress || require("./updateProgress").show)({ from: opts.currentVersion || app.getVersion(), to: info && info.version, ...(opts.progressOptions || {}) });   // progressOptions: tests only (other process names)
+    try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.setProgressBar(1, { mode: "indeterminate" }); } catch (_) {}   // taskbar button: busy
+  }
 
   function install(info) {
     state.quitting = true;                      // a real quit: closing the window must not return to the calculator (calcMode)
     try { declined.set(""); } catch (_) {}
+    if (!opts.install || opts.showProgress) startProgress(info);   // (tests that stub the installer see no window unless they stub it too)
     if (opts.install) return opts.install(info);
-    // SILENT, see the header: keeps the install where it is and PBCalc starts again by itself (isForceRunAfter)
-    autoUpdater.quitAndInstall(true, true);
+    // SILENT, see the header: keeps the install where it is and PBCalc starts again by itself (isForceRunAfter). The window above is already up.
+    setTimeout(() => { try { autoUpdater.quitAndInstall(true, true); } catch (_) {} }, progress ? PROGRESS_LEAD_MS : 0);
   }
 
   // the modal popup; true = Update, false = Cancel / Esc / anything else (never forces).
@@ -75,13 +99,25 @@ function setup(opts = {}) {
   });
 
   autoUpdater.on("checking-for-update", () => log("checking"));
-  autoUpdater.on("update-available", (info) => log("update available, downloading quietly: " + info.version));
-  autoUpdater.on("update-not-available", (info) => log("up to date (" + info.version + ")"));
+  autoUpdater.on("update-available", (info) => {
+    log("update available, downloading quietly: " + info.version);
+    if (startup) startup.longer();
+  });
+  autoUpdater.on("update-not-available", (info) => { log("up to date (" + info.version + ")"); if (startup) startup.finish(false); });
   autoUpdater.on("download-progress", ({ percent }) => {
     if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.setProgressBar(percent / 100);
   });
   autoUpdater.on("update-downloaded", async (info) => {
     if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.setProgressBar(-1);
+    if (startup) {
+      // PBCalc is being started and the main window is held back (startupInstall): only the version the user postponed is installed now, with
+      // no question (the rule: Cancel = it installs by itself the next time PBCalc is opened). A NEWER version than that is not asked here
+      // (there is no window to ask from): PBCalc starts normally and the 5 s check asks as it always does (the download is cached).
+      let was = ""; try { was = declined.get(); } catch (_) {}
+      const s = startup;
+      if (was && was === info.version) { log("declined earlier, installing at start"); announced = true; install(info); return s.finish(true); }
+      return s.finish(false);
+    }
     if (announced) return;
     announced = true;
     log("downloaded " + info.version);
@@ -96,7 +132,7 @@ function setup(opts = {}) {
     try { declined.set(info.version); } catch (_) {}
     log("postponed by the user: installs when PBCalc is closed");
   });
-  autoUpdater.on("error", (err) => log("error (ignored): " + (err && err.message ? err.message.split("\n")[0] : err)));
+  autoUpdater.on("error", (err) => { log("error (ignored): " + (err && err.message ? err.message.split("\n")[0] : err)); if (startup) startup.finish(false); });
 
   // With autoDownload electron-updater starts the download itself and hands back its promise; a damaged / interrupted download rejects it
   // in addition to the "error" event above, and a rejection nobody handles can end as an error dialog in the main process (measured with a
@@ -110,14 +146,42 @@ function setup(opts = {}) {
   // Settings > Version > "Check for update": the same check, now. A newer version is downloaded and the usual popup comes when it is ready
   // (asked again even if it was declined before); no newer version = nothing at all is shown. Resolves when the CHECK is over, not the download.
   const checkNow = () => { manual = true; announced = false; return check(); };
-  current = { autoUpdater, check, checkNow, installIfPending };
+  // An update the user postponed (Cancel) is waiting: its version is saved, and it is newer than the running one.
+  const startupPending = () => {
+    let was = ""; try { was = declined.get(); } catch (_) {}
+    if (!was) return false;
+    if (versionCmp(was, opts.currentVersion || app.getVersion()) > 0) return true;
+    try { declined.set(""); } catch (_) {}      // already installed (by the quit-time install) or no longer relevant
+    return false;
+  };
+  // main.js calls this BEFORE it creates the main window when startupPending(). Resolves true = the update is being installed (PBCalc is about
+  // to quit, the progress window stays up; do NOT create the window), false = nothing to install now (the progress window is closed; start as usual).
+  const startupInstall = () => new Promise((resolve) => {
+    let timer = null, over = false;
+    const finish = (handled) => {
+      if (over) return;
+      over = true; clearTimeout(timer); startup = null;
+      if (!handled && progress) { try { progress.close(); } catch (_) {} progress = null; }
+      resolve(handled);
+    };
+    startup = { finish, longer: () => { clearTimeout(timer); timer = setTimeout(() => finish(false), STARTUP_DOWNLOAD_MAX_MS); } };
+    let was = ""; try { was = declined.get(); } catch (_) {}
+    startProgress({ version: was });                // the postponed version is known already: the window shows it
+    timer = setTimeout(() => finish(false), opts.startupWaitMs || STARTUP_WAIT_MS);
+    check();                                     // the events above decide; a failure there (check swallows it) is the "error" event
+  });
+  current = { autoUpdater, check, checkNow, installIfPending, startupPending, startupInstall };
   return current;
 }
 
 // calcMode.returnToCalc: the browser is closed -> a postponed update installs now
 function installIfPending() { return current ? current.installIfPending() : false; }
 
+// at start: has the user postponed an update (Cancel) that is still waiting? / hold the main window and install it (see updater setup)
+function startupPending() { return current ? current.startupPending() : false; }
+function startupInstall() { return current ? current.startupInstall() : Promise.resolve(false); }
+
 // Settings button; false when updates are not running (a development copy)
 async function checkNow() { if (!current) return false; await current.checkNow(); return true; }
 
-module.exports = { setup, installIfPending, checkNow, CHANNEL, TITLE, detailFor };
+module.exports = { setup, installIfPending, checkNow, startupPending, startupInstall, versionCmp, CHANNEL, TITLE, detailFor };
