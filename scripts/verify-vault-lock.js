@@ -65,6 +65,20 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     check("the lock file is on the keep list (not wiped at exit)", require("../electron/privacy").KEEP.has("vault-lock.json"));
     lock._reset(); try { fs.unlinkSync(lockFile); } catch (_) {}
 
+    console.log("\n-- the MASTER password (Settings > change password: the user's own old password, or else the master one)");
+    check("master + default password still set: the master works as the OLD password", lock.change("1151", "2468", "2468").ok === true && lock.verify("2468").ok === true);
+    check("...the user's previous password (1234) is gone, the new one works", lock.verify("1234").ok === false && lock.verify("2468").ok === true);
+    check("the user's own current password still works as the old one", lock.change("2468", "1357", "1357").ok === true);
+    check("the master password is NOT a way to fill saved logins (verify without the change form refuses it)", lock.verify("1151").ok === false && lock.verify("1357").ok === true);
+    check("a wrong old password is still refused when it is neither", lock.change("0000", "1111", "1111").error === "wrong-old");
+    check("the master password is not stored in clear in the lock file", !fs.readFileSync(lockFile, "utf8").includes("1151"));
+    lock._reset(); try { fs.unlinkSync(lockFile); } catch (_) {}
+    for (let i = 0; i < 5; i++) lock.verify("9999");
+    check("while locked out the master password is refused too (same lockout, no way round the guess limit)", lock.change("1151", "2468", "2468").error === "locked");
+    lock._reset(); try { fs.unlinkSync(lockFile); } catch (_) {}
+    check("the master password with a new one equal to it / bad format follows the same rules", lock.change("1151", "12a4", "12a4").error === "bad-format" && lock.change("1151", "2468", "2469").error === "mismatch");
+    lock._reset(); try { fs.unlinkSync(lockFile); } catch (_) {}
+
     console.log("\n-- one-time grants");
     grants.grant(7, "https://a.test", "u");
     check("a grant works once, for exactly that page + origin + username", grants.take(7, "https://a.test", "u") === true && grants.take(7, "https://a.test", "u") === false);

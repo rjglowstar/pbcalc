@@ -148,6 +148,7 @@ function createTab(url, opts = {}) {
   if (!state.mainWindow || state.mainWindow.isDestroyed()) return getTabState();
   if (state.tabs.length >= MAX_TABS) return getTabState();
   if (state.restricted && !opts.allowRestricted) return getTabState();
+  if (state.calcMode && !opts.fromCalc) return getTabState();   // the calculator screen is up: no tab may open behind it (calcMode.leave opens the first one)
 
   const view = opts.webContents
     ? new BrowserView({ webContents: opts.webContents })
@@ -673,6 +674,9 @@ function closePageEndedTab(tab) {
   closeTab(tab.id, { pageGone: true });
   if (wasActive && opener && state.tabs.includes(opener)) switchTab(opener.id);
 }
+
+// the Ctrl+Shift+T list is forgotten when the browser closes back to the calculator (calcMode.returnToCalc)
+function forgetClosedTabs() { closedTabsHistory.length = 0; }
 
 function closeTab(id, opts = {}) {
   const idx = state.tabs.findIndex((t) => t.id === Number(id));
@@ -1398,6 +1402,7 @@ module.exports = {
   toggleBookmarkMode,
   permissionRequestHandler,
   openLocalFile,
+  forgetClosedTabs,
   chromeHeight,
   siteKind,
   setCapture,

@@ -83,6 +83,9 @@ function registerIpcHandlers() {
   // Opening comes from the shell chrome only; the action channel from the popup page only.
   const fromShell = (e) => !!state.mainWindow && e.sender === state.mainWindow.webContents;
   // Right-click on the reload button (the menu itself only exists while DevTools is open: tabManager.reloadMenu).
+  // the calculator screen (calcMode.js): which screen is up, and the presses of its "+" button (counted there, shell page only)
+  ipcMain.handle("calc:get-mode", (e) => (fromShell(e) ? !!state.calcMode : false));
+  ipcMain.on("calc:plus", (e) => { if (fromShell(e) && state.calcMode) require("../calcMode").onPlus(); });
   ipcMain.handle("tabs:reload-menu", (e, rect) => (fromShell(e) ? tabManager.reloadMenu(rect) : false));
   ipcMain.on("popup:open", (e, kind, rect) => {
     if (!fromShell(e)) return;
@@ -127,6 +130,11 @@ function registerIpcHandlers() {
   ipcMain.handle("settings:get", (e) => {
     if (!fromSettingsPage(e)) return null;
     return tabManager.settingsSnapshot();
+  });
+  // Settings > Version > "Check for update" (see updater.checkNow): answers nothing about the result - a newer version shows the update popup.
+  ipcMain.handle("settings:check-update", async (e) => {
+    if (!fromSettingsPage(e)) return false;
+    try { return await require("../updater").checkNow(); } catch (_) { return false; }
   });
   ipcMain.on("settings:set", (e, key, value) => {
     if (!fromSettingsPage(e)) return;

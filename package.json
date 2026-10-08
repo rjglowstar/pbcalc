@@ -1,6 +1,6 @@
 {
   "name": "pbcalc",
-  "version": "0.1.5",
+  "version": "0.1.1",
   "description": "PBCalc Secure Browser",
   "author": "PBCalc",
   "main": "electron/main.js",
@@ -39,7 +39,13 @@
       "!.dev-userdata/**/*"
     ],
     "extraResources": [
-      { "from": "assets/file-icons", "to": "file-icons", "filter": ["*.ico"] }
+      {
+        "from": "assets/file-icons",
+        "to": "file-icons",
+        "filter": [
+          "*.ico"
+        ]
+      }
     ],
     "asar": true,
     "win": {
@@ -55,6 +61,12 @@
       "uninstallerIcon": "assets/icon.ico",
       "installerHeaderIcon": "assets/icon.ico",
       "include": "installer/installer.nsh"
-    }
+    },
+    "publish": [
+      { "provider": "generic", "url": "http://192.168.0.8:9995/assets/", "channel": "pbcalc" }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

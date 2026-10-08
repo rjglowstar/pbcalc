@@ -23,6 +23,11 @@ function load() {
       if (typeof parsed.showBookmarksBar === "boolean") cache.showBookmarksBar = parsed.showBookmarksBar;
       if (["system", "light", "dark"].includes(parsed.themeMode)) cache.themeMode = parsed.themeMode;
       if (typeof parsed.searchSuggestions === "boolean") cache.searchSuggestions = parsed.searchSuggestions;
+      // set once by the installer's answer (installChoices.js): start on the calculator screen. No switch for it in Settings on purpose.
+      if (typeof parsed.calculatorStart === "boolean") cache.calculatorStart = parsed.calculatorStart;
+      if (typeof parsed.installChoicesStamp === "number") cache.installChoicesStamp = parsed.installChoicesStamp;
+      // the version the user said "Cancel" to in the update popup: the next start installs it without asking (electron/updater.js)
+      if (typeof parsed.updateDeclined === "string") cache.updateDeclined = parsed.updateDeclined.slice(0, 40);
       const dl = parsed.downloads;
       if (dl && typeof dl === "object") {
         cache.downloads = { dir: typeof dl.dir === "string" ? dl.dir : "", ask: dl.ask === true };

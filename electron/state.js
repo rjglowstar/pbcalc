@@ -24,4 +24,9 @@ module.exports = {
   // Restricted Mode admin session: id of the bookmark-manager tab opened after a PIN check (null =
   // none). Only that tab may edit the preset list; closing it ends the session.
   adminTabId: null,
+  // The calculator screen is showing instead of the browser (electron/calcMode.js); returningToCalc = the browser is closing back to it;
+  // quitting = the app is really quitting (before-quit), so closing the window must not return to the calculator.
+  calcMode: false,
+  returningToCalc: false,
+  quitting: false,
 };

@@ -49,6 +49,14 @@
     if (s) render(s);
   });
 
+  // Version > Check for update: nothing is reported back; a newer version shows the update popup by itself.
+  const checkBtn = document.getElementById("check-update");
+  checkBtn.addEventListener("click", async () => {
+    checkBtn.disabled = true;
+    try { await api.checkUpdate(); } catch (_) {}
+    checkBtn.disabled = false;
+  });
+
   suggestSwitch.addEventListener("click", () => {
     const next = suggestSwitch.getAttribute("aria-checked") !== "true";
     api.set("searchSuggestions", next);

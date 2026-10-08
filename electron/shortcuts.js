@@ -69,6 +69,7 @@ const NO_AUTO_REPEAT = new Set([
 
 function handleInput(event, input) {
   if (input.type !== "keyDown") return;
+  if (state.calcMode) return;   // the calculator screen is up: no browser shortcut may act (Ctrl+T would open a tab behind it)
   if (secretSequence(event, input)) return;
   const ctrl = input.control || input.meta;
   const { key, shift, alt } = input;

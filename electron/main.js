@@ -127,6 +127,9 @@ app.whenReady().then(() => {
 
   warnIfDataFolderUnwritable();
   require("./downloads/downloadManager").init();
+  // the installer's two answers (calculator start / default browser): read once at the first start after an install (installed copy only)
+  let installAnswers = null;
+  if (app.isPackaged) { try { installAnswers = require("./installChoices").apply(); } catch (_) {} }
   createMainWindow();
   // PBCalc started BY a link / file from another program (Windows "Default apps"): open it as the first tab, once the
   // window has its first tab (mainWindow creates that on "ready-to-show").
@@ -135,8 +138,14 @@ app.whenReady().then(() => {
   // The installed program lists itself in Windows' Default apps (per user, no admin). Never for a development copy: it
   // would register Electron's own exe. Off the critical path; failures are ignored (nothing depends on it).
   if (app.isPackaged && process.platform === "win32") {
-    setTimeout(async () => { try { const db = require("./defaultBrowser"); await db.register(process.execPath); await db.repairOpenWithIcons(process.execPath); } catch (_) {} }, 5000).unref();   // async: reg.exe runs beside the app, never on its thread
+    setTimeout(async () => {
+      try { const db = require("./defaultBrowser"); await db.register(process.execPath); await db.repairOpenWithIcons(process.execPath); } catch (_) {}   // async: reg.exe runs beside the app, never on its thread
+      // (The installer's "default browser" answer used to open Windows' Default apps page here. The owner did not want a Settings window to pop up
+      // by itself, so it does not: PBCalc is only LISTED there, and can be chosen later in Settings > Default apps > Web browser.)
+    }, 5000).unref();
   }
+  // In-app updates (electron/updater.js): the installed program only, a few seconds after start. Never for a development copy.
+  if (app.isPackaged && process.platform === "win32") { try { require("./updater").setup(); } catch (_) {} }
   // Build the "download started" animation view a moment after startup, off the critical path, so the
   // FIRST download's flight does not wait for a page load (play() makes it on demand if one comes sooner).
   setTimeout(() => { try { require("./dlanimation").warm(); } catch (_) {} }, 2000).unref();

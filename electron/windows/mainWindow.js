@@ -6,6 +6,7 @@ const { TAB_STRIP_HEIGHT } = require("../constants");
 const theme = require("../theme");
 const settings = require("../settings");
 const popup = require("../popup");
+const calcMode = require("../calcMode");
 
 function createMainWindow() {
   state.bookmarksBarVisible = settings.get("showBookmarksBar");
@@ -54,7 +55,9 @@ function createMainWindow() {
     // show avoids the small window appearing for a frame and then jumping.
     state.mainWindow.maximize();
     state.mainWindow.show();
-    createTab(undefined, { allowRestricted: true }); // opens on the new-tab page (or the Restricted home)
+    // "Start on the calculator screen" (the installer's answer): the calculator first, the browser only when its "+" is pressed 5 times.
+    if (calcMode.enabled()) calcMode.enter();
+    else createTab(undefined, { allowRestricted: true }); // opens on the new-tab page (or the Restricted home)
     // The "maximize" event fires before this first tab exists, and the content size is still
     // settling while the tab view is first positioned — without this the page sat 2px short of the
     // bottom of a maximized window. Re-apply once the window has settled.
@@ -86,6 +89,11 @@ function createMainWindow() {
     } catch (_) {}
     resizeActiveView();
   });
+
+  // With the calculator start on, closing the browser (the X or the last tab) returns to the calculator instead of quitting.
+  calcMode.install();
+  state.mainWindow.on("close", (e) => calcMode.onWindowClose(e));
+  state.mainWindow.on("session-end", () => { state.quitting = true; });   // Windows is shutting down / logging off: never hold that up
 
   state.mainWindow.on("closed", () => {
     state.mainWindow = null;

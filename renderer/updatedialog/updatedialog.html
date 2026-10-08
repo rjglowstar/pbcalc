@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;" />
+    <title>PBCalc update</title>
+    <link rel="stylesheet" href="../common/theme.css" />
+    <link rel="stylesheet" href="./updatedialog.css" />
+  </head>
+  <body>
+    <main class="dlg" role="dialog" aria-labelledby="ud-title" aria-describedby="ud-sub" tabindex="-1">
+      <header class="hero">
+        <div class="badge" aria-hidden="true">
+          <span class="ring"></span><span class="ring r2"></span>
+          <span class="disc">
+            <svg viewBox="0 0 24 24"><path d="M11 3h2v8.2l2.6-2.6L17 10l-5 5-5-5 1.4-1.4L11 11.2V3zM5 18h14v2H5z"/></svg>
+          </span>
+        </div>
+        <h1 id="ud-title">Update available</h1>
+        <p id="ud-sub" class="sub">PBCalc <b id="ud-to">a new version</b> is ready to install.</p>
+        <div class="versions" id="ud-versions" hidden>
+          <span class="chip" id="ud-from"></span>
+          <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
+          <span class="chip new" id="ud-to2"></span>
+        </div>
+      </header>
+
+      <ul class="facts">
+        <li>
+          <span class="ico"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></span>
+          <div><b>PBCalc restarts</b><span>to finish the update.</span></div>
+        </li>
+        <li>
+          <span class="ico warn"><svg viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h10v4h8v10z"/></svg></span>
+          <div><b>All open tabs are closed</b><span>and are not restored.</span></div>
+        </li>
+        <li>
+          <span class="ico ok"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>
+          <div><b>It opens again by itself</b><span>when the update is done.</span></div>
+        </li>
+      </ul>
+
+      <p class="note">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+        <span>Can't close your work right now? Press <b>Cancel</b>. The update installs automatically the next time you close or open PBCalc.</span>
+      </p>
+
+      <footer class="actions">
+        <button id="ud-cancel" class="btn" type="button">Cancel</button>
+        <button id="ud-update" class="btn primary" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          <span>Update</span>
+        </button>
+      </footer>
+    </main>
+    <script src="./updatedialog.js"></script>
+  </body>
+</html>

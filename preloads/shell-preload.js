@@ -9,6 +9,13 @@ const on = (channel, callback) => {
   return () => ipcRenderer.removeListener(channel, listener);
 };
 
+// The calculator screen (renderer/calc): asks whether it is showing, and reports presses of its gray "+" button (main counts them).
+contextBridge.exposeInMainWorld("calcAPI", {
+  getMode: () => ipcRenderer.invoke("calc:get-mode"),
+  onMode: (cb) => on("calc:mode", cb),
+  plus: () => ipcRenderer.send("calc:plus"),
+});
+
 contextBridge.exposeInMainWorld("browserAPI", {
   // Tabs
   getState: () => ipcRenderer.invoke("tabs:get-state"),

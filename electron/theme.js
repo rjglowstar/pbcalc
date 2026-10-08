@@ -9,22 +9,37 @@ const PALETTE = {
   dark: { color: "#1f2020", symbolColor: "#e3e3e3" },
 };
 
+// The calculator screen (calcMode.js) is black around its iPad-shaped stage, so the window buttons are white on black while it shows.
+const CALC = { color: "#000000", symbolColor: "#ffffff" };
+let calc = false;
+const watched = [];
+
 function current() {
   return nativeTheme.shouldUseDarkColors ? "dark" : "light";
 }
 
+function palette() {
+  return calc ? CALC : PALETTE[current()];
+}
+
 function overlayOptions(height) {
-  return { ...PALETTE[current()], height };
+  return { ...palette(), height };
 }
 
 function watch(win, height) {
   const apply = () => {
     if (win.isDestroyed()) return;
     try { win.setTitleBarOverlay(overlayOptions(height)); } catch (_) {}
-    try { win.setBackgroundColor(PALETTE[current()].color); } catch (_) {}
+    try { win.setBackgroundColor(palette().color); } catch (_) {}
   };
   nativeTheme.on("updated", apply);
-  win.on("closed", () => nativeTheme.removeListener("updated", apply));
+  watched.push({ win, apply });
+  win.on("closed", () => { nativeTheme.removeListener("updated", apply); const i = watched.findIndex((w) => w.win === win); if (i >= 0) watched.splice(i, 1); });
 }
 
-module.exports = { overlayOptions, watch, current };
+function setCalc(on, win) {
+  calc = !!on;
+  watched.filter((w) => !win || w.win === win).forEach((w) => w.apply());
+}
+
+module.exports = { overlayOptions, watch, current, setCalc };

@@ -194,6 +194,7 @@ contextBridge.exposeInMainWorld("vaultAPI", {
 if (location.protocol === "file:" && /\/renderer\/settings\/settings\.html$/.test(location.pathname)) {
   contextBridge.exposeInMainWorld("settingsAPI", {
     chooseDownloadDir: () => ipcRenderer.invoke("settings:choose-download-dir"),
+    checkUpdate: () => ipcRenderer.invoke("settings:check-update"),
     get: () => ipcRenderer.invoke("settings:get"),
     onChanged: (cb) => { ipcRenderer.on("settings:changed", (_e, snap) => cb(snap)); },
     set: (key, value) => ipcRenderer.send("settings:set", key, value),

@@ -429,6 +429,11 @@ Two things define this browser against every mainstream one:
   refuses a page that is not the active tab. **Limit:** application-level, not OS security: someone with the user's Windows
   session and the files can delete `vault-lock.json` (back to 1234) or read the vault through DPAPI. Test:
   `scripts/verify-vault-lock.js` (55; negative controls: removing the grant check or the trusted-click check fails the matching
+  **MASTER password (owner's request):** in Settings > Saved passwords > Change password the "Old password" box accepts the user's own current password OR the owner's
+  master one (`vaultLock.change` -> `verify(pw, {allowMaster:true})`; stored only as a salted scrypt hash, `MASTER_SALT`/`MASTER_HASH`), so a user who forgot theirs can set a new one. It works ONLY in
+  that form - never to fill a saved login - and a wrong try counts toward the same lockout; while locked out it is refused too (otherwise the 5-try limit could be bypassed by guessing it).
+  Limits: it is 4 digits in the program, so it is a convenience for the owner, not strong security (the file is obfuscated, not secret); it changes the fill password, it does not reveal the old one.
+  Tests: the MASTER block of `verify-vault-lock.js` (72).
   checks). `verify-features.js` raises the dialog from the main process because its window is never shown (real mouse input is
   dropped there).
 - **Common notification (toast)** for PBCalc's own pages: `renderer/common/toast.js` + the `.pb-toast` block at the end of `theme.css`;
@@ -925,6 +930,90 @@ exposed to page scripts and unused by PBCalc itself - passwords are protected by
 **Never run `reg.exe` / `powershell.exe` with `execFileSync` (or any sync call) in the main process.** `defaultBrowser.js` did, five seconds after every start of the installed copy: the repair pass blocked the main thread 4.4 s and the registration 1.8 s, and Windows showed "PBCalc (Not responding)" (Event Log: `AppHangTransient`, PBCalc.exe) - the owner thought the 3-click bookmark switch caused it, but that switch takes 4 ms (measured); it only coincided. All of `defaultBrowser.js` is now async (at most 8 `reg.exe` at once; the repair pass took 1.2 s and the longest event-loop gap was 44 ms) and `verify-default-browser.js` fails if the loop stalls over 250 ms. A dev copy never runs this code (`app.isPackaged`), so such a freeze only shows in the INSTALLED app.
 
 **Uninstall** (`installer/installer.nsh`, `scripts/verify-uninstall.js`, 15 checks): ALWAYS removes PBCalc's Windows registration (Default apps entries, every `PBCalc*` ProgId, `ApplicationsPBCalc.exe`, and - by a PowerShell pass - any Windows-made "Opens with" ProgId whose open command is in this install, plus every `DefaultIcon` pointing into it). Then it ASKS "Also delete all of your PBCalc data?" (Yes/No, default No): Yes removes `%LOCALAPPDATA%PBCalc` and the fallback `%APPDATA%PBCalc` (saved passwords, the fill password, bookmarks, settings, cache, cookies, crash reports) and nothing else; downloaded files are never touched. A silent uninstall (`/S`, which is also how an update replaces the old version) never asks and never deletes data. The NSIS script itself could not be run end to end without uninstalling the owner's real PBCalc: it is compiled by `npm run dist`, its structure is checked, and the PowerShell command is executed for real against a made-up registry area.
+
+## Installer password, setup questions, and the calculator screen (owner's spec 2026-10-08)
+**Installer** (`installer/installer.nsh`; read `scripts/verify-calc-*.js` etc. below): after the install-folder page the installer asks for the
+installation password (**3 tries, then it quits and nothing is installed**), then two questions - make PBCalc the default browser / start on the
+calculator screen. The password is stored only as a salted PBKDF2-SHA256 hash (100000 rounds; `scripts/make-install-hash.js "<password>"` makes new
+`PBC_SALT` / `PBC_HASH` lines); PowerShell recomputes it from the typed text. **Trap, measured: `nsExec::ExecToStack` hands back exit code 1 even when
+PowerShell printed the right word - trust only the printed `PBC_OK`** (the first version rejected the right password). A silent install (`/S`) shows no
+page, so it must be started as `PBCalc Setup.exe /S /PW=<password>` or it stops (exit code 2); a silent install writes no choices. Tested end to end with the
+real installer driven through Windows UI messages (BM_CLICK / WM_SETTEXT, no mouse): 3 wrong -> cancelled, nothing installed; right -> both questions ->
+install -> uninstall leaves nothing. **Limit (say so): this is a gate for the casual user, not security** - anyone can unpack the installer with 7-Zip.
+`electron/installChoices.js` reads `<install folder>\install-choices.json` ONCE at the first start (installed copy only): `calculatorStart` -> settings.json;
+`defaultBrowser` -> read but NOT acted on: PBCalc registers itself in Windows' browser list anyway, and the Default apps page is deliberately NOT opened (owner: no Settings window may pop up by itself; Windows never lets a program make itself the default, the user picks it in Settings > Default apps). The file is
+deleted; if the folder is read-only its modification time is remembered (`installChoicesStamp`) so the same file never applies twice. Test:
+`scripts/verify-install-choices.js` (13).
+**Calculator screen** (`renderer/calc/{pricing.js,calc.css,calc.js}`, lives INSIDE the shell page; `electron/calcMode.js`): when `settings.json ->
+calculatorStart` is true PBCalc starts on a copy of the owner's iPad recording (Apple look, 1376x1032 stage scaled into the window, black letterbox, iOS
+scroll-snap WHEELS for Shape / Colour / Clarity / Fluorescence / Discount - no dropdowns; mint chips 3EX / EX-VG / VG / GD and C P S rows; Stone Weight, Polish /
+Result / Total Polish / Rough $/Ct., Add St. = more parts, red minus, gray minus/plus = +-0.05 ct, Update Price = +-2 % list drift). Prices are DUMMY
+(`pricing.js`; the real list is a SQL proc in Mfg.API, deliberately not copied) calibrated to the recording: 0.5 ct ROUND D FL -30 % = 4700 / 3290 / 1645, F VS1
+2600 / 1820 / 910, F VS2 2200 / 1540 / 770, stone 1.05 -> 47.62 % and $1566.67 (`scripts/verify-calc-pricing.js`, 22). There is NO Settings switch for it
+(it would give the disguise away); only the installer sets it. While it shows NO tab exists (`state.calcMode`): `createTab`, every shortcut, files dropped, and
+links from Windows are refused. **Five presses of the gray + within 1.5 s each** (counted in MAIN, `calc:plus`, shell page only) open the browser (a New Tab
+page at 100 % zoom; the Restricted home when Restricted Mode is on). **Closing the browser - the last tab OR the window's X - returns to the calculator
+instead of quitting** (`calcMode.onWindowClose`): every tab closed, the session wiped like at quit (`privacy.clearSession`), the Ctrl+Shift+T list forgotten, a
+FRESH calculator. The calculator's own X and the menu's Exit quit (`state.quitting` from `before-quit` / `session-end`). Window buttons turn white-on-black
+(`theme.setCalc`). **Traps found by measuring:** (1) a wheel cannot scroll while `display:none` - add `body.calc-mode` BEFORE building the cards (the wheels
+started on the wrong item only when a late second `show()` did not rescue it); (2) `requestAnimationFrame` does not run while the window is covered, so the
+selected item and the price never wait for a frame (only the fade does); (3) a plain `.c-stage button {...}` reset out-ranked the buttons' own classes
+(black Update Price button went transparent) - resets use `:where()`; (4) the installed app, started twice, hands the 2nd launch to the 1st (single-instance
+lock): probe it with ONE launch. Tests: `scripts/verify-calc-screen.js` (81 now; first version 54: start state, the recording's numbers, real mouse wheel + drag on a wheel, parts, nothing
+opens behind it, the 5-press rule incl. the pause that restarts the count and forged presses, close-returns-to-calculator incl. cookie wiped, X quits) plus
+`PBCALC_TEST_PLAIN=1` (no setting = browser starts as always); also run against the INSTALLED obfuscated exe through `--remote-debugging-port` (3 close/open cycles clean).
+**Assumption to confirm with the owner:** "when the browser closes we go back to the calculator" was implemented for BOTH the last tab and the window X.
+**REDESIGN (owner's request, 2026-10-08) - the screen is no longer an iPad picture.** The first version copied the recording literally: a fixed 1376x1032 stage scaled into the window (black
+bars left and right) with an iPad status bar (clock, wifi, battery). Now `renderer/calc/calc.{css,js}` lay it out FLUID so it fills the whole window at any size (tested 1920 wide and 980 wide:
+`.c-stage` = the window, nothing scrolls sideways), without the status bar. Functionality and numbers are unchanged. Header (also the window's drag area; the window buttons sit over its right end,
+so it keeps ~9.6em free): PBC brand, three tabs **Account | Calculator | Price List** (the two outer ones are "Coming soon" panels, the owner's choice), "Prices updated <time>" + **Update Price**.
+Calculator view: Stone Weight tile + four summary tiles (Polish / Result / Total Polish / Rough $/Ct., same labels and values), the Loose/GIA/IGI/HRD row, one card per part (badge A, weight field,
+wheels with column titles Shape / Colour / Clarity / Fluor. / Discount, Grade chips and Cut / Polish / Symmetry rows, the "List .. $/Ct. .. Total .." strip, the lab table), the red / blue / gray buttons, a
+dark footer with the "Calculator" pill and the **gear = Settings dialog** (Appearance Light/Dark for the calculator, Default discount stepper + "Apply to all parts", Lab price table switch, Reset calculator,
+Done; Esc, Done or a click outside closes it; in memory only, gone with the session). Wheel items are 36px (`WHEEL_H` in calc.js = `.c-wheel-item` in calc.css: keep both). **Traps found while building it:**
+a CSS `transition` on the weight label never finished while the window was covered (the label stayed over the typed value) - no transitions on anything that carries meaning; the class names the tests and
+the 5-press code rely on (`.c-tab`, `.c-update`, `.c-sum`, `.c-card`, `.c-wheel*`, `.c-chip` in the order 3EX / EX-VG / VG / GD first, `.c-btn.grey` index 1 = +) were kept. Test: `verify-calc-screen.js`
+now has 81 checks (layout fills the window, tabs, Update Price stamp, every settings control, narrow window); its real-mouse wheel/drag checks can fail once in a while when someone moves the real
+mouse over the test window (re-run).
+
+## In-app updates (`electron/updater.js`, dialog `electron/updateDialog.js`; tests `verify-updater.js` 28, `verify-updater-popup.js` 10, `verify-update-dialog.js` 23, installer part of `verify-uninstall.js`)
+Built like the ERP shell (`PBERP-EXE - Barcode/electron/updater/autoUpdater.js`: electron-updater + a plain web folder). **The admin puts the THREE files that
+`npm run dist` writes into `release/` on the server: `pbcalc.yml`, `PBCalc Setup <version>.exe`, `PBCalc Setup <version>.exe.blockmap`** (names must stay exactly as
+built, spaces included). The address is `package.json -> build.publish` (generic, `channel: "pbcalc"`; now the owner's test server `http://192.168.0.8:9995/assets/`)
+and is baked into the installed app as `resources/app-update.yml`. A release = raise `version` in package.json, `npm run dist`, upload those 3 files. At each START
+(5 s after the window is up, installed program only - never `npm start`) the app asks the server; a higher version is downloaded quietly.
+- **Channel `pbcalc`, so the file is `pbcalc.yml`, NOT `latest.yml`.** The ERP keeps `latest.yml` in the same kind of folder (`https://mfg.pb.diamonds/assets/`); PBCalc reading it
+  would "update" itself to the ERP's installer. Test: a newer `latest.yml` is ignored. **The test server answers a missing file with a web page (Angular `index.html`, 200)**: the
+  updater logs an error and ignores it - nothing is shown (tested with html / 404 / empty / broken files).
+- **Nothing is forced (owner's rule).** When the download is done PBCalc's OWN dialog opens (`renderer/updatedialog/`, `preloads/updatedialog-preload.js`, `electron/updateDialog.js`; it replaced
+  Windows' plain message box, which stays only as the fallback if the window cannot be made): a modal window (modal to the main window) with an update icon on a blue disc (pulsing ring), "Update
+  available", the two versions as chips (v0.1.5 -> v0.2.0), three lines with their own icons (**PBCalc restarts** / **all open tabs are closed and are not restored** / **it opens again by itself**), a note
+  that Cancel installs it automatically the next time you close or open PBCalc, and two buttons **Cancel** / **Update** (filled). Light and dark like the browser. **Only a click on Update answers yes**;
+  Cancel, Esc, the window's X, and the main window closing are all "no", and Enter decides nothing (no button has keyboard focus at the start, so a stray Enter while typing in a page cannot
+  answer). Only THIS dialog's own window may send the answer (an `updatedialog:answer` forged by another window is ignored). Update -> `quitAndInstall(true, true)`. Cancel -> nothing starts,
+  `updateDeclined = <version>` is saved in settings.json; the update then installs (a) when PBCalc really quits (electron-updater `autoInstallOnAppQuit`, silent, no restart), (b) when the calculator's
+  "browser closed" happens (`calcMode.returnToCalc` -> `updater.installIfPending`), (c) at the NEXT START: the same version is found again, equals `updateDeclined`, so it installs at once WITHOUT
+  asking. A dialog that cannot be shown counts as Cancel. A newer version than the declined one asks again. **Trap (crashed the test process): close the dialog with `win.close()`, never
+  `win.destroy()`** - after several destroyed modal dialogs a later `nativeTheme.themeSource` change took the whole process down (native crash, exit 127); `close()` fixed it.
+  An earlier version used Electron's message box: UI Automation lists it INSIDE the main window with `CCPushButton` buttons - not relevant for the new HTML dialog, whose buttons are ordinary.
+- **Silent install** (`quitAndInstall(true, true)`), unlike the ERP's `(false, true)`: the ERP's wizard has a "who should this be installed for" page whose first choice (all users) moved an
+  "only me" install into `C:\Program Files` and asked for administrator rights (measured on a real update; the HKLM entry and the files had to be removed with a UAC prompt), and its Finish
+  page waited for a click. Silent keeps the folder, the user, and restarts PBCalc by itself (the new window came up maximized and visible).
+- **An update never asks the password or the two setup questions** (`installer.nsh`: the pages `Abort` when `${isUpdated}`, i.e. the installer got `--updated`), never rewrites
+  `install-choices.json`, and the OLD version's uninstaller (run silently with `--updated`) skips the registry cleanup, so a default browser stays default and the calculator start
+  (settings.json, on the keep list) stays. **A silent `--updated` is accepted without the password ONLY when `$INSTDIR\PBCalc.exe` exists** (a made-up `--updated` into an empty folder, a plain
+  `/S` and a wrong `/PW` all exit with code 2 and install nothing). Measured end to end with real installers 0.1.5 -> 0.1.6: same folder, per-user, calculator + Default apps entries kept.
+- **Traps found by the tests:** electron-updater's `channel` setter switches `allowDowngrade` ON, so set the channel FIRST (an older version on the server was installed before this);
+  with `autoDownload` a corrupt download rejects `downloadPromise` as well as the "error" event - the promise is caught; the modal popup is listed by UI Automation INSIDE the main window
+  with `CCPushButton` buttons (not as a top-level window, not `ControlType.Button`); dev runs need `dev-app-update.yml` next to the script (the tests write and delete it); build the
+  test installers with a local `publish.url` (`127.0.0.1`) and RESTORE package.json (version + production URL), and clear `release/` of them before the real build.
+- **Checks happen at START only, plus the Settings button.** There is no timer: the one automatic check runs 5 s after the window opens. **Settings > Privacy > Version has a "Check for update" button**
+  (`updater.checkNow`, IPC `settings:check-update` from the settings page only, `settingsAPI.checkUpdate`): the same check at once. A newer version is downloaded and PBCalc's update popup comes when it is ready
+  (a version declined earlier is asked AGAIN on a button press instead of being installed at once - `manual` flag); no newer version, a server error or a web page instead of `pbcalc.yml` = NOTHING is shown (owner's
+  rule: no result text). The button is disabled only while the check runs. A development copy has no updater, so the button does nothing there. Tests: the "checkNow" and wiring blocks of `verify-updater.js` (37).
+  A periodic re-check while PBCalc stays open was offered to the owner and NOT built (ask first).
+- Limits to say plainly: the build is unsigned, so the only integrity check is the sha512 in `pbcalc.yml` (a server that is taken over can serve a malicious installer; use https and a trusted
+  folder in production); a differential download needs the previous version's blockmap on the server (otherwise the full file is fetched - works, just bigger).
 
 ## Video files open in a tab (`fileTypes.VIDEO`, `scripts/verify-video-open.js`, 18 checks)
 Chrome plays a local .mp4 in a tab; PBCalc ignored a dropped video and sent a downloaded one to another program. `.mp4 .webm .m4v .ogv .mov` are

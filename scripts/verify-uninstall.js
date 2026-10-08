@@ -25,8 +25,19 @@ check("every ProgId the app can write is covered (defaultBrowser.js KINDS vs the
   return ids.length >= 5 && [...new Set(ids)].every((id) => id === "PBCalc" || code.includes(id));
 })());
 
+console.log("\n-- an UPDATE (the in-app updater starts the installer with --updated) must not disturb the user or Windows");
+const fn = (name) => { const m = code.match(new RegExp("Function " + name + "[\\s\\S]*?FunctionEnd")); return m ? m[0] : ""; };
+const mac = (name) => { const m = code.match(new RegExp("!macro " + name + "[\\s\\S]*?!macroend")); return m ? m[0] : ""; };
+check("the password page is skipped for an update", /\$\{If\} \$\{isUpdated\}\s+Abort/.test(fn("PbcPasswordPage")));
+check("the two setup questions are skipped for an update", /\$\{If\} \$\{isUpdated\}\s+Abort/.test(fn("PbcOptionsPage")));
+check("a silent update skips the password ONLY when PBCalc really is installed in that folder (a made-up --updated cannot bypass it)", /\$\{If\} \$\{isUpdated\}\s+\$\{AndIf\} \$\{FileExists\} "\$INSTDIR\\\$\{APP_EXECUTABLE_FILENAME\}"\s+Goto pbcalc_init_ok/.test(mac("customInit")));
+check("an update never rewrites install-choices.json (the user's earlier answers stay)", /\$\{IfNot\} \$\{isUpdated\}\s+\$\{AndIfNot\} \$\{Silent\}/.test(mac("customInstall")));
+check("the OLD version's uninstaller, run by an update, leaves the Default apps registration alone", /\$\{If\} \$\{isUpdated\}\s+Goto pbcalc_keep_registration/.test(mac("customUnInstall")) && /pbcalc_keep_registration:/.test(mac("customUnInstall")));
+check("...and still asks nothing and deletes no data (silent)", /IfSilent pbcalc_keep_data/.test(mac("customUnInstall")));
+check("the installation password itself is not in the script (only salt + hash)", !/pbsecure|paladiya/i.test(nsh) && /PBC_HASH "[0-9a-f]{64}"/.test(nsh));
+
 console.log("\n-- the PowerShell cleanup, run for real on a made-up registry area");
-const line = code.split("\n").find((l) => l.includes("nsExec::Exec") && l.includes("powershell"));
+const line = code.split("\n").find((l) => l.includes("nsExec::Exec") && l.includes("powershell") && l.includes("Get-ChildItem"));   // (the installation-password check also runs PowerShell: pick the registry cleanup)
 check("the command is there", !!line);
 const TEST = "Software\\PBCalcUninstallTest" + process.pid;
 const inst = "C:\\Fake Programs\\PBCalc";

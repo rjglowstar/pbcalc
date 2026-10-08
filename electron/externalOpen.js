@@ -45,7 +45,7 @@ function focusWindow() {
 // Restricted Mode never opens anything from outside - the window is only brought forward.
 function openFromOutside(argv, cwd, { first = false } = {}) {
   focusWindow();
-  if (state.restricted) return false;
+  if (state.restricted || state.calcMode) return false;   // (the calculator screen shows no browser: a link from Windows must not open one)
   const url = targetFromArgv(argv, cwd);
   if (!url) return false;
   const tm = require("./tabs/tabManager");

@@ -6,6 +6,7 @@ body { background: var(--frame); font-size: 14px; }
 header {
   position: sticky;
   top: 0;
+  z-index: 10;   /* the switches below are position:relative and later in the page: without this they scrolled OVER the header */
   height: 56px;
   display: flex;
   align-items: center;

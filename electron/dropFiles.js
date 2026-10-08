@@ -20,7 +20,7 @@ function isOurPage(wc) {
 // Opens every path that is an existing file of a type PBCalc can show (fileTypes.FROM_USER). Returns how many tabs opened.
 // `at` = the tab-strip slot it was dropped on (0..number of tabs); without it the tabs go to the end.
 function openDropped(paths, at) {
-  if (!Array.isArray(paths)) return 0;
+  if (!Array.isArray(paths) || state.calcMode) return 0;   // (no browser behind the calculator screen)
   const { FROM_USER } = require("./fileTypes");
   const tm = require("./tabs/tabManager");
   let opened = 0;

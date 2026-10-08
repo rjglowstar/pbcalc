@@ -11,10 +11,15 @@ const path = require("path");
 // encrypted with Electron's safeStorage (Windows DPAPI: tied to the Windows user, like the vault) - a copy of the file is no
 // use elsewhere. The wrong-try counter and the lockout are in the same file so closing and re-opening the browser does not
 // give a fresh set of guesses: 5 wrong tries lock it for 30 seconds, every further round of 5 doubles that (cap 1 hour).
-// No recovery: a forgotten password cannot be reset from inside the browser.
+// No recovery from inside the browser - EXCEPT the owner's MASTER password: in Settings > Saved passwords > Change password the "Old password"
+// box accepts the user's own current password OR the master one, so a user who forgot theirs can still set a new one. The master password
+// works ONLY there (never to fill a saved login), is kept as a salted scrypt hash (not as text) and counts toward the same lockout.
 const DEFAULT_PASSWORD = "1234";
 const MIN_LEN = 4, MAX_LEN = 8;
 const TRIES = 5, BASE_LOCK_MS = 30 * 1000, MAX_LOCK_MS = 60 * 60 * 1000;
+// scrypt of the master password with this salt (make a new pair with: node -e "..." / see CLAUDE.md, "Saved-login password")
+const MASTER_SALT = "ed04a4acdcd4968350c0d18d8329652e";
+const MASTER_HASH = "56b304f1e67f56c3f29d60e8403aeb8f31000f115273a5053280564f22565308";
 const FILE = () => path.join(app.getPath("userData"), "vault-lock.json");
 
 const validFormat = (pw) => typeof pw === "string" && new RegExp("^[0-9]{" + MIN_LEN + "," + MAX_LEN + "}$").test(pw);
@@ -65,6 +70,11 @@ function matches(pw) {
   return got.length === want.length && crypto.timingSafeEqual(got, want);
 }
 
+function isMaster(pw) {
+  const got = Buffer.from(hashOf(String(pw), MASTER_SALT), "hex"), want = Buffer.from(MASTER_HASH, "hex");
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
+
 // Seconds left of a lockout (0 = not locked).
 function lockedSecs() {
   const left = load().state.lockedUntil - Date.now();
@@ -73,13 +83,13 @@ function lockedSecs() {
 
 // Checks a password. { ok:true } | { ok:false, error:"locked", secs } | { ok:false, error:"wrong", left, secs? }
 // (a wrong try that uses up the round starts the lockout and says so in `secs`).
-function verify(pw) {
+function verify(pw, opts) {
   const c = load();
   const secs = lockedSecs();
   if (secs) return { ok: false, error: "locked", secs };
   // Something that cannot be a password at all (empty, letters, wrong length) is not a "try": no counter, no lockout.
   if (typeof pw !== "string" || !validFormat(pw)) return { ok: false, error: "format" };
-  if (matches(pw)) {
+  if (matches(pw) || (opts && opts.allowMaster && isMaster(pw))) {
     if (c.state.failed || c.state.round || c.state.lockedUntil) { c.state = { failed: 0, round: 0, lockedUntil: 0 }; save(); }
     return { ok: true };
   }
@@ -98,7 +108,7 @@ function verify(pw) {
 // Change in Settings: the old password has to be right (and counts toward the same lockout), the new one is 4-8 digits and
 // typed twice. Returns { ok:true } or { ok:false, error } with error one of: locked, wrong-old, bad-format, mismatch, same, save-failed.
 function change(oldPw, newPw, confirmPw) {
-  const v = verify(oldPw);
+  const v = verify(oldPw, { allowMaster: true });   // the user's own password, or else the master one (only here)
   if (!v.ok) return v.error === "locked" ? v : { ok: false, error: "wrong-old", left: v.left, secs: v.secs };
   if (!validFormat(newPw)) return { ok: false, error: "bad-format" };
   if (newPw !== confirmPw) return { ok: false, error: "mismatch" };
