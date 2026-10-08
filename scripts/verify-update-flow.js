@@ -65,7 +65,7 @@ const results = [];
 const check = (name, cond, extra) => { results.push({ name, pass: !!cond }); console.log("  .. " + (cond ? "ok " : "FAIL ") + name + (!cond && extra !== undefined ? "  <" + extra + ">" : "")); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ps = (cmd) => { try { return execFileSync("powershell.exe", ["-NoProfile", "-Command", cmd], { timeout: 20000 }).toString().trim(); } catch (_) { return ""; } };
-const updateWindows = () => ps("(Get-Process | Where-Object { $_.MainWindowTitle -eq 'PBCalc update' } | ForEach-Object { $_.Id }) -join ','").split(",").filter(Boolean).map(Number);
+const updateWindows = () => ps("(Get-Process -Name powershell | Where-Object { $_.MainWindowTitle -eq 'PBCalc update' } | ForEach-Object { $_.Id }) -join ','").split(",").filter(Boolean).map(Number);
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
 
 const exe = crypto.randomBytes(1024 * 1024);
@@ -90,7 +90,7 @@ async function scenario(label, flag) {
   const samples = [];
   const sampler = (async () => { while (exitedAt === null || Date.now() - t0 < exitedAt + 14000) { samples.push({ at: Date.now() - t0, win: updateWindows().length > 0, old: exitedAt === null }); await sleep(250); if (Date.now() - t0 > 40000) break; } })();
   await sampler;
-  if (process.env.FLOW_DEBUG) console.log("   procs: " + ps("(Get-Process | Where-Object { $_.ProcessName -like 'pbc_e2e*' -or $_.MainWindowTitle -eq 'PBCalc update' } | ForEach-Object { $_.ProcessName + '#' + $_.Id + '[' + $_.MainWindowTitle + ']' }) -join '; '"));
+  if (process.env.FLOW_DEBUG) console.log("   procs: " + ps("(Get-Process | Where-Object { $_.ProcessName -like 'pbc_e2e*' -or ($_.ProcessName -eq 'powershell' -and $_.MainWindowTitle -eq 'PBCalc update') } | ForEach-Object { $_.ProcessName + '#' + $_.Id + '[' + $_.MainWindowTitle + ']' }) -join '; '"));
   try { child.kill(); } catch (_) {}
   if (process.env.FLOW_DEBUG) console.log("   timeline " + label.slice(0, 8) + ": exit=" + exitedAt + " events=" + events.map((e) => (e.event || "log") + "@" + e.at).join(",") + " windowSamples=" + samples.map((x) => x.at + (x.win ? "W" : "-")).join(" "));
   const q = events.find((e) => e.event === "quitAndInstall");
@@ -103,7 +103,7 @@ async function scenario(label, flag) {
 (async () => {
   try {
     await app.whenReady();
-    ps("Get-Process | Where-Object { $_.MainWindowTitle -eq 'PBCalc update' } | Stop-Process -Force");   // windows left by an earlier run would be counted as this run's
+    ps("Get-Process -Name powershell | Where-Object { $_.MainWindowTitle -eq 'PBCalc update' } | Stop-Process -Force");   // windows left by an earlier run would be counted as this run's
     fs.rmSync(DIR, { recursive: true, force: true }); fs.mkdirSync(DIR, { recursive: true });
     fs.copyFileSync(PS_EXE, FAKE_INSTALLER); fs.copyFileSync(PS_EXE, FAKE_NEW);
     await new Promise((ok) => server.listen(0, "127.0.0.1", ok));

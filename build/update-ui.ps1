@@ -1,36 +1,12 @@
-const { app, nativeTheme } = require("electron");
-const { spawn } = require("child_process");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+﻿param([string]$To = '', [string]$From = '', [string]$Exe = '', [string]$Dark = 'auto', [string]$NewName = 'PBCalc', [string]$InstallerLike = 'PBCalc Setup*')
 
-// "Updating PBCalc..." window that stays on screen while PBCalc is NOT running.
-//
-// ROOT CAUSE this answers (owner: "when the update runs PBCalc closes and opens again and the user has no idea whether it is working"):
-// an update installs SILENTLY (updater.js: quitAndInstall(true, true) - the visible wizard asks "who should this be installed for" and
-// wants administrator rights, measured). So from the moment PBCalc quits until the installer starts it again NOTHING is on screen: no
-// window of ours exists (the program is gone) and a silent installer has none. The same gap showed as a flicker when the update was
-// started at the next START after "Cancel": the browser window appeared, then vanished.
-// A window can only outlive PBCalc if it belongs to ANOTHER process, so this starts a small separate Windows PowerShell process that draws
-// the window with WinForms/GDI+ (powershell.exe is part of Windows 10/11; nothing to ship). It looks like PBCalc's update dialog
-// (blue disc with the update arrow, the two version chips, light / dark like the browser) and shows what is REALLY happening, read from the
-// processes: 1 "Closing PBCalc" (until the old PBCalc process is gone) -> 2 "Installing the new version" (while the installer process runs)
-// -> 3 "Opening PBCalc again" (installer finished, new PBCalc not up yet) -> all three ticked and the window closes as soon as a NEW PBCalc
-// process with a window exists (the old one's id is passed in, so it is never mistaken for the new one). It says so when the update did not
-// finish (installer gone and PBCalc did not come back within `failAfter` seconds, or `giveUp` seconds passed) instead of staying for ever;
-// the X closes it at any time and never stops the update. It only DISPLAYS: it installs nothing and talks to nobody.
-//
-// Traps found by measuring:
-//  * the window MUST NOT be a plain child of PBCalc: a child spawned the usual way died the moment PBCalc exited (measured, also with
-//    `detached`; and a `detached` powershell without a console ends at once), which is exactly when the window is needed. It is started through
-//    `cmd /c start "" /b powershell ...`, after which it belongs to nobody and survives (measured: still alive after the parent quit);
-//  * because of that PBCalc does not know the window's process id: the window writes its own id to "<script>.pid" and closes itself when
-//    "<script>.stop" appears (close() makes that file) - no killing by id;
-//  * the strings reach PowerShell as single-quoted literals (' doubled); the C# source uses no C# 6 syntax (Windows PowerShell 5.1
-//    compiles it with C# 5); the script is a FILE (about 12 KB; as -EncodedCommand it is over the 32 KB command-line limit).
-const ps = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+$ErrorActionPreference = 'SilentlyContinue'
+# one window only (PBCalc's own and the installer's may start at the same moment): the first one holds a lock file until its process ends. NOT decided by the
+# window title: PBCalc's own update dialog (a real PBCalc process) has the same title, and nothing here may ever look at - or stop - PBCalc itself.
+try { $script:lock = [System.IO.File]::Open((Join-Path $env:TEMP 'pbcalc-update-ui.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+catch { Remove-Item -LiteralPath $PSCommandPath, ($PSCommandPath + '.pid'), ($PSCommandPath + '.stop'), ($PSCommandPath + '.state') -Force -ErrorAction SilentlyContinue; exit }
+Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition @'
 
-const CSHARP = String.raw`
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -271,45 +247,34 @@ public class PbcUpdateForm : Form {
 
   protected override void Dispose(bool disposing) { if (disposing && anim != null) anim.Dispose(); base.Dispose(disposing); }
 }
-`;
 
-// o.argsMode: the same window as a STATIC file that takes its values as parameters (installer/update-ui.ps1, started by the installer itself - see below);
-// otherwise every value is written into the script as a literal (started by PBCalc).
-function buildScript(o) {
-  const A = !!o.argsMode;
-  return `${A ? "param([string]$To = '', [string]$From = '', [string]$Exe = '', [string]$Dark = 'auto', [string]$NewName = 'PBCalc', [string]$InstallerLike = 'PBCalc Setup*')\n" : ""}
-$ErrorActionPreference = 'SilentlyContinue'
-# one window only (PBCalc's own and the installer's may start at the same moment): the first one holds a lock file until its process ends. NOT decided by the
-# window title: PBCalc's own update dialog (a real PBCalc process) has the same title, and nothing here may ever look at - or stop - PBCalc itself.
-try { $script:lock = [System.IO.File]::Open((Join-Path $env:TEMP 'pbcalc-update-ui.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
-catch { Remove-Item -LiteralPath $PSCommandPath, ($PSCommandPath + '.pid'), ($PSCommandPath + '.stop'), ($PSCommandPath + '.state') -Force -ErrorAction SilentlyContinue; exit }
-Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition @'
-${CSHARP}
 '@
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$newName = ${A ? "$NewName" : ps(o.newName)}
-$installerLike = ${A ? "$InstallerLike" : ps(o.installerLike)}
-$failAfter = ${Number(o.failAfter) || 40}
-$giveUp = ${Number(o.giveUp) || 300}
-$exe = ${A ? "$Exe" : ps(o.exe)}
-$iconFile = ${A ? "$Exe" : ps(o.iconFile || o.exe)}
-$stopFile = ${A ? "(Join-Path $env:TEMP 'pbcalc-update-ui-installer.stop')" : ps(o.stopFile)}
-${A ? "Remove-Item -LiteralPath $stopFile -Force -ErrorAction SilentlyContinue" : "# (a window started by PBCalc has its own stop file)"}
+$newName = $NewName
+$installerLike = $InstallerLike
+$failAfter = 40
+$giveUp = 300
+$exe = $Exe
+$iconFile = $Exe
+$stopFile = (Join-Path $env:TEMP 'pbcalc-update-ui-installer.stop')
+Remove-Item -LiteralPath $stopFile -Force -ErrorAction SilentlyContinue
 # the PBCalc process(es) that exist NOW are the OLD program: the update window waits for them to go and is closed only by a DIFFERENT one with a window
-$oldIds = @(${A ? "Get-Process -Name $newName -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }" : Number(o.oldPid) | 0})
+$oldIds = @(Get-Process -Name $newName -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
 try { Set-Content -LiteralPath ($PSCommandPath + '.pid') -Value $PID } catch {}
 $f = New-Object PbcUpdateForm
-$f.Dark = ${A ? "($Dark -eq 'dark' -or ($Dark -eq 'auto' -and ((Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -ErrorAction SilentlyContinue).AppsUseLightTheme -eq 0)))" : (o.dark ? "$true" : "$false")}
-$f.From = ${A ? "$From" : ps(o.from || "")}
-$f.To = ${A ? "$To" : ps(o.to || "")}
-$f.Head = ${ps(o.title)}
-$f.Sub = ${A ? "$(if ($To) { 'PBCalc ' + $To + ' is being installed.' } else { " + ps(o.subNoVersion) + " })" : ps(o.to ? o.sub : o.subNoVersion)}
-$f.Note = ${ps(o.note)}
-$f.FailHead = ${ps(o.failTitle)}
-$f.FailText = ${ps(o.failText)}
-$f.StepTitle[0] = ${ps(o.steps[0][0])}; $f.StepSub[0] = ${ps(o.steps[0][1])}
-$f.StepTitle[1] = ${ps(o.steps[1][0])}; $f.StepSub[1] = ${ps(o.steps[1][1])}
-$f.StepTitle[2] = ${ps(o.steps[2][0])}; $f.StepSub[2] = ${ps(o.steps[2][1])}
+$f.Dark = ($Dark -eq 'dark' -or ($Dark -eq 'auto' -and ((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -ErrorAction SilentlyContinue).AppsUseLightTheme -eq 0)))
+$f.From = $From
+$f.To = $To
+$f.Head = 'Updating PBCalc'
+$f.Sub = $(if ($To) { 'PBCalc ' + $To + ' is being installed.' } else { 'The new version is being installed.' })
+$f.Note = 'Please wait. PBCalc opens again by itself.'
+$f.FailHead = 'The update did not finish'
+$f.FailText = 'PBCalc did not open again.
+
+Please start PBCalc from the Start menu. If this keeps happening, ask the person who gave you PBCalc.'
+$f.StepTitle[0] = 'Closing PBCalc'; $f.StepSub[0] = 'Open tabs are closed and are not restored.'
+$f.StepTitle[1] = 'Installing the new version'; $f.StepSub[1] = 'This takes a few seconds.'
+$f.StepTitle[2] = 'Opening PBCalc again'; $f.StepSub[2] = 'It opens by itself - nothing to do.'
 try { if ($iconFile -like '*.ico') { $f.Icon = New-Object System.Drawing.Icon($iconFile, 32, 32) } else { $f.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconFile) } } catch {}
 $f.Apply()
 $start = Get-Date
@@ -339,64 +304,4 @@ $timer.Add_Tick({
 })
 $timer.Start()
 [void]$f.ShowDialog()
-`;
-}
 
-const DEFAULTS = {
-  newName: "PBCalc", installerLike: "PBCalc Setup*",
-  title: "Updating PBCalc",
-  sub: "", subNoVersion: "The new version is being installed.",
-  note: "Please wait. PBCalc opens again by itself.",
-  steps: [
-    ["Closing PBCalc", "Open tabs are closed and are not restored."],
-    ["Installing the new version", "This takes a few seconds."],
-    ["Opening PBCalc again", "It opens by itself - nothing to do."],
-  ],
-  failTitle: "The update did not finish",
-  failText: "PBCalc did not open again.\n\nPlease start PBCalc from the Start menu. If this keeps happening, ask the person who gave you PBCalc.",
-};
-
-// The window's title-bar / taskbar icon. The installed program's exe carries PBCalc's icon; a development run (npm start) runs Electron's exe,
-// whose icon is Electron's (the owner saw "another project's icon"), so there assets/icon.ico is used.
-function iconFile() {
-  try {
-    if (!app.isPackaged) { const ico = path.join(__dirname, "..", "assets", "icon.ico"); if (fs.existsSync(ico)) return ico; }
-  } catch (_) {}
-  return process.execPath;
-}
-
-// Starts the window. Returns { pid() , close(), file } or null if it could not be started.
-//   pid()   the window's process id once it has started (null before), read from the file the window writes;
-//   close() asks the window to close (used when the update turned out not to be needed) and removes its files.
-// `o`: { from, to } version labels (optional); the rest of the overrides are for the tests (process names, timings).
-function show(o = {}) {
-  try {
-    const sub = o.to ? "PBCalc " + o.to + " is being installed." : "";
-    const tag = "pbcalc-update-ui-" + process.pid + "-" + Date.now();
-    const file = path.join(os.tmpdir(), tag + ".ps1"), stopFile = file + ".stop", pidFile = file + ".pid", stateFile = file + ".state";
-    const script = buildScript({
-      ...DEFAULTS, sub, exe: process.execPath, iconFile: iconFile(), oldPid: process.pid, dark: nativeTheme.shouldUseDarkColors, stopFile, ...o,
-      from: o.from ? "v" + String(o.from).replace(/^v/i, "") : "", to: o.to ? "v" + String(o.to).replace(/^v/i, "") : "",
-    });
-    // UTF-8 with a BOM, which Windows PowerShell 5.1 needs to read it as UTF-8; the script deletes its own files when its window closes.
-    const NL = String.fromCharCode(10);
-    fs.writeFileSync(file, String.fromCharCode(0xfeff) + script + NL +
-      "Remove-Item -LiteralPath $PSCommandPath, ($PSCommandPath + '.pid'), ($PSCommandPath + '.stop'), ($PSCommandPath + '.state') -Force -ErrorAction SilentlyContinue" + NL);
-    // cmd /c start "" /b ...: the window becomes independent of PBCalc (see the header). windowsVerbatimArguments + /s: the quotes below are cmd's own.
-    const ps1 = (o.powershell || "powershell.exe") + ' -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + file + '"';
-    const child = spawn("cmd.exe", ["/d", "/s", "/c", '"start "" /b ' + ps1 + '"'], { stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true });
-    child.on("error", () => {});
-    child.unref();
-    return {
-      file,
-      state() { try { return fs.readFileSync(stateFile, "utf8").trim(); } catch (_) { return ""; } },   // "failed" once the window shows the failure screen
-      pid() { try { const n = parseInt(fs.readFileSync(pidFile, "utf8").replace(/[^0-9]/g, ""), 10); return n > 0 ? n : null; } catch (_) { return null; } },
-      close() {
-        try { fs.writeFileSync(stopFile, "stop"); } catch (_) {}
-        setTimeout(() => { for (const f of [file, stopFile, pidFile, stateFile]) { try { fs.unlinkSync(f); } catch (_) {} } }, 3000).unref();
-      },
-    };
-  } catch (_) { return null; }
-}
-
-module.exports = { show, buildScript, iconFile, DEFAULTS };

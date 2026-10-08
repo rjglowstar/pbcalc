@@ -1,13 +1,13 @@
 {
   "name": "pbcalc",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "PBCalc Secure Browser",
   "author": "PBCalc",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
     "obfuscate": "node scripts/obfuscate.js",
-    "dist": "node scripts/obfuscate.js && electron-builder"
+    "dist": "node scripts/make-update-ui.js && node scripts/obfuscate.js && electron-builder"
   },
   "devDependencies": {
     "electron": "^41.7.1",
