@@ -82,19 +82,21 @@
       !insertmacro MUI_HEADER_TEXT "Choose your setup" "Two quick questions."
       nsDialogs::Create 1018
       Pop $0
-      ${NSD_CreateCheckbox} 0 8u 100% 12u "Make PBCalc my default browser"
+      ; RADIO buttons (the owner: only ONE can be chosen, always exactly one). The first one starts the group (WS_GROUP): this NSIS (3.0.4)
+      ; has no ${NSD_CreateFirstRadioButton}, so it is created by hand with the style the macro would add.
+      nsDialogs::CreateControl ${__NSD_RadioButton_CLASS} "${__NSD_RadioButton_STYLE}|${WS_GROUP}" ${__NSD_RadioButton_EXSTYLE} 0 8u 100% 12u "Make PBCalc my default browser"
       Pop $PbcOptDefault
       ${NSD_CreateLabel} 12u 22u 95% 20u "Windows opens its Default apps page when PBCalc first starts, so you can pick it there."
       Pop $0
-      ${NSD_CreateCheckbox} 0 52u 100% 12u "Start PBCalc on the calculator screen"
+      ${NSD_CreateRadioButton} 0 52u 100% 12u "Start PBCalc on the calculator screen"
       Pop $PbcOptCalc
       ${NSD_CreateLabel} 12u 66u 95% 20u "PBCalc then opens as a calculator; the browser opens from it when you press + five times."
       Pop $0
-      ${If} $PbcOptDefaultState == ${BST_CHECKED}
-        ${NSD_Check} $PbcOptDefault
-      ${EndIf}
+      ; first visit: the first option; coming back with "Back": what was chosen before
       ${If} $PbcOptCalcState == ${BST_CHECKED}
         ${NSD_Check} $PbcOptCalc
+      ${Else}
+        ${NSD_Check} $PbcOptDefault
       ${EndIf}
       nsDialogs::Show
     FunctionEnd
@@ -102,12 +104,7 @@
     Function PbcOptionsLeave
       ${NSD_GetState} $PbcOptDefault $PbcOptDefaultState
       ${NSD_GetState} $PbcOptCalc $PbcOptCalcState
-      ; the owner's rule: at least one of the two must be ticked, otherwise the installation does not move on
-      ${If} $PbcOptDefaultState != ${BST_CHECKED}
-      ${AndIf} $PbcOptCalcState != ${BST_CHECKED}
-        MessageBox MB_OK|MB_ICONEXCLAMATION "Please tick at least one option to continue the installation."
-        Abort
-      ${EndIf}
+      ; radio buttons: exactly one is always chosen, so there is nothing to refuse here
     FunctionEnd
   !endif
 !macroend

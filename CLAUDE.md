@@ -933,8 +933,11 @@ exposed to page scripts and unused by PBCalc itself - passwords are protected by
 
 ## Installer password, setup questions, and the calculator screen (owner's spec 2026-10-08)
 **Installer** (`installer/installer.nsh`; read `scripts/verify-calc-*.js` etc. below): after the install-folder page the installer asks for the
-installation password (**3 tries, then it quits and nothing is installed**), then two questions - make PBCalc the default browser / start on the
-calculator screen. The password is stored only as a salted PBKDF2-SHA256 hash (100000 rounds; `scripts/make-install-hash.js "<password>"` makes new
+installation password (**3 tries, then it quits and nothing is installed**), then two options - make PBCalc the default browser / start on the
+calculator screen. They are **RADIO buttons, exactly one chosen at any time** (owner's request; before they were two tick boxes with a "tick at least one" rule): the first
+(default browser) is selected on the first visit, "Back" keeps the choice, and `install-choices.json` then holds exactly one `true`. This NSIS (3.0.4) has no `${NSD_CreateFirstRadioButton}`,
+so the first radio is made with `nsDialogs::CreateControl ... |${WS_GROUP}` (the build failed with "Invalid command" otherwise). Checked with the real installer (page screenshot, and the json it
+wrote after clicking both options: only the last one true). The label under the first option still says Windows opens its Default apps page - no longer true (that page is not opened any more); left as it was. The password is stored only as a salted PBKDF2-SHA256 hash (100000 rounds; `scripts/make-install-hash.js "<password>"` makes new
 `PBC_SALT` / `PBC_HASH` lines); PowerShell recomputes it from the typed text. **Trap, measured: `nsExec::ExecToStack` hands back exit code 1 even when
 PowerShell printed the right word - trust only the printed `PBC_OK`** (the first version rejected the right password). A silent install (`/S`) shows no
 page, so it must be started as `PBCalc Setup.exe /S /PW=<password>` or it stops (exit code 2); a silent install writes no choices. Tested end to end with the
