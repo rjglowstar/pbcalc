@@ -129,11 +129,35 @@ function notify() {
   require("../popup").refresh();
 }
 
+// Chrome's rule against automatic downloads: a page may start ONE download on its own (no click, no key); every further one it
+// starts without a user gesture is refused until the page is left. Without it a site could drop dozens of files (any name, .exe
+// included) into the Downloads folder by script alone - measured: 11 of 40 saved by a page that was never clicked. A download the
+// user started (a click, a key) is never limited, and neither is one the app itself starts (Retry: no initiating page).
+// "Did the USER just do something on this page?": item.hasUserGesture() cannot tell - measured, it says true for a download that a script
+// started by itself (<a download>.click() with no click or key) - so the tab preload reports every TRUSTED pointer-down / key-down
+// (a script cannot forge isTrusted) and a download counts as user-started when that was less than 5 s ago (Chrome's transient
+// activation window).
+const lastActivity = new WeakMap();    // webContents -> time of the last real click / key in it
+const ACTIVITY_MS = 5000;
+function noteActivity(wc) { if (wc) lastActivity.set(wc, Date.now()); }
+const autoDownloads = new WeakMap();   // webContents -> { url, n }
+function refuseAutomatic(initiator, item) {
+  if (!initiator || initiator.isDestroyed()) return false;
+  if (Date.now() - (lastActivity.get(initiator) || 0) < ACTIVITY_MS) return false;
+  let url = "";
+  try { url = initiator.getURL(); } catch (_) {}
+  let rec = autoDownloads.get(initiator);
+  if (!rec || rec.url !== url) { rec = { url, n: 0 }; autoDownloads.set(initiator, rec); }
+  rec.n += 1;
+  return rec.n > 1;
+}
+
 function init() {
   const { TAB_PARTITION } = require("../constants");
   // Tabs run in the TAB_PARTITION session (see constants.js), so a download started from a page
   // fires "will-download" THERE, not on defaultSession. Listen on both so every download is caught.
   const onWillDownload = (_event, item, initiator) => {
+    if (refuseAutomatic(initiator, item)) { _event.preventDefault(); return; }   // cancels the download
     const ask = !!(settings.get("downloads") || {}).ask;
     // Chrome's default: straight into the Downloads folder, no dialog. With the switch on, Electron
     // shows its native Save As dialog instead (setSavePath left unset).
@@ -339,4 +363,4 @@ async function chooseDir() {
   return config();
 }
 
-module.exports = { _items: items, init, publicList, cancel, togglePause, retry, open, showInFolder, copyLink, dismiss, clearAll, config, setAsk, chooseDir };
+module.exports = { _items: items, init, publicList, cancel, togglePause, retry, open, showInFolder, copyLink, dismiss, clearAll, config, setAsk, chooseDir, noteActivity };

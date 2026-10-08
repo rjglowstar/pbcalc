@@ -38,6 +38,7 @@ function ensureView() {
   if (alive()) return loaded;
   view = new BrowserView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
   view.setBackgroundColor("#00000000");
+  require("./lockdown").lock(view.webContents);
   attached = false;
   loaded = new Promise((resolve) => {
     view.webContents.once("did-finish-load", () => resolve(true));

@@ -21,6 +21,10 @@ let hovered = false; // the mouse entered the downloads bubble: never dismiss it
 
 // The dialog that asks for the vault password before a saved login is filled (askVaultPassword). Only one at a time.
 let vaultAsk = null;   // { wc, origin, username, resolve }
+// The bubble that asks whether a site may use the camera / location / notifications ... (electron/permissions.js). One at a time.
+let permAsk = null;    // { wc, origin, texts, resolve }
+// The "Choose what to share" dialog for getDisplayMedia (electron/screenShare.js).
+let shareAsk = null;   // { wc, origin, share: { host, tabs, sources }, resolve }
 
 const FIND_W = 380;
 const FIND_H = 48;
@@ -58,6 +62,7 @@ function defaultAnchor(k) {
   const [w] = contentSize();
   if (k === "tabsearch") return { left: 8, right: 36, top: 6, bottom: 38 };
   if (k === "siteinfo") return { left: 100, right: 130, top: 44, bottom: 76 };
+  if (k === "permission") return { left: 130, right: 160, top: 44, bottom: 76 };   // under the site-info icon when the shell cannot tell us
   if (k === "bookmark-edit" || k === "vault-unlock") return { left: Math.round(w / 2 - 190), right: Math.round(w / 2 + 190), top: 0, bottom: tabManager().chromeHeight() };
   return { left: w - 44, right: w - 12, top: 44, bottom: 76 }; // menu / downloads
 }
@@ -97,6 +102,10 @@ function buildData() {
     data.partial = partial;
   } else if (kind === "siteinfo") {
     data.site = siteInfo(tm.getActiveTab());
+  } else if (kind === "screenshare") {
+    data.share = shareAsk ? { host: shareAsk.share.host, tabs: shareAsk.share.tabs, sources: shareAsk.share.sources, restricted: !!state.restricted } : null;
+  } else if (kind === "permission") {
+    data.permission = permAsk ? { origin: permAsk.origin, texts: permAsk.texts } : null;
   } else if (kind === "vault-unlock") {
     data.vault = vaultAsk ? { host: hostOf(vaultAsk.origin), username: vaultAsk.username, secs: require("./vault/vaultLock").lockedSecs() } : null;
   } else if (kind === "bookmark-edit") {
@@ -111,6 +120,8 @@ function hostOf(origin) { try { return new URL(origin).host; } catch (_) { retur
 
 function close() {
   if (vaultAsk) { const a = vaultAsk; vaultAsk = null; a.resolve(false); }   // closed without a correct password = no fill
+  if (permAsk) { const a = permAsk; permAsk = null; a.resolve("dismiss"); }    // closed without an answer = refused this time
+  if (shareAsk) { const a = shareAsk; shareAsk = null; a.resolve(null); }        // closed without choosing = nothing is shared
   clearTimeout(autoTimer);
   autoTimer = null;
   hovered = false;
@@ -140,7 +151,7 @@ function close() {
 // Popups that exist in Restricted Mode: the ⋮ menu (ordinary browser settings only), downloads,
 // find, and the admin panel (which only exists there, and only the hidden shortcut opens it).
 // Tab search and site info stay out: they would list addresses.
-const RESTRICTED_KINDS = new Set(["menu", "downloads", "find", "unlock", "vault-unlock"]);
+const RESTRICTED_KINDS = new Set(["menu", "downloads", "find", "unlock", "vault-unlock", "permission", "screenshare"]);
 // Menu actions a locked-down user may use. Everything that edits bookmarks, shows the bookmark
 // manager, opens developer tools or turns the bookmarks bar off is refused here, and the menu page
 // does not even draw those entries.
@@ -177,6 +188,7 @@ function open(k, rect, opts = {}) {
       preload: path.join(__dirname, "..", "preloads", "popup-preload.js"),
     },
   });
+  require("./lockdown").lock(view.webContents);
   view.setBackgroundColor("#00000000");
   require("./shortcuts").attachShortcuts(view.webContents);
   require("./viewHost").attach(state.mainWindow, view); // added last = on top of the page view
@@ -196,6 +208,52 @@ function autoCloseDownloads(ms) {
   if (!isOpen("downloads") || !partial || hovered) return;
   clearTimeout(autoTimer);
   autoTimer = setTimeout(close, ms);
+}
+
+// Shows the permission bubble for `wc`; resolves "visit" | "once" | "never" | "dismiss". Anything open is replaced; a second ask while one is
+// showing is refused ("dismiss") - permissions.js queues them one by one.
+function askPermission(wc, origin, texts, rect) {
+  if (!state.mainWindow || state.mainWindow.isDestroyed() || permAsk) return Promise.resolve("dismiss");
+  return new Promise((resolve) => {
+    if (isOpen()) close();
+    permAsk = { wc, origin, texts, resolve };
+    open("permission", rect && Number.isFinite(rect.left) ? rect : null, {});
+    if (!isOpen("permission")) { permAsk = null; resolve("dismiss"); }
+  });
+}
+
+// The share dialog (Chrome's "Choose what to share with <site>"): resolves { kind: "tab" | "source", id, audio } of what the user
+// picked, or null (cancelled / closed). `share` = { host, tabs, sources }.
+function askScreenShare(wc, origin, share) {
+  if (!state.mainWindow || state.mainWindow.isDestroyed() || shareAsk) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    if (isOpen()) close();
+    shareAsk = { wc, origin, share, resolve };
+    open("screenshare", null, {});
+    if (!isOpen("screenshare")) { shareAsk = null; resolve(null); }
+  });
+}
+
+// "Share" in the dialog (popup page only). Only something that was really offered counts.
+function answerScreenShare(kind, id, audio) {
+  if (!isOpen("screenshare") || !shareAsk) return { ok: false };
+  const a = shareAsk;
+  const offered = kind === "tab" ? a.share.tabs.some((t) => t.id === Number(id)) : kind === "source" && a.share.sources.some((s) => s.id === id);
+  if (!offered) return { ok: false };
+  shareAsk = null;
+  close();
+  a.resolve({ kind, id: kind === "tab" ? Number(id) : String(id), audio: audio === true });
+  return { ok: true };
+}
+
+// The bubble's buttons (popup page only).
+function answerPermission(choice) {
+  if (!isOpen("permission") || !permAsk) return { ok: false };
+  const a = permAsk;
+  permAsk = null;
+  close();
+  a.resolve(["visit", "once", "never"].includes(choice) ? choice : "dismiss");
+  return { ok: true };
 }
 
 // Asks for the vault password before a saved login is filled into `wc` (the active tab). Resolves true only after a CORRECT
@@ -333,4 +391,4 @@ function handleAction(name, arg) {
   }
 }
 
-module.exports = { askVaultPassword, verifyVaultPassword, open, autoCloseDownloads, close, isOpen, isSender, getData, refresh, sendFindResult, reposition, handleAction, saveBookmark, removeBookmark };
+module.exports = { askScreenShare, answerScreenShare, askPermission, answerPermission, askVaultPassword, verifyVaultPassword, open, autoCloseDownloads, close, isOpen, isSender, getData, refresh, sendFindResult, reposition, handleAction, saveBookmark, removeBookmark };

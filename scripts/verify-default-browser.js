@@ -69,7 +69,7 @@ if (PHASE === "second") return;
     // second launch and to serve the test web server) - a blocking spawnSync froze both and made the test lie.
     const launch = (arg, phase, ud2) => new Promise((resolve) => {
       const env = { ...process.env, PBCALC_PHASE: phase, PBCALC_UD: ud2 }; delete env.ELECTRON_RUN_AS_NODE;
-      const c = spawn(process.execPath, [__filename, ...(arg ? [arg] : [])], { env, stdio: ["ignore", "pipe", "ignore"] });
+      const c = spawn(process.execPath, [__filename, ...(arg ? ["--", arg] : [])]   /* like the registered command: PBCalc.exe -- "%1" */, { env, stdio: ["ignore", "pipe", "ignore"] });
       let out = ""; c.stdout.on("data", (d) => (out += d));
       const kill = setTimeout(() => { try { c.kill(); } catch (_) {} }, 60000);
       c.on("exit", (code) => { clearTimeout(kill); resolve({ status: code, stdout: out }); });
@@ -127,7 +127,7 @@ if (PHASE === "second") return;
     check("the browser entry opens PBCalc", q(k.client + "\\shell\\open\\command") === '"' + fakeExe + '"');
     check("http and https both point at the URL handler", q(k.client + "\\Capabilities\\URLAssociations", "http") === "PBCalcURL" && q(k.client + "\\Capabilities\\URLAssociations", "https") === "PBCalcURL");
     check(".htm / .html / .pdf point at their handlers", q(k.client + "\\Capabilities\\FileAssociations", ".htm") === "PBCalcHTML" && q(k.client + "\\Capabilities\\FileAssociations", ".html") === "PBCalcHTML" && q(k.client + "\\Capabilities\\FileAssociations", ".pdf") === "PBCalcPDF");
-    check("each handler launches PBCalc with the clicked address/file (\"%1\")", [k.url, k.html, k.pdf].every((key) => q(key + "\\shell\\open\\command") === '"' + fakeExe + '" "%1"'));
+    check("each handler launches PBCalc with the clicked address/file (\"%1\")", [k.url, k.html, k.pdf].every((key) => q(key + "\\shell\\open\\command") === '"' + fakeExe + '" -- "%1"'));
     check("the URL handler is marked as a protocol (an empty 'URL Protocol' value exists)", q(k.url, "URL Protocol") === "");
     check("name and description are there", q(k.client + "\\Capabilities", "ApplicationName") === "PBCalc" && !!q(k.client + "\\Capabilities", "ApplicationDescription"));
     check("it is listed in RegisteredApplications, pointing at the Capabilities key", q(k.registered, "PBCalc") === k.capabilitiesPath);
@@ -135,13 +135,13 @@ if (PHASE === "second") return;
     check("the browser names its Start-menu slot (Capabilities\\Startmenu\\StartMenuInternet)", q(k.client + "\\Capabilities\\Startmenu", "StartMenuInternet") === "PBCalc");
     check("InstallInfo\\IconsVisible = 1", q(k.client + "\\InstallInfo", "IconsVisible") === "0x1");
     check("each ProgId says which application it belongs to (like Chrome's)", [k.url, k.html, k.pdf].every((key) => q(key + "\\Application", "ApplicationName") === "PBCalc" && q(key + "\\Application", "AppUserModelId") === "com.pbcalc.browser" && !!q(key, "FriendlyTypeName")));
-    check("the layout version is stamped (4)", q(k.client, "RegistrationVersion") === db.REG_VERSION && db.REG_VERSION === "4");
+    check("the layout version is stamped (5)", q(k.client, "RegistrationVersion") === db.REG_VERSION && db.REG_VERSION === "5");
     // per-type handlers: every extension PBCalc lists belongs to the ProgId of its kind, and there is one for images and text
     const FA = k.client + "\\Capabilities\\FileAssociations";
     const want = { ".htm": "PBCalcHTML", ".xhtml": "PBCalcHTML", ".pdf": "PBCalcPDF", ".png": "PBCalcIMG", ".jpg": "PBCalcIMG", ".webp": "PBCalcIMG", ".svg": "PBCalcSVG", ".txt": "PBCalcTXT", ".json": "PBCalcTXT" };
     check("images and text files are listed under the matching handler too", Object.entries(want).every(([ext, id]) => q(FA, ext) === id));
     check("every extension in EXTENSIONS is registered", db.EXTENSIONS.every((ext) => !!q(FA, ext)));
-    check("the image / text handlers launch PBCalc with the file", [k.image, k.text].every((key) => q(key + "\\shell\\open\\command") === '"' + fakeExe + '" "%1"'));
+    check("the image / text handlers launch PBCalc with the file", [k.image, k.text].every((key) => q(key + "\\shell\\open\\command") === '"' + fakeExe + '" -- "%1"'));
     check("without icon files the handlers fall back to the exe's icon", [k.pdf, k.image, k.text, k.html].every((key) => q(key + "\\DefaultIcon") === fakeExe + ",0"));
     check("calling register() again changes nothing (idempotent)", (await db.register(fakeExe, sw)) === false);
     // an installed copy that registered with the FIRST layout (no version stamp) is upgraded at its next start

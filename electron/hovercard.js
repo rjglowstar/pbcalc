@@ -36,6 +36,7 @@ function ensureView() {
       preload: path.join(__dirname, "..", "preloads", "hovercard-preload.js"),
     },
   });
+  require("./lockdown").lock(view.webContents);
   view.setBackgroundColor("#00000000");
   view.webContents.loadFile(path.join(__dirname, "..", "renderer", "hovercard", "hovercard.html"));
   view.webContents.on("did-finish-load", () => {

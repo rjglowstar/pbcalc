@@ -88,10 +88,14 @@ const check = (name, cond) => { results.push({ name, pass: !!cond }); console.lo
     r = await run("tel by a button", "/btn?go=" + encodeURIComponent("tel:+123456"), true);
     check("tel: the same", r.prompts === 1 && r.opened === 0);
 
-    console.log("\n-- every other permission is exactly as before (granted)");
-    for (const p of ["notifications", "geolocation", "media", "clipboard-read", "fullscreen", "pointerLock", "midi"]) {
+    console.log("\n-- the other permissions: harmless ones pass, the sensitive ones are no longer handed out silently (electron/permissions.js)");
+    for (const p of ["fullscreen", "pointerLock"]) {
       let got = null; productHandler(null, p, (v) => { got = v; }, {});
-      check("permission '" + p + "' is still granted", got === true);
+      check("permission '" + p + "' is still granted without a question", got === true);
+    }
+    for (const p of ["notifications", "geolocation", "media", "clipboard-read", "midi"]) {
+      let got = null; productHandler(null, p, (v) => { got = v; }, {});
+      check("permission '" + p + "' is NOT granted silently (no site, no answer)", got !== true);
     }
     let weird = null; productHandler(null, "openExternal", (v) => { weird = v; }, {});
     check("an openExternal request with no address is denied, no crash", weird === false);

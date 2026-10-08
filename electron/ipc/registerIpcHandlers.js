@@ -28,9 +28,13 @@ function notifyBookmarks() {
 }
 
 function registerIpcHandlers() {
+  // The tab commands below drive the whole browser (close, switch, open, list every tab's address). They come from the toolbar page
+  // only: every tab page ALSO runs a preload with ipcRenderer, and none of them may be steered by what a page does.
+  const shellSender = (e) => !!state.mainWindow && !state.mainWindow.isDestroyed() && e.sender === state.mainWindow.webContents;
   // ── Tabs ─────────────────────────────────────────────────────────────
-  ipcMain.handle("tabs:get-state", () => tabManager.getTabState());
-  ipcMain.handle("tabs:new", (_e, url) => {
+  ipcMain.handle("tabs:get-state", (e) => (shellSender(e) ? tabManager.getTabState() : null));
+  ipcMain.handle("tabs:new", (e, url) => {
+    if (!shellSender(e)) return null;
     if (state.restricted) {
       // Restricted Mode: + opens the "Your sites" tiles page. Never a URL.
       return url ? tabManager.getTabState() : tabManager.createTab(null, { allowRestricted: true });
@@ -39,12 +43,12 @@ function registerIpcHandlers() {
     if (!url) tabManager.focusAddressBar(); // a blank new tab puts the caret in the omnibox, like Chrome
     return r;
   });
-  ipcMain.handle("tabs:switch", (_e, id) => tabManager.switchTab(id));
-  ipcMain.handle("tabs:close", (_e, id) => tabManager.closeTab(id));
-  ipcMain.on("tabs:back", () => tabManager.goBack());
-  ipcMain.on("tabs:forward", () => tabManager.goForward());
-  ipcMain.on("tabs:reload", () => tabManager.reload());
-  ipcMain.on("tabs:stop", () => tabManager.stop());
+  ipcMain.handle("tabs:switch", (e, id) => (shellSender(e) ? tabManager.switchTab(id) : null));
+  ipcMain.handle("tabs:close", (e, id) => (shellSender(e) ? tabManager.closeTab(id) : null));
+  ipcMain.on("tabs:back", (e) => { if (shellSender(e)) tabManager.goBack(); });
+  ipcMain.on("tabs:forward", (e) => { if (shellSender(e)) tabManager.goForward(); });
+  ipcMain.on("tabs:reload", (e) => { if (shellSender(e)) tabManager.reload(); });
+  ipcMain.on("tabs:stop", (e) => { if (shellSender(e)) tabManager.stop(); });
   // Address-bar suggestions: typing / arrows / Enter come from the shell; a click comes from the
   // dropdown page itself.
   const omnibox = require("../omnibox");
@@ -67,10 +71,13 @@ function registerIpcHandlers() {
   ipcMain.on("hovercard:hide", (e) => {
     if (state.mainWindow && e.sender === state.mainWindow.webContents) require("../hovercard").hide();
   });
-  ipcMain.on("tabs:reset-zoom", () => tabManager.zoom(0));
+  ipcMain.on("tabs:reset-zoom", (e) => { if (shellSender(e)) tabManager.zoom(0); });
+  // A real click / key in a page (reported by its preload, trusted events only): what makes a download "started by the user".
+  ipcMain.on("page:capture", (e, a, v) => tabManager.setCapture(e.sender, a, v));
+  ipcMain.on("page:activity", (e) => downloads.noteActivity(e.sender));
   ipcMain.on("tabs:zoom-wheel", (e, deltaY) => tabManager.zoomWheel(e.sender, Number(deltaY)));
-  ipcMain.on("tabs:move", (_e, id, index) => tabManager.moveTab(id, Number(index)));
-  ipcMain.on("tabs:context-menu", (_e, id) => tabManager.tabContextMenu(id));
+  ipcMain.on("tabs:move", (e, id, index) => { if (shellSender(e)) tabManager.moveTab(id, Number(index)); });
+  ipcMain.on("tabs:context-menu", (e, id) => { if (shellSender(e)) tabManager.tabContextMenu(id); });
 
   // ── Popups (tab search, menu, downloads, site info, find bubble) ─────
   // Opening comes from the shell chrome only; the action channel from the popup page only.
@@ -98,6 +105,8 @@ function registerIpcHandlers() {
   // "Edit bookmark" box: only the popup page, never in Restricted Mode (popup.saveBookmark re-checks too).
   ipcMain.handle("popup:bookmark-save", (e, title, url) => (popup.isSender(e.sender) ? popup.saveBookmark(title, url) : { ok: false, error: "unavailable" }));
   ipcMain.handle("popup:bookmark-remove", (e) => (popup.isSender(e.sender) ? popup.removeBookmark() : { ok: false, error: "unavailable" }));
+  ipcMain.handle("popup:share-answer", (e, kind, id, audio) => (popup.isSender(e.sender) ? popup.answerScreenShare(String(kind), id, audio === true) : { ok: false }));
+  ipcMain.handle("popup:perm-answer", (e, choice) => (popup.isSender(e.sender) ? popup.answerPermission(String(choice)) : { ok: false }));
   ipcMain.handle("popup:vault-verify", (e, pw) => (popup.isSender(e.sender) ? popup.verifyVaultPassword(pw) : { ok: false, error: "unavailable" }));
   ipcMain.handle("popup:get-data", (e) => (popup.isSender(e.sender) ? popup.getData() : null));
   ipcMain.on("popup:action", (e, name, arg) => {
@@ -164,8 +173,8 @@ function registerIpcHandlers() {
   ipcMain.on("restricted:open", (e, id) => { if (fromRestrictedHome(e)) tabManager.openBookmark(String(id)); });
 
   // ── Bookmarks ────────────────────────────────────────────────────────
-  ipcMain.handle("bookmarks:list", () => bookmarks.list());
-  ipcMain.handle("bookmarks:toggle-active", () => tabManager.toggleBookmarkActive());
+  ipcMain.handle("bookmarks:list", (e) => (shellSender(e) ? bookmarks.list() : []));
+  ipcMain.handle("bookmarks:toggle-active", (e) => (shellSender(e) ? tabManager.toggleBookmarkActive() : null));
   // Bookmark manager page: only the local manager page, and in Restricted Mode only its
   // PIN-verified admin tab.
   const guard = (e) => tabManager.isManagerSender(e.sender);
@@ -199,6 +208,12 @@ function registerIpcHandlers() {
     const df = require("../dropFiles");
     if (df.isOurPage(e.sender)) df.openDropped(paths, at);
   });
+  // A link dropped on the toolbar / tab strip (shell only; web addresses only; never in Restricted Mode: no address entry there).
+  ipcMain.on("links:dropped", (e, url, at) => {
+    if (!fromShell(e) || state.restricted || typeof url !== "string" || !/^https?:\/\//i.test(url)) return;
+    let href; try { href = new URL(url).href; } catch (_) { return; }
+    tabManager.createTab(href, Number.isInteger(at) && at >= 0 && at <= state.tabs.length ? { index: at } : {});
+  });
   // A file drag from Explorer entered / left a tab page: the shell turns its tab strip into a drop target meanwhile.
   ipcMain.on("files:drag-state", (e, active) => {
     const df = require("../dropFiles");
@@ -208,7 +223,7 @@ function registerIpcHandlers() {
   ipcMain.on("bookmarks:context-menu", (e, id) => { if (fromShell(e)) tabManager.bookmarkContextMenu(String(id)); });
 
   // ── Downloads ────────────────────────────────────────────────────────
-  ipcMain.handle("downloads:get", () => downloads.publicList());
+  ipcMain.handle("downloads:get", (e) => (shellSender(e) ? downloads.publicList() : []));
   // The Downloads page (pbcalc://downloads): only that local page, re-checked by URL on every call.
   const fromDownloadsPage = (e) => { try { return e.sender.getURL().startsWith(DOWNLOADS_URL); } catch (_) { return false; } };
   ipcMain.handle("downloads:page-list", (e) => (fromDownloadsPage(e) ? downloads.publicList() : []));
@@ -232,6 +247,10 @@ function registerIpcHandlers() {
   ipcMain.on("tabs:session-restore", (e, origin) => {
     e.returnValue = sessionRestoreFor(e.sender.id, origin);
   });
+
+  // What the page is shown for Notification.permission / permissions.query: prompt until answered (see permissions.statesFor).
+  // Derived from the sender's own page, never from a parameter.
+  ipcMain.on("perm:states", (e) => { e.returnValue = require("../permissions").statesFor(e.sender, e.senderFrame && e.senderFrame.url); });
 
   function sessionRestoreFor(senderId, origin) {
     const pending = state.pendingSessionRestore.get(senderId);
@@ -290,6 +309,11 @@ function registerIpcHandlers() {
   ipcMain.handle("vault:needs-prompt", (e, _o, username, password) => {
     const o = senderOrigin(e);
     return o ? vault.needsSavePrompt(o, username, password) : false;
+  });
+  // For window.vaultAPI (page scripts): the same question, but the answer never depends on the password.
+  ipcMain.handle("vault:page-needs-prompt", (e, _o, username, password) => {
+    const o = senderOrigin(e);
+    return !!o && !!String(username || "").trim() && !!String(password || "");
   });
   ipcMain.handle("vault:reset-origin", (e) => {
     const o = senderOrigin(e);

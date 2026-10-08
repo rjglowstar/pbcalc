@@ -398,6 +398,26 @@ body:not(.no-hover) .tab:has(+ .tab:hover) .tab-sep { opacity: 0; }
   font-size: 12px;
   cursor: pointer;
 }
+/* Chrome's "Microphone in use" pill: tonal blue, blue ink (same blues as the toolbar's other accents) */
+.capture-chip {
+  flex: 0 0 auto;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 6px;
+  margin-right: 2px;
+  border-radius: 12px;
+  background: var(--chip-bg, #d3e3fd);
+  color: var(--chip-ink, #0b57d0);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+}
+.capture-chip[hidden] { display: none; }
+.capture-chip .icon { width: 16px; height: 16px; }
+@media (prefers-color-scheme: dark) { .capture-chip { --chip-bg: #004a77; --chip-ink: #c2e7ff; } }
 .site-info:hover { background: var(--hover); }
 .site-info .icon { width: 16px; height: 16px; }
 .site-info.insecure { color: var(--danger); }

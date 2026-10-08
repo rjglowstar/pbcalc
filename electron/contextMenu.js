@@ -27,7 +27,7 @@ function attachContextMenu(wc, { openInNewTab, isShell = false } = {}) {
 
     if (p.mediaType === "image" && p.srcURL && !isShell && !locked) {
       t.push({ label: "Open image in new tab", click: () => openInNewTab(p.srcURL) });
-      t.push({ label: "Save image as…", click: () => wc.downloadURL(p.srcURL) });
+      t.push({ label: "Save image as…", click: () => { require("./downloads/downloadManager").noteActivity(wc); wc.downloadURL(p.srcURL); } });
       t.push({ label: "Copy image", click: () => wc.copyImageAt(p.x, p.y) });
       t.push({ label: "Copy image address", click: () => clipboard.writeText(p.srcURL) });
       sep();

@@ -107,6 +107,8 @@ app.whenReady().then(() => {
     for (const ses of sessions) {
       ses.setUserAgent(cleanUA);
       ses.setPermissionRequestHandler(require("./tabs/tabManager").permissionRequestHandler);   // see there: no silent app launches
+      require("./screenShare").install(ses);   // getDisplayMedia: without a handler Electron answers "NotSupportedError"
+      ses.setPermissionCheckHandler((wc, permission, origin, details) => require("./permissions").check(wc, permission, origin, details));
       ses.webRequest.onBeforeSendHeaders((details, callback) => {
         if (details.resourceType === "mainFrame") {
           details.requestHeaders["Upgrade-Insecure-Requests"] = "1";

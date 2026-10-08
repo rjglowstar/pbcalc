@@ -9,8 +9,11 @@ const IMAGES = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif
 const TEXT = [".txt", ".log", ".json"];
 const PDF = [".pdf"];
 const WEB = [".html", ".htm", ".xhtml", ".svg"];
+// Video: Chrome plays these in its own player page (controls, full screen, speed, download). Chromium shows a local video file
+// that way, so no script of the file ever runs (unlike html / svg).
+const VIDEO = [".mp4", ".webm", ".m4v", ".ogv", ".mov"];
 
-const IN_TAB = new Set([...PDF, ...IMAGES, ...TEXT]);
+const IN_TAB = new Set([...PDF, ...IMAGES, ...TEXT, ...VIDEO]);
 const FROM_USER = new Set([...IN_TAB, ...WEB]);
 
 // "pdf" | "html" | "image" | "text" | null - which of PBCalc's file icons / ProgIds a file belongs to
@@ -23,4 +26,4 @@ function kindOf(ext) {
   return null;
 }
 
-module.exports = { IN_TAB, FROM_USER, TEXT, PDF, kindOf };
+module.exports = { IN_TAB, FROM_USER, TEXT, PDF, VIDEO, kindOf };

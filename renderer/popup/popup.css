@@ -331,3 +331,81 @@ body.bubble .panel { inset: 4px; border-radius: 8px; }
 .bm-buttons .primary { border: none; background: var(--accent); color: var(--accent-text); }
 .bm-buttons .primary:hover:not(:disabled) { background: var(--accent-hover); }
 .bm-buttons button:disabled { opacity: 0.6; }
+
+/* Permission bubble (Chrome 154: 320 wide, 12px radius, pill buttons) */
+.panel.pm-panel { border-radius: 12px; padding: 20px; overflow: visible; box-sizing: border-box; border: 1px solid var(--border); }
+.pm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.pm-title { font-size: 14px; line-height: 20px; color: var(--text); overflow-wrap: anywhere; }
+.pm-title b { font-weight: 700; }
+.pm-x { flex: 0 0 auto; width: 28px; height: 28px; margin: -4px -6px 0 0; border: none; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+.pm-x:hover { background: var(--hover); }
+.pm-x svg { width: 16px; height: 16px; fill: currentColor; }
+.pm-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: 13px; color: var(--text); }
+.pm-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin: 0 4px 0 6px; }
+.pm-buttons { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.pm-buttons button { height: 38px; border: none; border-radius: 19px; font: 600 13px "Segoe UI", system-ui, sans-serif; cursor: pointer; background: var(--accent-soft, color-mix(in srgb, var(--accent) 16%, transparent)); color: var(--accent); }
+.pm-buttons button.first { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.pm-buttons button:hover { filter: brightness(0.93); }
+
+/* "Choose what to share with <site>" - Chrome 154's screen-share picker, measured on the owner's Chrome screenshots:
+   610px wide, 1px #E1E3E1 border, 16px radius; title 16/600, subtitle 13px; three equal tabs (13/600, active #0B57D0 with a 2px bar) over a
+   #DADCE0 line; a #EDF2FA panel 16px inside the dialog's 20px margins with 16px padding; list card 302 wide, preview 218x135, audio bar 38px. */
+:root { --sh-bg: #fff; --sh-border: #e1e3e1; --sh-text: #1f1f1f; --sh-muted: #444746; --sh-line: #dadce0; --sh-panel: #edf2fa; --sh-card: #fff;
+  --sh-tonal: #d3e3fd; --sh-tonal-text: #041e49; --sh-bar: #f8fafd; --sh-bar-border: #c7c7c7; --sh-accent: #0b57d0; --sh-accent-text: #fff;
+  --sh-off: #747775; --sh-dis-bg: #e5e5e5; --sh-dis-text: #9b9b9b; }
+@media (prefers-color-scheme: dark) {
+  :root { --sh-bg: #1f1f1f; --sh-border: #444746; --sh-text: #e3e3e3; --sh-muted: #c4c7c5; --sh-line: #444746; --sh-panel: #282828; --sh-card: #1f1f1f;
+    --sh-tonal: #004a77; --sh-tonal-text: #c2e7ff; --sh-bar: #2b2b2b; --sh-bar-border: #5e5e5e; --sh-accent: #a8c7fa; --sh-accent-text: #062e6f;
+    --sh-off: #8e918f; --sh-dis-bg: #38393a; --sh-dis-text: #77797a; }
+}
+.panel.sh-panel { box-sizing: border-box; padding: 0; overflow: visible; border-radius: 16px; background: var(--sh-bg); color: var(--sh-text); border: 1px solid var(--sh-border); font-family: "Segoe UI", system-ui, sans-serif; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); max-height: calc(100vh - 40px); }
+.sh-head { padding: 24px 20px 12px; }
+.sh-title { font-size: 16px; line-height: 24px; font-weight: 600; }
+.sh-sub { margin-top: 8px; font-size: 13px; line-height: 20px; color: var(--sh-muted); }
+.sh-tabs { display: flex; border-bottom: 1px solid var(--sh-line); }
+.sh-tab { flex: 1 1 0; padding: 12px 0 11px; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; font: 600 13px "Segoe UI", system-ui, sans-serif; color: var(--sh-text); cursor: pointer; }
+.sh-tab:hover { background: color-mix(in srgb, var(--sh-accent) 8%, transparent); }
+.sh-tab.on { color: var(--sh-accent); border-bottom-color: var(--sh-accent); }
+.sh-body { padding: 0 20px; }
+.sh-panelbox { background: var(--sh-panel); border-radius: 12px; padding: 16px; height: 418px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; }
+.sh-tabwrap { flex: 1 1 auto; min-height: 0; display: flex; gap: 16px; }
+.sh-list { flex: 0 0 302px; background: var(--sh-card); border-radius: 12px; overflow-y: auto; padding: 8px 0; }
+.sh-row { display: flex; align-items: center; gap: 12px; width: 100%; height: 38px; padding: 0 16px; border: none; border-top: 2px solid transparent; border-bottom: 2px solid transparent; background: none; text-align: left; cursor: pointer; font: 13px "Segoe UI", system-ui, sans-serif; color: var(--sh-text); }
+.sh-row:hover { background: color-mix(in srgb, var(--sh-accent) 8%, transparent); }
+.sh-row.on { background: var(--sh-tonal); border-top-color: var(--sh-accent); border-bottom-color: var(--sh-accent); }
+.sh-fav, .sh-app { flex: 0 0 auto; width: 18px; height: 18px; display: grid; place-items: center; }
+.sh-app { width: 16px; height: 16px; }
+.sh-fav img, .sh-app img { width: 100%; height: 100%; object-fit: contain; }
+.sh-fav svg, .sh-app svg { width: 100%; height: 100%; fill: var(--sh-off); }
+.sh-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-side { flex: 1 1 auto; min-width: 0; }
+.sh-preview { height: 135px; border-radius: 12px; background: var(--sh-tonal); overflow: hidden; display: grid; place-items: center; font-size: 13px; color: var(--sh-text); text-align: center; }
+.sh-preview img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.sh-cap { margin-top: 12px; font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.sh-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; display: grid; align-content: start; justify-content: center; gap: 14px 20px; padding: 6px 8px 6px 8px; }
+.sh-grid.window { grid-template-columns: repeat(3, 160px); }
+.sh-grid.screen { grid-template-columns: repeat(2, 250px); padding-top: 22px; }
+.sh-card { display: flex; flex-direction: column; gap: 12px; padding: 6px; border: 2px solid transparent; border-radius: 8px; background: none; cursor: pointer; text-align: left; font: 13px "Segoe UI", system-ui, sans-serif; color: var(--sh-text); }
+.sh-card:hover { background: color-mix(in srgb, var(--sh-accent) 8%, transparent); }
+.sh-card.on { background: var(--sh-tonal); border-color: var(--sh-accent); }
+.sh-thumb { border-radius: 4px; overflow: hidden; background: #111; border: 1px solid color-mix(in srgb, var(--sh-text) 25%, transparent); }
+.sh-grid.window .sh-thumb { height: 100px; }
+.sh-grid.screen .sh-thumb { height: 140px; }
+.sh-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sh-label { display: flex; align-items: center; gap: 10px; min-height: 20px; }
+.sh-grid.screen .sh-label { justify-content: center; }
+.sh-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-bar { flex: 0 0 auto; height: 38px; box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 14px; border-radius: 8px; border: 1px solid var(--sh-bar-border); background: var(--sh-bar); font-size: 13px; }
+.sh-ico { flex: 0 0 auto; width: 18px; height: 18px; fill: var(--sh-muted); }
+.sh-bar-text { flex: 1 1 auto; }
+.sh-switch { flex: 0 0 auto; position: relative; width: 36px; height: 20px; border: none; border-radius: 10px; background: var(--sh-off); cursor: pointer; padding: 0; transition: background 0.12s; }
+.sh-switch.on { background: var(--sh-accent); }
+.sh-knob { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 0.12s; }
+.sh-switch.on .sh-knob { transform: translateX(16px); }
+.sh-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 22px 20px 20px; }
+.sh-foot button { height: 38px; padding: 0 22px; border: none; border-radius: 19px; font: 600 14px "Segoe UI", system-ui, sans-serif; cursor: pointer; }
+.sh-share { background: var(--sh-accent); color: var(--sh-accent-text); }
+.sh-share:hover:not(:disabled) { filter: brightness(1.08); }
+.sh-share:disabled { background: var(--sh-dis-bg); color: var(--sh-dis-text); cursor: default; }
+.sh-cancel { background: var(--sh-tonal); color: var(--sh-tonal-text); }
+.sh-cancel:hover { filter: brightness(0.96); }

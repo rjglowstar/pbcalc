@@ -32,6 +32,7 @@ function createMainWindow() {
       preload: path.join(__dirname, "..", "..", "preloads", "shell-preload.js"),
     },
   });
+  require("../lockdown").lock(state.mainWindow.webContents);   // the toolbar page never opens windows or navigates away (a dropped link used to)
 
   // Each ATTACHED view adds a "closed" and a "resize" listener to the window. viewHost.js removes the "closed" one (Electron never
   // does) on detach, so the count follows the number of attached views - normally 1-3. Opening many tabs at once keeps their old

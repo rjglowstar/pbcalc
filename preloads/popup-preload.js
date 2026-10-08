@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("popupAPI", {
   getData: () => ipcRenderer.invoke("popup:get-data"),
   action: (name, arg) => ipcRenderer.send("popup:action", name, arg),
   admin: (mode) => ipcRenderer.invoke("popup:admin", mode),
+  shareAnswer: (kind, id, audio) => ipcRenderer.invoke("popup:share-answer", kind, id, audio),
+  permissionAnswer: (choice) => ipcRenderer.invoke("popup:perm-answer", choice),
   vaultVerify: (pw) => ipcRenderer.invoke("popup:vault-verify", pw),
   removeBookmark: () => ipcRenderer.invoke("popup:bookmark-remove"),
   saveBookmark: (title, url) => ipcRenderer.invoke("popup:bookmark-save", title, url),

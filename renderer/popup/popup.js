@@ -546,6 +546,169 @@
     if (data.vault.secs) lock(data.vault.secs); else input.focus();
   }
 
+  // "<site> wants to ... [Allow while visiting the site] [Allow this time] [Never allow]" - Chrome's permission bubble, under the
+  // site-info icon (layout measured on Chrome 154). Closing it (X, Esc, a click outside) refuses this time.
+  function renderPermission() {
+    if (!data.permission) { act("close"); return; }
+    if (panel.querySelector(".pm")) return;
+    panel.textContent = "";
+    panel.classList.add("pm-panel");
+    const a = data.anchor;
+    panel.style.width = "320px";
+    panel.style.left = Math.max(8, Math.min(a.left - 8, window.innerWidth - 328)) + "px";
+    panel.style.top = a.bottom + 6 + "px";
+    const box = el("div", "pm");
+    const head = el("div", "pm-head");
+    const title = el("div", "pm-title");
+    title.appendChild(el("b", "", data.permission.origin));
+    title.appendChild(document.createTextNode(" wants to"));
+    head.appendChild(title);
+    const x = el("button", "pm-x");
+    x.title = "Close";
+    x.appendChild(I.icon("close"));
+    x.addEventListener("click", () => act("close"));
+    head.appendChild(x);
+    box.appendChild(head);
+    for (const t of data.permission.texts) {
+      const row = el("div", "pm-row");
+      row.appendChild(el("span", "pm-dot"));
+      row.appendChild(el("span", "", t));
+      box.appendChild(row);
+    }
+    const btns = el("div", "pm-buttons");
+    for (const [label, choice, cls] of [["Allow while visiting the site", "visit", "first"], ["Allow this time", "once", ""], ["Never allow", "never", ""]]) {
+      const b = el("button", cls, label);
+      b.addEventListener("click", () => api.permissionAnswer(choice));
+      btns.appendChild(b);
+    }
+    box.appendChild(btns);
+    panel.appendChild(box);
+  }
+
+  // "Choose what to share with <site>" - Chrome's screen-share picker, laid out from Chrome 154's own dialog (measured on the owner's screenshots):
+  // three tabs (Chrome Tab / Window / Entire Screen), a tonal panel under them, a bar with the audio switch / the audio hint, and
+  // Share + Cancel at the bottom. This dialog is the consent; nothing is shared until Share.
+  function renderShare() {
+    if (!data.share) { act("close"); return; }
+    if (panel.querySelector(".sh")) return;
+    const sh = data.share;
+    panel.textContent = "";
+    panel.classList.add("sh-panel");
+    const W = 610;
+    panel.style.width = W + "px";
+    panel.style.left = Math.max(8, Math.round((window.innerWidth - W) / 2)) + "px";
+    panel.style.top = "30px";
+    const box = el("div", "sh");
+    const head = el("div", "sh-head");
+    head.appendChild(el("div", "sh-title", "Choose what to share with " + sh.host));
+    head.appendChild(el("div", "sh-sub", "The site will be able to see the contents of your screen"));
+    box.appendChild(head);
+
+    const kinds = [];
+    if (!sh.restricted) kinds.push(["tab", "Chrome Tab"]);
+    if (sh.sources.some((s) => !s.screen)) kinds.push(["window", "Window"]);
+    if (sh.sources.some((s) => s.screen)) kinds.push(["screen", "Entire Screen"]);
+    let kind = kinds.length ? kinds[0][0] : "window", picked = null, tabAudio = true;
+
+    const strip = el("div", "sh-tabs");
+    const body = el("div", "sh-body");
+    const foot = el("div", "sh-foot");
+    const cancel = el("button", "sh-cancel", "Cancel");
+    const share = el("button", "sh-share", "Share");
+    cancel.addEventListener("click", () => act("close"));
+    foot.appendChild(share); foot.appendChild(cancel);
+    box.appendChild(strip); box.appendChild(body); box.appendChild(foot);
+    panel.appendChild(box);
+
+    const SVG = "http://www.w3.org/2000/svg";
+    const speaker = () => {
+      const svg = document.createElementNS(SVG, "svg"); svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("class", "sh-ico");
+      const p = document.createElementNS(SVG, "path"); p.setAttribute("d", "M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z");
+      svg.appendChild(p); return svg;
+    };
+    const iconImg = (src, cls) => {
+      const box2 = el("span", cls);
+      if (src) { const im = el("img"); im.src = src; im.alt = ""; im.addEventListener("error", () => { box2.textContent = ""; box2.appendChild(I.icon("globe")); }); box2.appendChild(im); }
+      else box2.appendChild(I.icon("globe"));
+      return box2;
+    };
+
+    const drawFoot = () => {
+      share.disabled = !picked;
+      share.textContent = kind === "tab" && tabAudio ? "Share with Audio" : "Share";
+    };
+
+    const bar = () => {
+      const b = el("div", "sh-bar");
+      b.appendChild(speaker());
+      if (kind === "tab") {
+        b.appendChild(el("span", "sh-bar-text", "Share with tab audio"));
+        const sw = el("button", "sh-switch" + (tabAudio ? " on" : ""));
+        sw.setAttribute("role", "switch"); sw.setAttribute("aria-checked", String(tabAudio)); sw.setAttribute("aria-label", "Share with tab audio");
+        sw.appendChild(el("span", "sh-knob"));
+        sw.addEventListener("click", () => { tabAudio = !tabAudio; sw.classList.toggle("on", tabAudio); sw.setAttribute("aria-checked", String(tabAudio)); drawFoot(); });
+        b.appendChild(sw);
+      } else {
+        b.appendChild(el("span", "sh-bar-text", "To share audio, share a tab instead"));
+      }
+      return b;
+    };
+
+    const draw = () => {
+      strip.textContent = ""; body.textContent = "";
+      for (const [id, label] of kinds) {
+        const t = el("button", "sh-tab" + (kind === id ? " on" : ""), label);
+        t.addEventListener("click", () => { kind = id; picked = null; draw(); });
+        strip.appendChild(t);
+      }
+      const panelBox = el("div", "sh-panelbox");
+      if (kind === "tab") {
+        const wrap = el("div", "sh-tabwrap");
+        const list = el("div", "sh-list");
+        for (const t of sh.tabs) {
+          const row = el("button", "sh-row" + (picked && picked.id === t.id ? " on" : ""));
+          row.appendChild(iconImg(t.favicon, "sh-fav"));
+          row.appendChild(el("span", "sh-row-title", t.title));
+          row.addEventListener("click", () => { picked = t; draw(); });
+          row.addEventListener("dblclick", () => { picked = t; api.shareAnswer("tab", t.id, tabAudio); });
+          list.appendChild(row);
+        }
+        const side = el("div", "sh-side");
+        const prev = el("div", "sh-preview");
+        if (picked && picked.thumb) { const im = el("img"); im.src = picked.thumb; im.alt = ""; prev.appendChild(im); }
+        else if (!picked) prev.appendChild(el("span", "", "Select a tab to share"));
+        side.appendChild(prev);
+        if (picked) side.appendChild(el("div", "sh-cap", picked.title));
+        wrap.appendChild(list); wrap.appendChild(side);
+        panelBox.appendChild(wrap);
+      } else {
+        const grid = el("div", "sh-grid " + kind);
+        for (const s of sh.sources.filter((x) => (kind === "screen" ? x.screen : !x.screen))) {
+          const card = el("button", "sh-card" + (picked && picked.id === s.id ? " on" : ""));
+          const th = el("div", "sh-thumb");
+          if (s.thumb) { const im = el("img"); im.src = s.thumb; im.alt = ""; th.appendChild(im); }
+          card.appendChild(th);
+          const lab = el("div", "sh-label");
+          if (kind === "window") lab.appendChild(iconImg(s.icon, "sh-app"));
+          lab.appendChild(el("span", "sh-name", s.name));
+          card.appendChild(lab);
+          card.addEventListener("click", () => { picked = s; draw(); });
+          card.addEventListener("dblclick", () => { picked = s; api.shareAnswer("source", s.id, false); });
+          grid.appendChild(card);
+        }
+        panelBox.appendChild(grid);
+      }
+      panelBox.appendChild(bar());
+      body.appendChild(panelBox);
+      drawFoot();
+    };
+    share.addEventListener("click", () => {
+      if (!picked) return;
+      api.shareAnswer(kind === "tab" ? "tab" : "source", picked.id, kind === "tab" && tabAudio);
+    });
+    draw();
+  }
+
   function render() {
     if (!data) return;
     if (data.kind === "tabsearch") renderTabSearch();
@@ -555,6 +718,8 @@
     else if (data.kind === "find") renderFind();
     else if (data.kind === "unlock") renderUnlock();
     else if (data.kind === "vault-unlock") renderVaultUnlock();
+    else if (data.kind === "permission") renderPermission();
+    else if (data.kind === "screenshare") renderShare();
     else if (data.kind === "bookmark-edit") {
       // Main re-sends data on every tab/title/download change (popup.refresh). The box is a FORM: rebuilding it from the
       // stored values threw away what was being typed (measured: Name went back to the old title after the page changed

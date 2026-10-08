@@ -78,5 +78,21 @@ contextBridge.exposeInMainWorld("browserAPI", {
     const at = parseInt(document.documentElement.dataset.dropIndex, 10);
     if (paths.length) ipcRenderer.send("files:dropped", paths.slice(0, 10), Number.isInteger(at) && at >= 0 ? at : null);
   });
+  // A LINK dragged in from another window / program (text/uri-list - not the tab / bookmark drags inside this page, which carry
+  // plain text only): opens in a new tab at the drop slot, like Chrome. Before this a drop made Chromium open a stray window.
+  const hasLink = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("text/uri-list");
+  window.addEventListener("dragover", (e) => {
+    if (!e.isTrusted || e.defaultPrevented || hasFiles(e) || !hasLink(e)) return;
+    e.preventDefault();
+    // the drop effect must be one the SOURCE allows, or the drop never happens: a browser offers copy+link, a bare "copy" source only copy
+    e.dataTransfer.dropEffect = /link|all|uninitialized/i.test(e.dataTransfer.effectAllowed) ? "link" : "copy";
+  });
+  window.addEventListener("drop", (e) => {
+    if (!e.isTrusted || e.defaultPrevented || hasFiles(e) || !hasLink(e)) return;
+    e.preventDefault();
+    const first = String(e.dataTransfer.getData("text/uri-list") || "").split(/\r?\n/).find((l) => l && !l.startsWith("#"));
+    const at = parseInt(document.documentElement.dataset.dropIndex, 10);
+    if (first) ipcRenderer.send("links:dropped", first.slice(0, 4000), Number.isInteger(at) && at >= 0 ? at : null);
+  });
 })();
 

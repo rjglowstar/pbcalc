@@ -798,6 +798,7 @@ Two things define this browser against every mainstream one:
   descendant must opt out explicitly (`.tab *`). Opting out only on `.tab` left the tab's close X
   dead for real mouse clicks while every synthetic-click test passed. Anything clickable in the
   strip needs `scripts/manual-os-click.sh` (real OS clicks, moves the mouse; do NOT run it while someone is using the computer, their mouse movement makes it fail), not just `sendInputEvent`.
+- Security / permissions / argv: see the "Security audit" section.
 - Also: `verify-leaks.js` (11, memory/leaks, see "Memory and leaks"), `verify-vault-lock.js` (64), `verify-zoom.js` (23), `verify-drop-files.js` (19), `verify-drop-ui.js` (27), `verify-default-browser.js` (57), `verify-open-downloads.js` (17), `verify-features.js` (38). Full battery last run: 26 suites, 0 failures (`verify-ui.js` and `manual-os-click.sh` need the real pointer and were not run).
 - Self-tests (run any with `env -u ELECTRON_RUN_AS_NODE ./node_modules/electron/dist/electron.exe scripts/<file>`):
   `verify.js` (19), `verify-features.js` (36), `verify-downloads.js` (23), `verify-dlanim.js` (41: the download-started flight, rendered and compared with Chrome's measurements), `verify-download-tab.js` (22: a download opened in a new tab closes that tab, a page tab stays), `verify-download-flow.js` (49), `verify-suggestions.js` (19), `verify-browser.js` (68, needs `openssl`; its window is
@@ -922,6 +923,84 @@ exposed to page scripts and unused by PBCalc itself - passwords are protected by
 **Never run `reg.exe` / `powershell.exe` with `execFileSync` (or any sync call) in the main process.** `defaultBrowser.js` did, five seconds after every start of the installed copy: the repair pass blocked the main thread 4.4 s and the registration 1.8 s, and Windows showed "PBCalc (Not responding)" (Event Log: `AppHangTransient`, PBCalc.exe) - the owner thought the 3-click bookmark switch caused it, but that switch takes 4 ms (measured); it only coincided. All of `defaultBrowser.js` is now async (at most 8 `reg.exe` at once; the repair pass took 1.2 s and the longest event-loop gap was 44 ms) and `verify-default-browser.js` fails if the loop stalls over 250 ms. A dev copy never runs this code (`app.isPackaged`), so such a freeze only shows in the INSTALLED app.
 
 **Uninstall** (`installer/installer.nsh`, `scripts/verify-uninstall.js`, 15 checks): ALWAYS removes PBCalc's Windows registration (Default apps entries, every `PBCalc*` ProgId, `ApplicationsPBCalc.exe`, and - by a PowerShell pass - any Windows-made "Opens with" ProgId whose open command is in this install, plus every `DefaultIcon` pointing into it). Then it ASKS "Also delete all of your PBCalc data?" (Yes/No, default No): Yes removes `%LOCALAPPDATA%PBCalc` and the fallback `%APPDATA%PBCalc` (saved passwords, the fill password, bookmarks, settings, cache, cookies, crash reports) and nothing else; downloaded files are never touched. A silent uninstall (`/S`, which is also how an update replaces the old version) never asks and never deletes data. The NSIS script itself could not be run end to end without uninstalling the owner's real PBCalc: it is compiled by `npm run dist`, its structure is checked, and the PowerShell command is executed for real against a made-up registry area.
+
+## Video files open in a tab (`fileTypes.VIDEO`, `scripts/verify-video-open.js`, 18 checks)
+Chrome plays a local .mp4 in a tab; PBCalc ignored a dropped video and sent a downloaded one to another program. `.mp4 .webm .m4v .ogv .mov` are
+now in `IN_TAB` (so also `FROM_USER`): dropped on the window, handed over by Windows, or clicked in the Downloads list -> a new tab with Chromium's
+own video page (the same controls as Chrome's; it is Chromium's, not drawn by PBCalc), Restricted Mode too. Measured: a generated webm and the owner's
+real H.264 mp4 both decode and play. Not added on purpose: `.mkv/.avi` (Chromium cannot play them), audio files, a Windows file icon / "default app"
+entry for video (`kindOf` stays null). Also fixed here: `permissions.check` ignored `details.mediaType` (singular), so after Allow the page got no
+device names (Meet: "Mic not found"); test in `verify-capture-indicator.js`.
+
+## Screen sharing (`electron/screenShare.js`, `scripts/verify-screenshare.js`, 29 checks)
+Google Meet's "Present now" (any site's `getDisplayMedia()`) said "Can't share your screen" because Electron answers `getDisplayMedia` with
+`NotSupportedError` unless the app installs a display-media handler (measured; PBCalc never did). The picker is a copy of **Chrome 154's own dialog**,
+laid out from the owner's screenshots (popup kind `screenshare`, `renderShare` in popup.js, `.sh-*` in popup.css): "Choose what to share with <site>" +
+"The site will be able to see the contents of your screen", three equal tabs **Chrome Tab / Window / Entire Screen**; Chrome Tab = this browser's OTHER tabs
+(favicon + title, selected row tonal with blue lines, preview + caption on the right, "Select a tab to share"), the bar "Share with tab audio" with a switch
+(on by default, button says "Share with Audio", off = "Share"); Window = 3-column grid of window thumbnails with the app icon + title; Entire Screen = big
+thumbnails "Screen 1", "Screen 2"; Window / Screen show "To share audio, share a tab instead" (Chrome gives no system audio there either); Cancel / Share bottom right.
+Flow: Chromium asks the PERMISSION first ("display-capture", or "media" with no camera/microphone) -> `permissions.request` -> `screenShare.pick` shows the dialog
+(the consent - nothing is remembered) -> `setDisplayMediaRequestHandler` hands over exactly the picked source.
+- **Why the picker lives in the permission step:** refusing inside the display handler (`callback({})`, `null`, nothing - all measured) gives the page
+  `AbortError: Invalid capture constraints`, so Meet shows "Can't share your screen" when the user merely cancels; refusing the PERMISSION gives `NotAllowedError`
+  (Chrome's answer to a cancelled picker).
+- **A tab is captured as a frame** (`video: webContents.mainFrame`, `audio: mainFrame` + `enableLocalEcho` so the tab keeps playing here). **Measured: Electron only
+  delivers a stream for a tab that is ON SCREEN - a background tab's request hangs for ever.** So pressing Share switches to the shared tab first (Chrome does too),
+  waits 450 ms, then captures. The asking page ends up in the background (Meet keeps running).
+- Only the tab you are looking at may ask; the page only ever gets an id/tab that was offered; Restricted Mode: the dialog works but has no "Chrome Tab" list (no other
+  tab's title is shown) and starts on Window. Not available: Chrome's system-audio tick box for a whole screen (the screenshot dialog does not show it either).
+
+## Permission state the page sees, and "Microphone in use" (`scripts/verify-capture-indicator.js`, 28 checks)
+- **Undecided = "default" / "prompt", like Chrome.** Electron's check handler can only answer yes/no, so a page that had not been asked saw
+  `Notification.permission === "denied"` and `permissions.query` "denied" (measured). Google Meet reads that as "blocked" and, when you press
+  "Allow notifications", opens its "how to unblock" help page (support.google.com/meet/answer/15236238) instead of asking. `tab-preload.js`
+  now patches `Notification.permission` and `Permissions.prototype.query` in the main world from `permissions.statesFor` (sync `perm:states`
+  at load, pushed again after every answer). Covers notifications, location, camera, microphone, MIDI, clipboard-read. **Not verified against
+  the real Meet** (needs a Google login): the cause is inferred from the measured "denied" before any question - the owner confirms by hand.
+- **"Microphone in use" / "Camera in use" / "Camera and microphone in use" pill** left of the site-info icon (`#capture-chip`). The preload wraps
+  `getUserMedia` and `MediaStreamTrack.stop` in the main world and reports live audio/video track counts as the NAME of a DOM event
+  (`pbc:<random>:<a>:<v>`, no data crosses worlds) -> IPC `page:capture` -> `tab.capture` (sender decides the tab; dropped on navigation).
+  Not covered: streams made in iframes, screen sharing, the chip's click bubble and the tab-strip recording dot (Chrome has them; the colours
+  and position were taken from the owner's screenshot, not measured from Chrome).
+
+## Security audit (attacker's view) - `scripts/verify-security.js` (49 checks), `verify-permissions.js` (35), `verify-argv-injection.js` (5)
+
+A hostile test page on a local server (real tab, real session) tries what a malicious site tries; every check is written as the SECURE
+outcome, so a FAIL is a vulnerability. Found by measuring, fixed, and each fix has a negative control (switching it off makes its check fail):
+- **Silent permissions (HIGH).** The permission handler said yes to everything except openExternal: a page got location, camera,
+  microphone, notifications, clipboard-read and MIDI without a question. Now `electron/permissions.js`: Chrome-style bubble under the
+  site-info icon ("<site> wants to ... Allow while visiting the site / Allow this time / Never allow"), answers kept in MEMORY only
+  (closing the browser forgets them - the no-history rule), `setPermissionCheckHandler` so `Notification.permission` /
+  `permissions.query` do not claim "granted" (and a page cannot show notifications unasked), benign ones (fullscreen, pointer lock,
+  clipboard write, DRM) pass, unknown names are refused, a background tab is refused, one bubble at a time (queue), works in Restricted
+  Mode. **Trap:** a PC without a camera/microphone makes Chromium answer NotFoundError BEFORE it asks, so tests must call the handler
+  (`permissions.request`) for media; clipboard.readText() on an unfocused page is refused by Chromium itself.
+- **Password-guess oracle (HIGH).** `window.vaultAPI.needsSavePrompt(user, guess)` answered false for the saved password and true for any other: a
+  page script could guess a saved password with no password dialog. The page-facing call now uses `vault:page-needs-prompt` (answer
+  never depends on the password); the browser's own save prompt keeps the exact check on its internal channel.
+- **Stray window from a dropped link (HIGH for Restricted Mode).** Dropping a link (text/uri-list) on the toolbar / tab strip made Chromium open a
+  NEW unmanaged BrowserWindow (no tabs, no address bar, default session) - an escape from Restricted Mode. `electron/lockdown.js`: the toolbar
+  page, popups, omnibox list, hover card and download animation refuse every window.open and every navigation away. A dropped link now opens
+  a new tab at the drop slot (normal mode only, http(s) only; never in Restricted Mode).
+- **Automatic downloads (MEDIUM).** A page could save dozens of files by script. Like Chrome: one automatic download per page address, the rest refused
+  unless the user clicked / pressed a key within 5 s. `DownloadItem.hasUserGesture()` is useless here (measured: true for a script's `<a download>`.click()),
+  so the tab preload reports TRUSTED pointer/key events (`page:activity`). Downloads are Mark-of-the-Web'd (Zone.Identifier present) and hostile
+  file names are sanitised (traversal, CON, trailing dots, colons: measured safe).
+- **Restricted Mode "same site" (MEDIUM).** The last-two-labels rule made `user1.github.io` allow ALL of github.io (also blogspot, herokuapp, vercel.app ...):
+  `restricted.js` SHARED_SUFFIXES (a short list, not the full public-suffix list) now makes the site one label + suffix.
+- **Command-line injection (MEDIUM, defence in depth).** The registered link handler was `"PBCalc.exe" "%1"`: a quote inside a link from a program that does not
+  escape it becomes extra Chromium switches (`--remote-debugging-port` measured to open full remote control). Now `"PBCalc.exe" -- "%1"` (registry layout 5);
+  `targetFromArgv` already skipped switches. The Windows-made "Opens with" entries cannot be changed (they carry files, not links).
+- **Context menu (LOW).** "Open link in new tab" loaded ANY scheme (file:, javascript:, data:, ms-*) as a browser-initiated load; now http(s) only. The external-application dialog
+  showed only 200 characters and opened the raw string; it now shows and opens the whole normalized address.
+- **Tab commands (hardening).** `tabs:*`, `bookmarks:list`, `downloads:get` ... answered ANY sender, including the preload of every web page; now toolbar page only.
+- **Checked and fine:** page isolation (no Node globals, only `vaultAPI` exposed, renderers sandboxed), file:// / pbcalc:// / data: unreachable from a page,
+  8 dangerous schemes never reach Windows, no HTML injection through tab titles / download addresses / error page / site info, saved password unreadable by a
+  page, a hung page is closable, strict CSP on every internal page, URL parser fuzz (no throw, `javascript:` typed becomes a search, userinfo hidden, IDN shown as punycode).
+- **Not done / for the owner's decision:** Electron fuses (disable `--inspect`, `NODE_OPTIONS`, force asar-only + integrity) need a packaged-exe launch test and
+  `runAsNode` must STAY on (the exit-wipe helper in privacy.js runs through it); the page-facing `window.vaultAPI` (save / deleteSaved / neverSave let any page of that origin
+  edit its own saved logins - kept at the owner's request); UNC paths (`\\host\share\x.pdf`) handed in by Windows make the OS contact that server (normal for any Windows app).
 
 ## Notable gotchas
 

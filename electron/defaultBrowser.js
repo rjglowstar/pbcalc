@@ -17,7 +17,7 @@ const { kindOf } = require("./fileTypes");
 const NAME = "PBCalc";
 const DESCRIPTION = "PBCalc - a private web browser";
 const APP_ID = "com.pbcalc.browser";
-const REG_VERSION = "4";
+const REG_VERSION = "5";
 
 // Per-type icons (assets/file-icons, shipped next to the exe as resources\file-icons by electron-builder extraResources): what
 // Explorer draws for a PDF / image / web page / text file once PBCalc is its default app, like Chrome's page-with-logo-and-label.
@@ -56,7 +56,10 @@ const reg = (args) => run("reg", args);
 const addDefault = (key, value) => reg(["add", key, "/ve", "/t", "REG_SZ", "/d", value, "/f"]);
 const addValue = (key, name, value) => reg(["add", key, "/v", name, "/t", "REG_SZ", "/d", value, "/f"]);
 const addDword = (key, name, value) => reg(["add", key, "/v", name, "/t", "REG_DWORD", "/d", String(value), "/f"]);
-const command = (exe) => '"' + exe + '" "%1"';
+// "--" ends Chromium's switch parsing: whatever the address contains after it can never become a command-line switch (a link with a
+// quote in it, from a program that does not escape it, could otherwise add --remote-debugging-port or --gpu-launcher - the
+// CVE-2018-1000006 class; scripts/verify-argv-injection.js starts the browser both ways).
+const command = (exe) => '"' + exe + '" -- "%1"';
 
 // software = the registry path under HKCU that holds Classes / Clients / RegisteredApplications ("Software" for real).
 function keys(software) {
@@ -76,7 +79,7 @@ async function isRegistered(exe, software = "Software") {
     const k = keys(software);
     const out = await reg(["query", k.client + "\\shell\\open\\command", "/ve"]);
     if (!out.includes(exe)) return false;
-    return /REG_SZ\s+4\s*$/m.test(await reg(["query", k.client, "/v", "RegistrationVersion"]));
+    return /REG_SZ\s+5\s*$/m.test(await reg(["query", k.client, "/v", "RegistrationVersion"]));
   } catch (_) { return false; }
 }
 

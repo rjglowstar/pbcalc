@@ -94,6 +94,57 @@ try {
   `, true);
 } catch (e) {}
 
+// Chrome tells a page that has not been asked yet "default" / "prompt"; Electron's check handler can only say yes/no, so the page saw
+// "denied" and (Google Meet) sent the user to a help page instead of asking. The main world is patched with the real answer table
+// (main: permissions.statesFor); each update re-runs the patch, so no handle is left for the page.
+const PATCH_PERM = (s) => `(function(S){try{
+  if (!/^https?:$/.test(location.protocol)) return;
+  var np = Object.getOwnPropertyDescriptor(Notification, 'permission');
+  if (np && np.get) Object.defineProperty(Notification, 'permission', { configurable: true, enumerable: true, get: function(){ return S.notifications === 'prompt' ? 'default' : S.notifications; } });
+  var P = window.Permissions && Permissions.prototype;
+  if (P) {
+    var orig = P.__pbOrigQuery || P.query;
+    if (!P.__pbOrigQuery) Object.defineProperty(P, '__pbOrigQuery', { value: orig, enumerable: false, configurable: true });
+    Object.defineProperty(P, 'query', { configurable: true, writable: true, enumerable: true, value: function query(d) {
+      var name = d && d.name;
+      return orig.apply(this, arguments).then(function(r){
+        if (name && Object.prototype.hasOwnProperty.call(S, name)) { try { Object.defineProperty(r, 'state', { configurable: true, get: function(){ return S[name]; } }); } catch(e) {} }
+        return r;
+      });
+    } });
+  }
+}catch(e){}})(${JSON.stringify(s)});`;
+try { if (/^https?:$/.test(location.protocol)) webFrame.executeJavaScript(PATCH_PERM(ipcRenderer.sendSync("perm:states")), true); } catch (_) {}
+// "Microphone in use" / "Camera in use": the page's getUserMedia() streams are watched from the main world and reported as the
+// NAME of a DOM event (pbc:<random>:<mic 0/1>:<cam 0/1>) - invisible to a page's message listeners, no data crosses the worlds.
+try {
+  if (/^https?:$/.test(location.protocol)) {
+    const tok = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    for (const a of [0, 1]) for (const v of [0, 1]) window.addEventListener("pbc:" + tok + ":" + a + ":" + v, () => { try { ipcRenderer.send("page:capture", !!a, !!v); } catch (_) {} });
+    webFrame.executeJavaScript(`(function(T){try{
+      var md = window.MediaDevices && MediaDevices.prototype, MT = window.MediaStreamTrack && MediaStreamTrack.prototype;
+      if (!md || !md.getUserMedia || !MT) return;
+      var live = new Set(), last = '';
+      function report(){
+        var a = 0, v = 0;
+        live.forEach(function(t){ if (t.readyState !== 'live') { live.delete(t); return; } if (t.kind === 'audio') a = 1; else if (t.kind === 'video') v = 1; });
+        var k = a + ':' + v; if (k === last) return; last = k;
+        try { window.dispatchEvent(new Event('pbc:' + T + ':' + k)); } catch(e) {}
+      }
+      var origStop = MT.stop;
+      Object.defineProperty(MT, 'stop', { configurable: true, writable: true, enumerable: true, value: function stop(){ var r = origStop.apply(this, arguments); report(); return r; } });
+      var origGum = md.getUserMedia;
+      Object.defineProperty(md, 'getUserMedia', { configurable: true, writable: true, enumerable: true, value: function getUserMedia(){
+        return origGum.apply(this, arguments).then(function(stream){
+          try { stream.getTracks().forEach(function(t){ live.add(t); t.addEventListener('ended', report); }); report(); } catch(e) {}
+          return stream;
+        });
+      } });
+    }catch(e){}})(${JSON.stringify(tok)});`, true);
+  }
+} catch (_) {}
+ipcRenderer.on("perm:states", (_e, s) => { try { webFrame.executeJavaScript(PATCH_PERM(s), true); } catch (_) {} });
+
 // A DUPLICATED tab restores the original's sessionStorage before any page script runs, so a site
 // that keeps its login there (the PB ERP does) stays logged in in the copy — that is what Chrome's
 // Duplicate does. Only views main started with this flag ask, main answers once and only for the
@@ -130,8 +181,11 @@ contextBridge.exposeInMainWorld("vaultAPI", {
     ipcRenderer.invoke("vault:delete", { origin: location.origin, username }),
   neverSave: (username) =>
     ipcRenderer.invoke("vault:never-save", { origin: location.origin, username }),
+  // The page-facing version answers WITHOUT looking at the password (vault:page-needs-prompt): the real check ("is this exactly
+  // what is already saved?") told a page script, without any password dialog, whether a guess was the saved password - an oracle
+  // for guessing it. The browser's own save prompt keeps using the exact check (vault:needs-prompt, internal channel only).
   needsSavePrompt: (username, password) =>
-    ipcRenderer.invoke("vault:needs-prompt", location.origin, username, password),
+    ipcRenderer.invoke("vault:page-needs-prompt", location.origin, username, password),
 });
 
 // Settings page bridge — exposed ONLY on our own local settings page (a file: URL ending in
@@ -620,6 +674,16 @@ if (location.protocol === "file:" && /\/renderer\/restricted\/home\.html$/.test(
     }
     if (paths.length) ipcRenderer.send("files:dropped", paths.slice(0, 10));
   });
+  // Real user input, reported to the main process (at most every 300 ms): downloads the page starts right after it are the user's,
+  // those a script starts by itself are limited (downloadManager.refuseAutomatic). isTrusted cannot be faked by a page.
+  let lastActivity = 0;
+  for (const type of ["pointerdown", "keydown"]) {
+    window.addEventListener(type, (e) => {
+      if (!e.isTrusted) return;
+      const now = Date.now();
+      if (now - lastActivity > 300) { lastActivity = now; ipcRenderer.send("page:activity"); }
+    }, true);
+  }
   // Ctrl + mouse wheel zooms the page, as in Chrome - unless the page used the wheel event itself (maps, editors): then it keeps it.
   // The decision waits until the event has been through EVERY listener: this one is registered before the page's scripts run, so it
   // would otherwise run first and never see the page's preventDefault (measured: a page using Ctrl+wheel was zoomed as well).

@@ -81,6 +81,22 @@ function chromeHeight() {
   return TAB_STRIP_HEIGHT + TOOLBAR_HEIGHT + (state.bookmarksBarVisible ? BOOKMARKS_BAR_HEIGHT : 0);
 }
 
+// "Microphone in use" / "Camera in use" in the address bar, like Chrome: the page's own preload reports how many live camera /
+// microphone tracks it holds (page:capture). It lives on the tab only, is dropped when the page is left, and nothing is stored.
+function captureKind(t) {
+  const c = t.capture;
+  if (!c) return null;
+  return c.audio && c.video ? "both" : c.audio ? "mic" : c.video ? "cam" : null;
+}
+function setCapture(wc, audio, video) {
+  const tab = state.tabs.find((t) => t.view && t.view.webContents === wc);
+  if (!tab) return;
+  const a = audio === true || audio === 1, v = video === true || video === 1;
+  if (!!(tab.capture && tab.capture.audio) === a && !!(tab.capture && tab.capture.video) === v) return;
+  tab.capture = a || v ? { audio: a, video: v } : null;
+  notifyTabs();
+}
+
 function getTabState() {
   return {
     activeTabId: state.activeTabId,
@@ -95,6 +111,7 @@ function getTabState() {
         url: state.restricted ? "" : displayUrlFor(t.url), // Restricted Mode never reveals addresses
         zoom: zoomPercentOf(t),
         siteKind: siteKind(t),
+        capture: captureKind(t),
         favicon: t.favicon || "",
         canGoBack: alive && wc.navigationHistory.canGoBack(),
         canGoForward: alive && wc.navigationHistory.canGoForward(),
@@ -241,6 +258,10 @@ function openLocalFile(filePath, opts = {}) {
 }
 
 function openInNewTab(url, background = false, opener = null) {
+  // Right-click > "Open link in new tab" on a PAGE's link: only web addresses. A link is the page's own text - file:///..., javascript:,
+  // data:, pbcalc:// or an application scheme must not turn into a browser-initiated load (which skips every renderer-side block);
+  // Chrome refuses them too.
+  if (!/^https?:\/\//i.test(String(url || ""))) return;
   createTab(url, { background, openerId: opener ? opener.id : null, index: indexAfterOpener(opener) });
 }
 
@@ -262,9 +283,11 @@ function handleExternalUrl(url) {
       cancelId: 1,
       title: "Open external application?",
       message: "This page wants to open an external application.",
-      detail: url.length > 200 ? url.slice(0, 200) + "…" : url,
+      // the WHOLE normalized address (the old text cut it at 200 characters: what the dialog showed was not all that was opened),
+      // and that same normalized text is what is opened
+      detail: parsed.href.length > 1500 ? parsed.href.slice(0, 1500) + "…  (very long address)" : parsed.href,
     })
-    .then((r) => { if (r.response === 0) shell.openExternal(url); })
+    .then((r) => { if (r.response === 0 && parsed.href.length <= 1500) shell.openExternal(parsed.href); })
     .catch(() => {});
 }
 
@@ -273,14 +296,14 @@ function handleExternalUrl(url) {
 // api.whatsapp.com "open the app" redirect) made Windows show "You'll need a new app to open this whatsapp link - Look for an
 // app in the Microsoft Store" (found by probing: a page navigating to whatsapp:// raised exactly this request). Now the
 // request goes through PBCalc's own policy (handleExternalUrl: mailto/tel/sms after a confirm, nothing else, nothing in
-// Restricted Mode) and Chromium is never allowed to launch it itself. EVERY OTHER permission is granted exactly as before
-// (Electron's default), so nothing else changes.
+// Restricted Mode) and Chromium is never allowed to launch it itself. EVERY OTHER permission goes to electron/permissions.js
+// (Chrome-style bubble: camera, microphone, location, notifications, clipboard read, MIDI ... are asked, not granted silently).
 function permissionRequestHandler(_wc, permission, callback, details) {
   if (permission === "openExternal") {
     try { handleExternalUrl(details && details.externalURL); } catch (_) {}
     return callback(false);
   }
-  callback(true);
+  require("../permissions").request(_wc, permission, callback, details);
 }
 
 function showError(tab, info) {
@@ -372,6 +395,7 @@ function wireTabEvents(tab) {
   // the tab and goes back to the page that opened it. Our own closeTab removes the tab from the list BEFORE it
   // destroys the page, so this only fires for pages that ended themselves.
   wc.once("destroyed", () => closePageEndedTab(tab));
+  wc.on("did-navigate", () => require("../permissions").forgetPage(wc));   // "Allow this time" ends when the page is left
   // Whatever was keyed by this page's id must not outlive it: a typed login waiting for the next load, a fill grant, a
   // sessionStorage snapshot waiting to be collected (up to 512KB each) - measured to stay behind for ever when never collected.
   const wcId = wc.id;
@@ -393,6 +417,7 @@ function wireTabEvents(tab) {
       const prevUrl = tab.url;
       const reload = prevUrl === url; // F5 / Ctrl+R on the same address
       tab.errorPage = null;
+      tab.capture = null;   // a new page holds no camera / microphone yet (its preload reports again)
       tab.url = url;
       // Reloading keeps the icon and the title, like Chrome: a reload re-uses the cached favicon
       // and often fires neither page-favicon-updated nor page-title-updated, so clearing them here
@@ -1325,6 +1350,7 @@ function openBookmarkEdit(id) {
 }
 
 module.exports = {
+  openInNewTab,
   getTabState,
   getActiveTab,
   resizeActiveView,
@@ -1374,6 +1400,8 @@ module.exports = {
   openLocalFile,
   chromeHeight,
   siteKind,
+  setCapture,
+  captureKind,
   reopenClosedTab,
   closeTabOpenedForDownload,
 };

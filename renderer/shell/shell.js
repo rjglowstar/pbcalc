@@ -357,7 +357,23 @@
     return tabState.tabs.find((t) => t.id === tabState.activeTabId) || null;
   }
 
+  // Chrome's blue "Microphone in use" / "Camera in use" pill, left of the site-info icon, while the page holds a live stream
+  const CAPTURE_TEXT = { mic: "Microphone in use", cam: "Camera in use", both: "Camera and microphone in use" };
+  function renderCapture(tab) {
+    const kind = tab && tab.capture;
+    const chip = $("capture-chip");
+    if (!kind) { chip.hidden = true; chip.textContent = ""; chip.dataset.kind = ""; return; }
+    if (chip.dataset.kind === kind) { chip.hidden = false; return; }
+    chip.dataset.kind = kind; chip.hidden = false; chip.textContent = "";
+    chip.appendChild(I.icon(kind === "cam" ? "videocam" : "mic"));
+    const label = document.createElement("span");
+    label.textContent = CAPTURE_TEXT[kind];
+    chip.appendChild(label);
+    chip.title = CAPTURE_TEXT[kind];
+  }
+
   function renderSiteInfo(tab) {
+    renderCapture(tab);
     siteInfoBtn.className = "site-info";
     siteInfoBtn.textContent = "";
     if (!tab || tab.siteKind === "internal") {
@@ -571,7 +587,9 @@
   // new tab will take (between two tabs, or after the last one); the slot is also written to <html data-drop-index> at the
   // moment of the drop, where the preload reads it. Anywhere else the new tab goes to the end.
   const dropArrow = $("drop-arrow");
-  const fileDrag = (e) => e.isTrusted && !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+  // a drag from outside: files from Explorer, or a link (text/uri-list) from another window; the tab / bookmark drags inside this page
+  // carry plain text only and are none of this
+  const fileDrag = (e) => e.isTrusted && !!e.dataTransfer && (Array.from(e.dataTransfer.types || []).includes("Files") || Array.from(e.dataTransfer.types || []).includes("text/uri-list"));
   // A drag that ends without a dragleave (Esc, or dropped somewhere else) must not leave the strip un-draggable: a real drag keeps
   // firing dragover ~20x/s while it is over us (the tab pages relay that every 200ms), so silence for 700ms means it is over.
   let fileDragTimer = null;
