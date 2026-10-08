@@ -116,9 +116,9 @@ const SIG = 'Add-Type -Namespace W -Name N -MemberDefinition \'[DllImport("user3
     // the files opened above filled the strip: close them so an empty part of the strip exists again
     for (const t of state.tabs.slice(4)) tm.closeTab(t.id);
     await sleep(1200);
-    tm.switchTab(state.tabs[0].id); await sleep(800);
+    tm.switchTab(state.tabs[1].id); await sleep(800);   // a real page (tab 0 is the empty New Tab page, which a dropped file now replaces)
     const gapP = await gapNow();
-    const page = state.tabs[0].view.webContents;
+    const page = state.tabs[1].view.webContents;
     check("before: the strip is the drag region", (await settle(gapP, 20, 2)) === 2);
     await dragTo(page, "dragEnter", 300, 300, [a]);
     await dragTo(page, "dragOver", 300, 300, [a]);

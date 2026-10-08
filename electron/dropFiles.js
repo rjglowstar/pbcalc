@@ -24,7 +24,17 @@ function openDropped(paths, at) {
   const { FROM_USER } = require("./fileTypes");
   const tm = require("./tabs/tabManager");
   let opened = 0;
-  const slot = Number.isInteger(at) && at >= 0 && at <= state.tabs.length ? at : null;
+  let slot = Number.isInteger(at) && at >= 0 && at <= state.tabs.length ? at : null;
+  // Dropped while you are looking at an empty New Tab page: the file takes that tab's place (Chrome does the same) instead of leaving a
+  // blank tab behind. Normal mode only (in Restricted Mode that page is the "Your sites" list, which stays).
+  let blank = null;
+  const active = tm.getActiveTab();
+  try {
+    if (!state.restricted && active && active.view && !active.view.webContents.isDestroyed() && /newtab\.html$/i.test(active.view.webContents.getURL())) {
+      blank = active;
+      slot = state.tabs.indexOf(active);
+    }
+  } catch (_) {}
   for (const p of paths.slice(0, MAX_FILES)) {
     if (typeof p !== "string" || !path.isAbsolute(p)) continue;
     try {
@@ -33,6 +43,7 @@ function openDropped(paths, at) {
       opened++;
     } catch (_) {}
   }
+  if (blank && opened > 0 && state.tabs.length > 1 && state.tabs.includes(blank)) tm.closeTab(blank.id);
   return opened;
 }
 

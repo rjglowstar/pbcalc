@@ -38,6 +38,12 @@ app.on("second-instance", (_event, argv, workingDirectory) => {
 // Disable GPU disk cache to prevent Windows file-locking collisions and console warnings.
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
 
+// Video is decoded by the CPU, not the graphics card's decoder. Measured on the owner's PC (NVIDIA, Windows 10): a 2752x2064 H.264 recording
+// froze after ~1 s in Electron with hardware decoding ("waiting" over and over, readyState 2, 40 of 45 frames shown then nothing) and
+// played smoothly with --disable-accelerated-video-decode (6.08 s of video in 6 s) - the same file plays in Chrome, whose decoder falls back
+// by itself. The cost is more CPU for large videos; the graphics card is still used for drawing the page.
+app.commandLine.appendSwitch("disable-accelerated-video-decode");
+
 // No-history policy: sweep whatever a previous run (or a crash) left behind, before Chromium
 // opens any of it, and wipe the session again on quit. See electron/privacy.js.
 const { wipeLeftoversOnDisk, installQuitWipe } = require("./privacy");

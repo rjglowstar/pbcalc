@@ -135,7 +135,9 @@ Two things define this browser against every mainstream one:
   TRUSTED, not-yet-handled drop carrying files (`webUtils.getPathForFile`; a file a page invents has no path), so a page's
   own upload box keeps its drops; main accepts the paths only from the shell or a tab page, absolute, an existing FILE of a
   `FROM_USER` type, at most 10. **Deliberate difference from Chrome:** Chrome replaces the page for a drop on the page area,
-  PBCalc always opens a new tab (safer: never loses the page you are on). The empty gap in the tab strip is an OS drag
+  PBCalc opens a new tab (safer: never loses the page you are on) - **except when the tab you are looking at is an empty New Tab page: the file then
+  takes THAT tab's place** (no blank tab left behind; `openDropped` in dropFiles.js; several files: the first replaces it, the rest follow in order;
+  not in Restricted Mode, where that page is the "Your sites" list). Test: `scripts/verify-drop-blank.js` (13). The empty gap in the tab strip is an OS drag
   region (`-webkit-app-region: drag`) and cannot receive drops. **Trap:** the tab's own `drop` handler (drag-reorder)
   used to `preventDefault()` unconditionally, so the preload ignored every file dropped on a tab; it now does nothing unless
   a tab is being dragged. Test: `scripts/verify-drop-files.js` (19; real trusted drags via CDP `Input.dispatchDragEvent`
@@ -928,7 +930,12 @@ exposed to page scripts and unused by PBCalc itself - passwords are protected by
 Chrome plays a local .mp4 in a tab; PBCalc ignored a dropped video and sent a downloaded one to another program. `.mp4 .webm .m4v .ogv .mov` are
 now in `IN_TAB` (so also `FROM_USER`): dropped on the window, handed over by Windows, or clicked in the Downloads list -> a new tab with Chromium's
 own video page (the same controls as Chrome's; it is Chromium's, not drawn by PBCalc), Restricted Mode too. Measured: a generated webm and the owner's
-real H.264 mp4 both decode and play. Not added on purpose: `.mkv/.avi` (Chromium cannot play them), audio files, a Windows file icon / "default app"
+real H.264 mp4 both decode and play. **Playback froze after ~1 s on the owner's PC (NVIDIA, Win10) for a 2752x2064 H.264 iPad recording**: measured in a plain Electron window too (not PBCalc's
+doing): hardware decoding stalls ("waiting", readyState 2, frames stop), `--disable-accelerated-video-decode` plays it 1:1 (6.08 s in 6 s). `main.js` now sets that
+switch (video decoded by the CPU; drawing still uses the GPU); trade-off = more CPU for large videos. Other flags tried without effect: `--ignore-gpu-blocklist`,
+`--disable-gpu-sandbox`, `--use-angle=d3d11`, `PlatformHEVCDecoderSupport`, `--disable-features=D3D11VideoDecoder`. Trap: `app.getGPUFeatureStatus()` right after `ready`
+says everything is "disabled_software" - read it only after a window has loaded. The test video is not in the suite (it is the owner's file).
+Not added on purpose: `.mkv/.avi` (Chromium cannot play them), audio files, a Windows file icon / "default app"
 entry for video (`kindOf` stays null). Also fixed here: `permissions.check` ignored `details.mediaType` (singular), so after Allow the page got no
 device names (Meet: "Mic not found"); test in `verify-capture-indicator.js`.
 
