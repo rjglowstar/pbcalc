@@ -381,3 +381,16 @@ body.calc-mode #calc-root { display: block; }
 .c-chips.more-l, .c-rowscroll.more-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 2.2em); mask-image: linear-gradient(to right, transparent, #000 2.2em); }
 .c-chips.more-l.more-r, .c-rowscroll.more-l.more-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 2.2em, #000 calc(100% - 2.2em), transparent); mask-image: linear-gradient(to right, transparent, #000 2.2em, #000 calc(100% - 2.2em), transparent); }
 .c-under .c-row { flex: 1 1 0; min-width: 0; }
+
+/* The radio dot: always a perfect circle with the dot exactly in the middle. In em units the ring was a fractional number of pixels (1.15em = 17.6 px with a 1.5 px
+   border), so the ring came out slightly oval and the dot sat half a pixel off-centre. Now: even whole pixels (round()), border-box, and the dot is centred by the grid, not by insets. */
+.c-chip .c-radio { box-sizing: border-box; width: round(1.15em, 2px); height: round(1.15em, 2px); min-width: round(1.15em, 2px); border: 2px solid #b6bdc9; border-radius: 50%; display: grid; place-items: center; position: relative; flex: none; }
+.c-chip.on .c-radio { border-color: var(--mint-ink); }
+.c-chip.on .c-radio::after { position: static; inset: auto; width: round(0.55em, 2px); height: round(0.55em, 2px); border-radius: 50%; background: var(--mint-ink); }
+
+/* the CPS row sat closer to Cut (6 px between the chips) than every other row to the next (15 px): the scrolling chip box swallowed its own bottom margin (-0.25em) and, unlike .c-row, had no 0.55em of its own. Same rhythm now. */
+.c-grades > .c-chips { margin-bottom: 0.3em; }
+
+/* ONE part: no vertical scrolling at all (the extra CPS spacing had made the content 2 px taller than the area at 1920x1040, so a scroll bar / wheel scroll appeared). Less air under the card. */
+.c-body.one { padding-bottom: 0; }
+.c-body.one .c-card { padding-bottom: 0.5em; }
