@@ -99,7 +99,7 @@ function persist(kind = mode) {
   try {
     fs.mkdirSync(path.dirname(FILE(kind)), { recursive: true });
     const items = caches[kind] || [];
-    fs.writeFileSync(FILE(kind), JSON.stringify(kind === "dummy" ? { version: DUMMY_VERSION, items } : items), "utf8");
+    require("../atomicWrite").writeFileAtomic(FILE(kind), JSON.stringify(kind === "dummy" ? { version: DUMMY_VERSION, items } : items), "utf8");
   } catch (_) {}
 }
 

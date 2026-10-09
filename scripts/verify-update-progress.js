@@ -96,10 +96,10 @@ const titleOf = (pid) => ps(`(Get-Process -Id ${pid} -ErrorAction SilentlyContin
     prog.close(); await waitFor(() => !alive(prog.hp), 4000);
     check("the window's icon is PBCalc's own file in a development run (assets/icon.ico), not Electron's", /assets[\\/]icon\.ico$/.test(up.iconFile()) && fs.existsSync(up.iconFile()), up.iconFile());
 
-    console.log("\n-- the window started by the INSTALLER (build/update-ui.ps1): covers updates from versions that do not have the code above");
-    const staticFile = path.join(__dirname, "..", "build", "update-ui.ps1");
+    console.log("\n-- the window started by the INSTALLER (installer-files/update-ui.ps1): covers updates from versions that do not have the code above");
+    const staticFile = path.join(__dirname, "..", "installer-files", "update-ui.ps1");
     const fresh = String.fromCharCode(0xfeff) + up.buildScript({ ...up.DEFAULTS, argsMode: true, dark: false, from: "", to: "", exe: "", oldPid: 0, stopFile: "" }) + String.fromCharCode(10);
-    check("build/update-ui.ps1 is up to date with updateProgress.js (npm run dist regenerates it: scripts/make-update-ui.js)", fs.existsSync(staticFile) && fs.readFileSync(staticFile, "utf8") === fresh);
+    check("installer-files/update-ui.ps1 is up to date with updateProgress.js (npm run dist regenerates it: scripts/make-update-ui.js)", fs.existsSync(staticFile) && fs.readFileSync(staticFile, "utf8") === fresh);
     const copy = path.join(tmp, "update-ui.ps1"); fs.copyFileSync(staticFile, copy);
     const uiWins = () => ps("(Get-Process -Name powershell | Where-Object { $_.MainWindowTitle -eq 'PBCalc update' } | ForEach-Object { $_.Id }) -join ','").split(",").filter(Boolean).map(Number);
     const startStatic = () => spawn("cmd.exe", ["/d", "/s", "/c", '"start "" /b powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + copy + '" -To "0.1.4" -Exe "' + process.execPath + '" -NewName pbc_test_new -InstallerLike "pbc_test_inst*""'], { stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true });

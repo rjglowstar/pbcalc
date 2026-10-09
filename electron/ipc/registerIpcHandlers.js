@@ -85,7 +85,10 @@ function registerIpcHandlers() {
   // Right-click on the reload button (the menu itself only exists while DevTools is open: tabManager.reloadMenu).
   // the calculator screen (calcMode.js): which screen is up, and the presses of its "+" button (counted there, shell page only)
   ipcMain.handle("calc:get-mode", (e) => (fromShell(e) ? !!state.calcMode : false));
+  // the calculator's dummy data (calc-data.json): only the shell page, and only while the calculator is showing
+  ipcMain.handle("calc:get-data", (e) => (fromShell(e) && state.calcMode ? require("../calcData").load() : null));
   ipcMain.on("calc:plus", (e) => { if (fromShell(e) && state.calcMode) require("../calcMode").onPlus(); });
+  ipcMain.on("calc:chrome", (e, o) => { if (fromShell(e) && state.calcMode && o && typeof o === "object") require("../theme").setCalcChrome(o, state.mainWindow); });
   ipcMain.handle("tabs:reload-menu", (e, rect) => (fromShell(e) ? tabManager.reloadMenu(rect) : false));
   ipcMain.on("popup:open", (e, kind, rect) => {
     if (!fromShell(e)) return;

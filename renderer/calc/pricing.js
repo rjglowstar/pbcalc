@@ -1,90 +1,136 @@
-// Dummy diamond price engine for the calculator screen. NOT real prices: made-up numbers in the shape of a price list, so the
-// wheels change the result. The real PB price list is a SQL procedure (Mfg.API GetDiamondRate) and is deliberately not copied.
-// Runs in the page (window.CalcPricing) and in Node (module.exports), so the test can check it without a window.
+// The calculator screen's price engine. It follows the ERP's Plan Maker (Mfg.Web planmaker.component + pricing.service.ts), step for step, but the numbers
+// it works from are DUMMY ones, read from calc-data.json (PBCalc's data folder; defaults in electron/calcData.default.json). The real rate / discount tables are
+// a SQL procedure (Mfg.API GetDiamondRate) and the ERP's pricing server; neither is in the repos, so they are not copied.
+// Runs in the page (window.CalcPricing) and in Node (module.exports), so the tests can check it without a window. Call configure(data) first.
 //
-// Chain (matches the owner's recording): list $/ct (shape x colour x clarity x weight band)
-//   net $/ct  = list x (1 + (discount + grade adjustment + fluorescence adjustment) / 100)
-//   part total = net $/ct x part weight
-//   Polish = sum of part weights, Total Polish = sum of part totals, Result % = Polish / stone weight, Rough $/Ct = Total Polish / stone weight.
+// The chain for ONE part and ONE lab (the ERP's, in the ERP's order):
+//   rate        list $/ct = weight band base (colour D, clarity FL, round) x colour factor x clarity factor x shape factor x drift, rounded to 10
+//   discount    % taken OFF the rate = lab base + shape group + grade points + fluorescence + sub-cut + depth + ratio
+//               (the ERP's "Additional Discount" REPLACES it, and only for the labs in adDiscLabs: NONE and FC)
+//   oAmount     original amount = (rate - rate x discount / 100) x polish weight
+//   mfgLabour   a percentage of oAmount by amount range; a non-round shape pays fancyPercentage more on top
+//   labLabour   the lab's certificate cost for that weight (per piece or per carat); 0 for NONE / FC
+//   amount      net amount = (oAmount - mfgLabour - labLabour) / netDivisor (14 in the ERP)
+//   pcAvg       oAmount / weight
+//   lab AUTO    is GIA and NONE both priced, the higher amount wins (when both are above 0), as in the ERP
+// The screen: Polish = sum of the part weights, Result (RtP) = Polish x 100 / stone (rough) weight, Total Polish = sum of the part amounts,
+// Rough $/Ct. (Avg) = Total Polish / stone weight.
 (function (root) {
-  const SHAPES = ["ROUND", "PEAR", "OVAL", "HEART", "EMERALD", "MARQUISE", "PRINCESS", "RADIANT", "CUSHION"];
-  const COLORS = ["D", "E", "F", "G", "H", "I", "J", "K", "L", "M"];
-  const CLARITIES = ["FL", "IF", "VVS1", "VVS2", "VS1", "VS2", "SI1", "SI2", "I1"];
-  const FLUORS = ["NON", "FNT", "MED", "STG", "VSTG"];
-  const GRADES = ["EX", "VG", "GD", "FR", "PR"];
-  const PRESETS = { "3EX": ["EX", "EX", "EX"], "EX-VG": ["EX", "EX", "VG"], VG: ["VG", "VG", "VG"], GD: ["GD", "VG", "VG"] };   // cut, polish, symmetry
-  const PRESET_NAMES = ["3EX", "EX-VG", "VG", "GD"];
-
-  // round, 0.50-0.69 ct, list $/ct: rows = colours D..M, columns = clarities FL..I1
-  const BASE = [
-    [4700, 4100, 3700, 3300, 3000, 2650, 2300, 1950, 1500],
-    [4400, 3900, 3500, 3150, 2850, 2550, 2250, 1900, 1450],
-    [4100, 3700, 3300, 2950, 2600, 2200, 2000, 1750, 1350],
-    [3700, 3400, 3050, 2750, 2450, 2100, 1900, 1700, 1300],
-    [3300, 3050, 2750, 2500, 2250, 1950, 1800, 1600, 1250],
-    [2900, 2700, 2450, 2250, 2050, 1850, 1700, 1500, 1150],
-    [2550, 2400, 2200, 2050, 1900, 1700, 1550, 1400, 1050],
-    [2250, 2150, 1950, 1850, 1700, 1550, 1400, 1250, 950],
-    [2000, 1900, 1750, 1650, 1550, 1400, 1250, 1100, 850],
-    [1800, 1700, 1600, 1500, 1400, 1250, 1150, 1000, 750],
-  ];
-  const SHAPE_MULT = { ROUND: 1, PEAR: 0.78, OVAL: 0.8, HEART: 0.72, EMERALD: 0.74, MARQUISE: 0.7, PRINCESS: 0.82, RADIANT: 0.76, CUSHION: 0.79 };
-  // [from, multiplier]: the weight band a part falls in (>= from)
-  const WEIGHT_BANDS = [[0, 0.3], [0.23, 0.38], [0.3, 0.55], [0.4, 0.72], [0.5, 1], [0.7, 1.3], [0.9, 1.55], [1, 2], [1.5, 2.6], [2, 3.4], [3, 4.6]];
-  const GRADE_PTS = { EX: 0, VG: -1.5, GD: -3.5, FR: -6, PR: -10 };      // percentage points off the discount
-  const GRADE_WEIGHT = [1, 0.5, 0.5];                                     // cut counts most, polish and symmetry half each
-  const FLUOR_PTS = { NON: 0, FNT: -1, MED: -3, STG: -6, VSTG: -10 };
-
-  const round = (n, step) => Math.round(n / step) * step;
+  let D = null;                                                  // the data (calc-data.json)
   const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const roundTo = (n, step) => Math.round(n / step) * step;
+  const need = () => { if (!D) throw new Error("CalcPricing.configure(data) was not called"); return D; };
 
-  // list $/ct for one part; 0 while the weight is empty (nothing to price yet)
-  function listPrice(p, drift) {
-    const w = num(p.weight);
+  function configure(data) { D = data; return api; }
+
+  // ── the lists the wheels and chips are made from ──
+  const shapes = () => need().shapes;
+  const shapeOf = (code) => need().shapes.find((s) => s.code === code) || need().shapes[0];
+  const groupOf = (code) => (shapeOf(code).group === "round" ? "round" : "fancy");
+  const labsAll = () => ["AUTO"].concat(need().labs);
+  const cpsNames = () => Object.keys(need().cps);
+  const cpsTriple = (name) => (need().cps[name] || need().cps[Object.keys(need().cps)[0]]).slice();   // [cut, polish, symmetry]
+  function presetOf(grades) { for (const n of cpsNames()) if (need().cps[n].every((g, i) => g === grades[i])) return n; return null; }
+  // the sub-cuts the ERP offers for this shape and cut grade (none for FR / PR)
+  const subCutsFor = (shape, cut) => need().subCuts.filter((s) => s.cut === cut && s.shapes.includes(shape));
+  const adDiscApplies = (lab) => need().adDiscLabs.includes(lab);
+
+  // ── rate ──
+  function listRate(p, drift) {
+    const d = need(), w = num(p.weight);
     if (!w) return 0;
-    const ci = Math.max(0, COLORS.indexOf(p.color)), qi = Math.max(0, CLARITIES.indexOf(p.clarity));
-    let band = 1;
-    for (const [from, m] of WEIGHT_BANDS) if (w >= from) band = m;
-    return round(BASE[ci][qi] * (SHAPE_MULT[p.shape] || 1) * band * (drift || 1), 10);
+    const bands = d.rate.weightBands.slice().sort((a, b) => a.from - b.from);   // a hand-edited calc-data.json need not be in order
+    let base = bands[0].base;
+    for (const b of bands) if (w >= b.from) base = b.base;
+    const cf = d.rate.colorFactor[p.color], qf = d.rate.clarityFactor[p.clarity];
+    return roundTo(base * (cf == null ? 1 : cf) * (qf == null ? 1 : qf) * shapeOf(p.shape).factor * (drift || 1), d.rate.roundTo || 10);
   }
 
-  function adjustment(p) {
-    const g = p.grades || PRESETS["3EX"];
-    let pts = 0;
-    for (let i = 0; i < 3; i++) pts += (GRADE_PTS[g[i]] || 0) * GRADE_WEIGHT[i];
-    return pts + (FLUOR_PTS[p.fluor] || 0);
+  // ── discount (% off the rate) for one lab ──
+  function discountOf(p, lab) {
+    const d = need().discount;
+    let pts = (d.byLab[lab] || 0) + (d.byShapeGroup[groupOf(p.shape)] || 0);
+    const g = p.grades || cpsTriple(need().defaultCps);
+    for (let i = 0; i < 3; i++) pts += (d.gradePoints[g[i]] || 0) * (d.gradeWeights[i] == null ? 1 : d.gradeWeights[i]);
+    pts += d.fluorPoints[p.fluor] || 0;
+    const sc = need().subCuts.find((s) => s.code === p.subCut);
+    if (sc) pts += sc.adjust || 0;
+    const depth = num(p.depth);
+    if (depth && d.depth) {
+      const out = depth < d.depth.min ? d.depth.min - depth : depth > d.depth.max ? depth - d.depth.max : 0;
+      pts += Math.min(d.depth.maxPoints, out * d.depth.perPoint);
+    }
+    const ratio = num(p.ratio);
+    if (ratio && d.ratio) {
+      const range = groupOf(p.shape) === "round" ? d.ratio.roundIdeal : d.ratio.fancyIdeal[p.shape];
+      if (range) {
+        const out = ratio < range[0] ? range[0] - ratio : ratio > range[1] ? ratio - range[1] : 0;
+        pts += Math.min(d.ratio.maxPoints, (out / 0.01) * d.ratio.perHundredth);
+      }
+    }
+    return r2(pts);
   }
 
-  // one part -> { list, net, total, weight }
+  // ── labour ──
+  function mfgLabourOf(oAmount, shapeCode) {
+    const range = need().mfgLabourPercents.find((r) => oAmount >= r.fromRange && oAmount <= r.toRange);
+    if (!range) return 0;
+    const base = (oAmount * range.roundPercentage) / 100;
+    const v = groupOf(shapeCode) === "round" ? base : (base * (range.fancyPercentage || 0)) / 100 + base;
+    return Math.round(v);
+  }
+  function labLabourOf(lab, shapeCode, wt) {
+    if (!lab || need().adDiscLabs.includes(lab)) return 0;
+    const c = need().labCosts.find((x) => x.lab.split(",").includes(lab) && (!x.shape || x.shape === "ALL" || x.shape.split(",").includes(shapeCode)) && wt >= x.fromWt && wt <= x.toWt);
+    if (!c) return 0;
+    return c.ratePer === "Carets" ? r2(c.amount * wt) : c.amount;
+  }
+
+  const EMPTY = { rate: 0, discount: 0, oAmount: 0, pcAvg: 0, mfgLabour: 0, labLabour: 0, amount: 0 };
+
+  // one part, one lab (not AUTO)
+  function priceLab(p, lab, drift) {
+    const wt = num(p.weight), rate = listRate(p, drift);
+    if (!wt || !rate) return { name: lab, ...EMPTY, rate };
+    const useAd = num(p.adDisc) > 0 && adDiscApplies(lab);
+    const discount = useAd ? r2(num(p.adDisc)) : discountOf(p, lab);
+    const oAmount = r2((rate - (rate * discount) / 100) * wt);
+    if (!(oAmount > 0)) return { name: lab, ...EMPTY, rate, discount };
+    const mfgLabour = mfgLabourOf(oAmount, p.shape);
+    const labLabour = labLabourOf(lab, p.shape, wt);
+    // (a very cheap stone with an expensive lab would come out below 0: shown as 0)
+    const amount = Math.max(0, r2((oAmount - mfgLabour - labLabour) / need().netDivisor));
+    return { name: lab, rate, discount, oAmount, pcAvg: r2(oAmount / wt), mfgLabour, labLabour, amount };
+  }
+
+  // one part: the chosen lab (AUTO = the better of GIA and NONE) + what every lab would give
   function pricePart(p, drift) {
-    const list = listPrice(p, drift);
-    const disc = Number.isFinite(+p.discount) ? +p.discount : 0;
-    const net = list ? Math.round(list * (1 + (disc + adjustment(p)) / 100)) : 0;
-    return { list, net, total: net * num(p.weight), weight: num(p.weight) };
+    const d = need(), wt = num(p.weight);
+    const labs = d.labs.map((l) => priceLab(p, l, drift));
+    const byName = (n) => labs.find((x) => x.name === n) || priceLab(p, n, drift);
+    let used, res;
+    if ((p.lab || d.defaultLab) === "AUTO") {
+      const gia = byName("GIA"), none = byName("NONE");
+      if (gia.amount > 0 && none.amount > 0) res = gia.amount >= none.amount ? gia : none;
+      else res = gia.amount > 0 ? gia : none.amount > 0 ? none : gia;
+      used = res.name;
+    } else { used = p.lab; res = byName(used); }
+    return { weight: wt, lab: used, rate: res.rate, discount: res.discount, oAmount: res.oAmount, pcAvg: res.pcAvg, mfgLabour: res.mfgLabour, labLabour: res.labLabour, amount: res.amount, labs };
   }
 
-  // the whole screen: parts[] + stone weight
+  // the whole screen: parts[] + stone (rough) weight
   function summary(parts, stoneWeight, drift) {
     const priced = parts.map((p) => pricePart(p, drift));
     const polish = priced.reduce((s, r) => s + r.weight, 0);
-    const total = priced.reduce((s, r) => s + r.total, 0);
+    const total = priced.reduce((s, r) => s + r.amount, 0);
     const stone = num(stoneWeight);
-    return {
-      parts: priced,
-      polish,
-      total,
-      result: stone ? (polish / stone) * 100 : 0,
-      rough: stone ? total / stone : 0,
-    };
+    const labs = need().labs.map((name, k) => { const t = priced.reduce((acc, r) => acc + r.labs[k].amount, 0); return { name, total: t, rough: stone ? t / stone : 0 }; });
+    return { parts: priced, labs, polish, total, result: stone ? (polish * 100) / stone : 0, rough: stone ? total / stone : 0 };
   }
 
-  // which preset (if any) a set of three grades equals
-  function presetOf(grades) {
-    for (const n of PRESET_NAMES) if (PRESETS[n].every((g, i) => g === grades[i])) return n;
-    return null;
-  }
-
-  const api = { SHAPES, COLORS, CLARITIES, FLUORS, GRADES, PRESETS, PRESET_NAMES, listPrice, pricePart, summary, presetOf, adjustment, num };
+  const api = { configure, data: () => need(), shapes, shapeOf, groupOf, colors: () => need().colors, clarities: () => need().clarities, fluorescence: () => need().fluorescence, cuts: () => need().cuts,
+    labsAll, labs: () => need().labs, cpsNames, cpsTriple, presetOf, subCutsFor, adDiscApplies, listRate, discountOf, mfgLabourOf, labLabourOf, priceLab, pricePart, summary, num };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.CalcPricing = api;
-})(typeof window !== "undefined" ? window : this);
+})(typeof window !== "undefined" ? window : globalThis);

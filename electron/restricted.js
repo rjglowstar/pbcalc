@@ -75,8 +75,12 @@ function isWebUrl(url) {
   return /^https?:\/\//i.test(String(url || ""));
 }
 
+// blob:https://site/uuid is a page's OWN generated content (a report / PDF it opens in a new tab); only script of that origin can make one, so it counts as that site
+const unwrapBlob = (url) => String(url || "").replace(/^blob:(?=https?:\/\/)/i, "");
+
 function sameSite(url, site) {
-  return !!site && isWebUrl(url) && siteOf(url) === site;
+  const u = unwrapBlob(url);
+  return !!site && isWebUrl(u) && siteOf(u) === site;
 }
 
 module.exports = {

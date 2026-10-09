@@ -197,6 +197,12 @@ function shouldAskRemote(text) {
   if (text.length > 200) return false;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text) && /@/.test(text)) return false; // an address with credentials
   if (/^(pbcalc|file|data|javascript|about):/i.test(text)) return false;
+  // An ADDRESS (or the start of one) is not a search and is never sent: an internal / intranet address (http://192.168.0.8:9995/assets, the ERP), a path with
+  // ids, a link with a token in it - every keystroke of it would have gone to Google. (Words and phrases are sent, as in Chrome.)
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return false;
+  if (/^(localhost|\d{1,3}(\.\d{1,3}){3})(:\d+)?([\/?#]|$)/i.test(text)) return false;
+  if (!/\s/.test(text) && /[\/?#]/.test(text)) return false;
+  if (/^\[[0-9a-f:.]+\]/i.test(text)) return false;   // an IPv6 address
   return true;
 }
 
@@ -273,4 +279,4 @@ function isSender(wc) {
   return alive() && wc === view.webContents;
 }
 
-module.exports = { query, move, accept, pick, hide, warm, isOpen, isSender, buildRows };
+module.exports = { query, move, accept, pick, hide, warm, isOpen, isSender, buildRows, shouldAskRemote };

@@ -11,7 +11,7 @@ const settings = require("./settings");
 // closed and NOT restored; PBCalc opens again when the update is finished). Two buttons:
 //   Update - the installer runs silently and PBCalc starts again by itself;
 //   Cancel - the popup closes and PBCalc keeps running untouched. The update then installs by itself the next time the browser is CLOSED
-//            (autoInstallOnAppQuit for a real quit; calcMode.returnToCalc for the calculator's "browser closed"), and if PBCalc is OPENED
+//            (autoInstallOnAppQuit: closing the browser quits PBCalc, which installs it), and if PBCalc is OPENED
 //            again before that, it installs at once, without asking again (the declined version is remembered in settings.json).
 //
 // Differences from the ERP that matter, each found by measuring or by reading what the installer does:
@@ -70,6 +70,7 @@ function setup(opts = {}) {
   let startup = null;                           // { finish(handled) } while the main window is held back at start (startupInstall)
   let manual = false;                           // the user pressed "Check for update" in Settings: this answer is asked for, never skipped
   let pending = null;                           // a downloaded update the user postponed with Cancel
+  let asking = false;                           // the update popup is open: a second "Check for update" must not open another one
 
   function startProgress(info) {
     if (!progress) progress = (opts.showProgress || require("./updateProgress").show)({ from: opts.currentVersion || app.getVersion(), to: info && info.version, ...(opts.progressOptions || {}) });   // progressOptions: tests only (other process names)
@@ -118,7 +119,7 @@ function setup(opts = {}) {
       if (was && was === info.version) { log("declined earlier, installing at start"); announced = true; install(info); return s.finish(true); }
       return s.finish(false);
     }
-    if (announced) return;
+    if (announced || asking) return;
     announced = true;
     log("downloaded " + info.version);
     // said Cancel to THIS version in an earlier session: PBCalc was opened again, so now it just updates
@@ -126,13 +127,15 @@ function setup(opts = {}) {
     let before = ""; try { before = declined.get(); } catch (_) {}
     if (!wasManual && before && before === info.version) { log("declined earlier, installing now"); return install(info); }
     let yes = false;
+    asking = true;
     try { yes = await ask(info); } catch (_) { yes = false; }
+    asking = false;
     if (yes) return install(info);
     pending = info;
     try { declined.set(info.version); } catch (_) {}
     log("postponed by the user: installs when PBCalc is closed");
   });
-  autoUpdater.on("error", (err) => { log("error (ignored): " + (err && err.message ? err.message.split("\n")[0] : err)); if (startup) startup.finish(false); });
+  autoUpdater.on("error", (err) => { try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.setProgressBar(-1); } catch (_) {} log("error (ignored): " + (err && err.message ? err.message.split("\n")[0] : err)); if (startup) startup.finish(false); });
 
   // With autoDownload electron-updater starts the download itself and hands back its promise; a damaged / interrupted download rejects it
   // in addition to the "error" event above, and a rejection nobody handles can end as an error dialog in the main process (measured with a
@@ -141,7 +144,7 @@ function setup(opts = {}) {
   const check = () => autoUpdater.checkForUpdates().then((res) => { if (res && res.downloadPromise) res.downloadPromise.catch(quiet); }).catch(quiet);
   const timer = setTimeout(check, opts.delayMs == null ? CHECK_DELAY_MS : opts.delayMs);
   if (timer.unref && !opts.keepAlive) timer.unref();
-  // the browser was closed (the calculator came back, nothing is open to lose): a postponed update goes in now
+  // (kept for the tests and for a caller that wants "install now"; nothing in the app calls it since the browser closing quits PBCalc)
   const installIfPending = () => { if (!pending) return false; const i = pending; pending = null; install(i); return true; };
   // Settings > Version > "Check for update": the same check, now. A newer version is downloaded and the usual popup comes when it is ready
   // (asked again even if it was declined before); no newer version = nothing at all is shown. Resolves when the CHECK is over, not the download.
@@ -174,7 +177,7 @@ function setup(opts = {}) {
   return current;
 }
 
-// calcMode.returnToCalc: the browser is closed -> a postponed update installs now
+// installIfPending: a postponed update installs now (not called by the app itself any more)
 function installIfPending() { return current ? current.installIfPending() : false; }
 
 // at start: has the user postponed an update (Cancel) that is still waiting? / hold the main window and install it (see updater setup)

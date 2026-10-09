@@ -50,7 +50,7 @@ function set(key, value) {
   load()[key] = value;
   try {
     fs.mkdirSync(path.dirname(FILE()), { recursive: true });
-    fs.writeFileSync(FILE(), JSON.stringify(cache), "utf8");
+    require("./atomicWrite").writeFileAtomic(FILE(), JSON.stringify(cache), "utf8");
   } catch (_) {}
 }
 

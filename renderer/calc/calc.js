@@ -9,6 +9,9 @@
   const api = window.calcAPI;
   const root = document.getElementById("calc-root");
   if (!root || !P || !api) return;
+  // main loaded this page with ?calc=1 when PBCalc starts on the calculator: hide the browser's own chrome from the first moment (the calculator itself is
+  // built a few milliseconds later, when its data has arrived), so the tab strip / address bar are never seen
+  if (/[?&]calc=1(&|$)/.test(location.search)) document.body.classList.add("calc-mode");
 
   const NS = "http://www.w3.org/2000/svg";
   const WHEEL_H = 36;                                   // = .c-wheel-item height in calc.css
@@ -29,13 +32,18 @@
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const icon = (name) => { const s = document.createElementNS(NS, "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("class", "c-icon"); const p = document.createElementNS(NS, "path"); p.setAttribute("d", ICONS[name]); s.appendChild(p); return s; };
   const money = (n) => "$" + n.toFixed(2);
-  const DISCOUNTS = []; for (let v = -60; v <= 10; v++) DISCOUNTS.push(v);
+  const ADDISC = []; for (let v = 0; v <= 20; v++) ADDISC.push(v);          // the ERP's "Additional Discount" wheel: 0 .. 20 %
   const clockText = () => { const d = new Date(); let h = d.getHours(); const ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12; return h + ":" + String(d.getMinutes()).padStart(2, "0") + " " + ap; };
 
   // ── state: a fresh screen every time the calculator comes up ──
   let st, built = false, ui = {};
-  const newPart = () => ({ weight: "", shape: "ROUND", color: "D", clarity: "FL", fluor: "NON", discount: st ? st.prefs.defaultDisc : -30, grades: P.PRESETS["3EX"].slice() });
-  const fresh = () => ({ stone: "", parts: [], drift: 1, active: 0, tab: "calc", prefs: { dark: false, labs: true, defaultDisc: -30 }, updated: clockText() });
+  // a part starts on the first value of every list in calc-data.json (shape, colour, clarity, fluorescence), the default CPS and lab, and the default depth / ratio
+  const newPart = () => {
+    const d = P.data(), shape = P.shapes()[0].code, grades = P.cpsTriple(d.defaultCps), subs = P.subCutsFor(shape, grades[0]);
+    return { weight: "", shape, color: P.colors()[0], clarity: P.clarities()[0], fluor: P.fluorescence()[0], adDisc: st ? st.prefs.defaultAdDisc : 0, grades,
+      subCut: subs.length ? subs[0].code : null, lab: d.defaultLab, depth: String(d.defaultDepth), ratio: String(d.defaultRatio) };
+  };
+  const fresh = () => ({ stone: "", parts: [], drift: 1, active: 0, tab: "calc", prefs: { dark: false, labs: true, defaultAdDisc: 0 }, updated: clockText() });
   const letter = (i) => String.fromCharCode(65 + i);
 
   // ── scroll wheel (iOS-style picker): scroll-snap column, drag with the mouse, one step per mouse-wheel notch ──
@@ -97,6 +105,23 @@
     return { el: wrap, init, set: (i) => { idx = clamp(i); toIndex(idx, false); } };
   }
 
+  // ── a row of chips that scrolls SIDEWAYS in one line (iOS style: no scrollbar, the mouse wheel / a touchpad moves it, a soft fade shows there is more) ──
+  // The page still scrolls up and down: the wheel is only taken while the row can move that way; at either end (or when everything fits) it goes on to the page.
+  function hscroll(sc) {
+    const edges = () => { const max = sc.scrollWidth - sc.clientWidth; sc.classList.toggle("more-l", sc.scrollLeft > 1); sc.classList.toggle("more-r", max > 1 && sc.scrollLeft < max - 1); };
+    sc.addEventListener("scroll", edges, { passive: true });
+    sc.addEventListener("wheel", (e) => {
+      const max = sc.scrollWidth - sc.clientWidth;
+      if (max <= 1) return;
+      const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (!d || (d < 0 && sc.scrollLeft <= 0) || (d > 0 && sc.scrollLeft >= max - 1)) return;
+      e.preventDefault(); sc.scrollLeft = Math.max(0, Math.min(max, sc.scrollLeft + d));
+    }, { passive: false });
+    if (typeof ResizeObserver === "function") new ResizeObserver(edges).observe(sc);
+    edges();
+    return sc;
+  }
+
   // ── a chip with a radio dot ──
   function chip(text, on, onClick) {
     const b = el("button", "c-chip" + (on ? " on" : "")); b.type = "button";
@@ -106,11 +131,17 @@
   }
 
   const cleanNumber = (s) => { let v = String(s).replace(/[^0-9.]/g, ""); const i = v.indexOf("."); if (i >= 0) v = v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, ""); const m = v.match(/^(\d{0,4})(\.\d{0,3})?/); return m ? m[0] : ""; };
-  function nudge(delta) {
-    const p = st.parts[st.active] || st.parts[0];
-    const next = Math.max(0, Math.round((P.num(p.weight) + delta) * 100) / 100);
-    p.weight = next ? String(next) : "";
-    renderParts();
+  // "Add St." and the grey + add a part; the grey - takes the LAST added part away again (the first part stays: nothing was added, so nothing to take away).
+  // (The grey buttons used to change the weight by 0.05 ct; the owner asked for this instead.)
+  function addPart() {
+    if (!st || st.parts.length >= 6) return;
+    st.parts.push(newPart()); st.active = st.parts.length - 1; renderParts();
+    if (ui.body.lastElementChild) ui.body.lastElementChild.classList.add("enter");
+    ui.body.scrollTo({ top: ui.body.scrollHeight, behavior: "smooth" });
+  }
+  function removeLastPart() {
+    if (!st || st.parts.length <= 1) return;
+    st.parts.pop(); st.active = Math.min(st.active, st.parts.length - 1); renderParts();
   }
 
   // ── the frame: header (tabs, price update), three views, footer ──
@@ -118,7 +149,7 @@
     root.textContent = "";
     const stage = el("div", "c-stage"); ui.stage = stage; root.appendChild(stage);
 
-    const head = el("header", "c-head"); stage.appendChild(head);
+    const head = el("header", "c-head"); stage.appendChild(head); ui.head = head;
     const brand = el("div", "c-brand"); const bi = el("i"); bi.appendChild(icon("diamond")); brand.appendChild(bi); brand.appendChild(el("span", "", "PBC")); head.appendChild(brand);
     const tabs = el("div", "c-tabs"); tabs.setAttribute("role", "tablist"); head.appendChild(tabs);
     const mkTab = (key, label, glyph) => {
@@ -154,6 +185,14 @@
     clr.addEventListener("click", () => { ui.stoneIn.value = ""; st.stone = ""; ui.stoneIn.focus(); refresh(); });
     ui.stoneIn.addEventListener("focus", () => stone.classList.add("focus"));
     ui.stoneIn.addEventListener("blur", () => stone.classList.remove("focus"));
+    // Enter or Tab in the stone weight moves on to Part A's weight (its input is hidden until the box is opened, so Tab alone would skip it)
+    ui.stoneIn.addEventListener("keydown", (e) => {
+      if ((e.key !== "Enter" && e.key !== "Tab") || e.shiftKey) return;
+      const pw = ui.body && ui.body.querySelector(".c-pw");
+      if (!pw) return;
+      e.preventDefault(); pw.click();
+      const inp = pw.querySelector("input"); if (inp) inp.select();
+    });
     ui.stoneIn.addEventListener("input", () => { ui.stoneIn.value = cleanNumber(ui.stoneIn.value); st.stone = ui.stoneIn.value; refresh(); });
     const sum = el("div", "c-sum"); top.appendChild(sum);
     ui.sum = {};
@@ -161,18 +200,22 @@
       const c = el("div"); c.appendChild(el("label", "", label)); ui.sum[k] = el("b", k === "result" ? "res" : ""); c.appendChild(ui.sum[k]); sum.appendChild(c);
     });
     ui.labs = el("div", "c-labs");
-    ["Loose", "GIA", "IGI", "HRD"].forEach((n) => { const d = el("div"); d.appendChild(el("b", "", n)); d.appendChild(el("span", "", "$0.00/Ct.")); ui.labs.appendChild(d); });
+    ui.labSpans = [];
+    P.labs().forEach((name) => { const d = el("div"); d.appendChild(el("b", "", name)); const sp = el("span", "", "$0.00/Ct."); d.appendChild(sp); ui.labSpans.push(sp); ui.labs.appendChild(d); });
     top.appendChild(ui.labs);
     ui.body = el("div", "c-body"); calc.appendChild(ui.body);
     const actions = el("div", "c-actions"); calc.appendChild(actions);
-    const red = el("button", "c-btn red"); red.type = "button"; red.title = "Remove the last part"; red.appendChild(icon("minusCircle"));
-    red.addEventListener("click", () => { if (st.parts.length > 1) st.parts.pop(); else st.parts[0] = newPart(); st.active = Math.min(st.active, st.parts.length - 1); renderParts(); });
-    const add = el("button", "c-btn blue"); add.type = "button"; add.title = "Add another part"; add.appendChild(icon("dollar")); add.appendChild(el("span", "", "Add St."));
-    add.addEventListener("click", () => { if (st.parts.length < 6) { st.parts.push(newPart()); st.active = st.parts.length - 1; renderParts(); ui.body.scrollTo({ top: ui.body.scrollHeight, behavior: "smooth" }); } });
-    const minus = el("button", "c-btn grey"); minus.type = "button"; minus.title = "Weight - 0.05 ct"; minus.appendChild(icon("minus"));
-    minus.addEventListener("click", () => nudge(-0.05));
-    const plus = el("button", "c-btn grey"); plus.type = "button"; plus.title = "Weight + 0.05 ct"; plus.appendChild(icon("plus"));
-    plus.addEventListener("click", () => { api.plus(); nudge(+0.05); });   // main counts the quick presses
+    const red = el("button", "c-btn red"); red.type = "button"; red.title = "Remove all parts"; red.appendChild(icon("minusCircle"));
+    // the red button clears EVERY part (owner's change; it used to remove only the last one). The screen always keeps one part to work on, so "all removed" = one fresh,
+    // empty part A. The stone weight is not touched (Settings > Reset calculator clears that too).
+    red.addEventListener("click", () => { st.parts = [newPart()]; st.active = 0; renderParts(); });
+    // the blue button used to be "Add St." (the grey + does that now): it calculates and shows the result (owner's choice)
+    const add = el("button", "c-btn blue"); add.type = "button"; add.title = "Calculate and show the result"; add.appendChild(icon("calc")); add.appendChild(el("span", "", "Calculate"));
+    add.addEventListener("click", showResult);
+    const minus = el("button", "c-btn grey"); minus.type = "button"; minus.title = "Remove the last added part"; minus.appendChild(icon("minus"));
+    minus.addEventListener("click", removeLastPart);
+    const plus = el("button", "c-btn grey"); plus.type = "button"; plus.title = "Add another part"; plus.appendChild(icon("plus"));
+    plus.addEventListener("click", () => { api.plus(); addPart(); });   // main counts the quick presses (five of them open the browser)
     actions.append(red, add, minus, plus);
 
     // the two "coming soon" views
@@ -203,12 +246,13 @@
   const cardRefs = [];
   function renderParts() {
     ui.body.textContent = ""; cardRefs.length = 0;
+    ui.body.classList.toggle("one", st.parts.length === 1);   // one part: no scrollbar (it only showed because the lab table made the card a few px too tall)
     st.parts.forEach((p, i) => ui.body.appendChild(buildCard(p, i)));
     cardRefs.forEach((r) => r.wheels.forEach((w) => w.init()));   // the cards are in the document now: the wheels can scroll to their start items
     refresh();
   }
 
-  const WHEEL_HEADS = [["Shape", "w-shape"], ["Colour", "w-color"], ["Clarity", "w-clar"], ["Fluor.", "w-fluor"], ["Discount", "w-disc"]];
+  const WHEEL_HEADS = [["Shape", "w-shape"], ["Colour", "w-color"], ["Clarity", "w-clar"], ["Fluor.", "w-fluor"], ["Add. Disc.", "w-disc"]];
   function buildCard(p, i) {
     const ref = {}; cardRefs[i] = ref;
     const card = el("div", "c-card");
@@ -220,10 +264,14 @@
     const input = el("input"); input.inputMode = "decimal"; input.autocomplete = "off"; input.maxLength = 8; input.value = p.weight; pw.appendChild(input);
     pw.appendChild(el("span", "c-unit", "Ct."));
     const setLabel = () => { label.textContent = (p.weight || pw.classList.contains("focus")) ? "Part '" + letter(i) + "' Weight" : "Enter Part '" + letter(i) + "' Weight"; };
-    label.addEventListener("click", () => input.focus());
-    pw.addEventListener("click", () => input.focus());
+    // The input is display:none until the box has the "focus" / "has" class, and a hidden input cannot take focus - so a click on the box (or its label) first
+    // shows the input, THEN focuses it. (Clicking did nothing at all before: typing into the part weight only worked from a script.)
+    const openInput = () => { pw.classList.add("focus"); input.focus(); };
+    label.addEventListener("click", openInput);
+    pw.addEventListener("click", openInput);
     input.addEventListener("focus", () => { pw.classList.add("focus"); st.active = i; setLabel(); });
-    input.addEventListener("blur", () => { pw.classList.remove("focus"); pw.classList.toggle("has", !!p.weight); setLabel(); });
+    // like the ERP's validateWeight(): a weight is shown with three decimals once the box is left
+    input.addEventListener("blur", () => { const f = parseFloat(p.weight); if (Number.isFinite(f) && f > 0) { p.weight = f.toFixed(3); input.value = p.weight; refresh(); } pw.classList.remove("focus"); pw.classList.toggle("has", !!p.weight); setLabel(); });
     input.addEventListener("input", () => { input.value = cleanNumber(input.value); p.weight = input.value; pw.classList.toggle("has", !!p.weight); setLabel(); refresh(); });
     setLabel();
 
@@ -233,39 +281,73 @@
     WHEEL_HEADS.forEach(([t, c]) => heads.appendChild(el("span", c, t)));
     const wheels = el("div", "c-wheels"); box.appendChild(wheels);
     ref.wheels = [];
-    const mk = (items, cur, field, cls, fmt) => {
-      const w = makeWheel(items.map((x) => (fmt ? fmt(x) : x)), Math.max(0, items.indexOf(cur)), (idx) => { p[field] = items[idx]; refresh(); }, cls);
+    // a wheel shows `labels` and writes the matching value into p[field]
+    const mk = (values, labels, cur, field, cls, after) => {
+      const w = makeWheel(labels, Math.max(0, values.indexOf(cur)), (idx) => { p[field] = values[idx]; if (after) after(); refresh(); }, cls);
       wheels.appendChild(w.el); ref.wheels.push(w);
     };
-    mk(P.SHAPES, p.shape, "shape", "w-shape");
-    mk(P.COLORS, p.color, "color", "w-color");
-    mk(P.CLARITIES, p.clarity, "clarity", "w-clar");
-    mk(P.FLUORS, p.fluor, "fluor", "w-fluor");
-    mk(DISCOUNTS, p.discount, "discount", "w-disc", (v) => v + "%");
+    mk(P.shapes().map((x) => x.code), P.shapes().map((x) => x.name), p.shape, "shape", "w-shape", () => paintGrades());   // a new shape can change the sub-cuts
+    mk(P.colors(), P.colors(), p.color, "color", "w-color");
+    mk(P.clarities(), P.clarities(), p.clarity, "clarity", "w-clar");
+    mk(P.fluorescence(), P.fluorescence(), p.fluor, "fluor", "w-fluor");
+    mk(ADDISC, ADDISC.map((v) => v + "%"), p.adDisc, "adDisc", "w-disc");
 
     const gr = el("div", "c-grades"); work.appendChild(gr);
-    gr.appendChild(el("div", "c-sectitle", "Grade"));
-    const presets = el("div", "c-chips"); gr.appendChild(presets);
-    const rows = [];
+    gr.appendChild(el("div", "c-sectitle", "CPS"));
+    const presets = hscroll(el("div", "c-chips")); gr.appendChild(presets);
+    // the Lab row and the Depth / Ratio boxes sit UNDER THE WHEELS (the .c-under block, grid row 2 of the left column): the right column alone was much taller than the
+    // wheels and left an empty block below them
+    const under = el("div", "c-under"); work.appendChild(under);
+    const mkRow = (name, key, parent) => { const row = el("div", "c-row"); row.appendChild(el("span", "c-lbl", name)); row.dataset.key = key; row.chips = hscroll(el("div", "c-rowscroll")); row.appendChild(row.chips); (parent || gr).appendChild(row); return row; };
+    const rowCut = mkRow("Cut", "C"), rowSub = mkRow("SubCut", "SC"), rowPol = mkRow("Polish", "P"), rowSym = mkRow("Symmetry", "S"), rowLab = mkRow("Lab", "L", under);
+    const cuts = P.cuts(), gradeRows = [];
+    [[rowCut, 0], [rowPol, 1], [rowSym, 2]].forEach(([row, k]) => {
+      gradeRows[k] = cuts.map((g) => { const c = chip(g, false, () => { p.grades[k] = g; paintGrades(); refresh(); }); row.chips.appendChild(c); return c; });
+    });
+    // the sub-cuts on offer depend on the shape and the cut grade (the ERP's getSubCut); none for FR / PR, then the row is hidden
+    let subChips = [];
+    const buildSubCuts = () => {
+      const list = P.subCutsFor(p.shape, p.grades[0]);
+      if (!list.some((x) => x.code === p.subCut)) p.subCut = list.length ? list[0].code : null;
+      subChips.forEach((c) => c.remove()); subChips = [];
+      rowSub.hidden = list.length === 0;
+      list.forEach((x) => { const c = chip(x.code, x.code === p.subCut, () => { p.subCut = x.code; subChips.forEach((o) => o.classList.toggle("on", o.dataset.code === p.subCut)); refresh(); }); c.dataset.code = x.code; rowSub.chips.appendChild(c); subChips.push(c); });
+      rowSub.chips.scrollLeft = 0;
+    };
     const paintGrades = () => {
       const cur = P.presetOf(p.grades);
-      ref.presetChips.forEach((c, k) => c.classList.toggle("on", P.PRESET_NAMES[k] === cur));
-      rows.forEach((r, k) => r.forEach((c, g) => c.classList.toggle("on", P.GRADES[g] === p.grades[k])));
+      ref.presetChips.forEach((c) => c.classList.toggle("on", c.dataset.code === cur));
+      gradeRows.forEach((r, k) => r.forEach((c, g) => c.classList.toggle("on", cuts[g] === p.grades[k])));
+      buildSubCuts();
     };
-    ref.presetChips = P.PRESET_NAMES.map((n) => { const c = chip(n, false, () => { p.grades = P.PRESETS[n].slice(); paintGrades(); refresh(); }); presets.appendChild(c); return c; });
-    gr.appendChild(el("div", "c-sectitle", "Cut · Polish · Symmetry"));
-    [["C", "Cut"], ["P", "Polish"], ["S", "Symmetry"]].forEach(([l, name], k) => {
-      const row = el("div", "c-row"); row.appendChild(el("span", "c-lbl", name)); row.dataset.key = l;
-      const chips = P.GRADES.map((g) => { const c = chip(g, false, () => { p.grades[k] = g; paintGrades(); refresh(); }); row.appendChild(c); return c; });
-      rows.push(chips); gr.appendChild(row);
+    ref.presetChips = P.cpsNames().map((n) => { const c = chip(n, false, () => { p.grades = P.cpsTriple(n); paintGrades(); refresh(); }); c.dataset.code = n; presets.appendChild(c); return c; });
+    const labChips = P.labsAll().map((l) => { const c = chip(l, false, () => { p.lab = l; paintLab(); refresh(); }); c.dataset.code = l; rowLab.chips.appendChild(c); return c; });
+    // the Additional Discount only counts for the labs the data names (the ERP: NONE and FC; AUTO may pick NONE): the wheel is dimmed otherwise
+    const paintLab = () => {
+      labChips.forEach((c) => c.classList.toggle("on", c.dataset.code === p.lab));
+      const applies = p.lab === "AUTO" || P.adDiscApplies(p.lab), wd = ref.wheels[4];
+      wd.el.classList.toggle("na", !applies);
+      wd.el.title = applies ? "Additional discount: used instead of the lab's discount" : "Additional discount: only used with the labs " + P.data().adDiscLabs.join(" / ") + " (and AUTO)";
+    };
+    // depth and ratio (they move the discount a little when they are far from ideal)
+    const meas = el("div", "c-meas"); under.appendChild(meas);
+    [["Depth", "depth", ""], ["Ratio", "ratio", ""]].forEach(([title, key, unit]) => {
+      const f = el("label", "c-mini"); f.appendChild(el("span", "", title));
+      const inp = el("input"); inp.inputMode = "decimal"; inp.autocomplete = "off"; inp.maxLength = 6; inp.value = p[key]; inp.dataset.key = key;
+      inp.addEventListener("input", () => { inp.value = cleanNumber(inp.value); p[key] = inp.value; refresh(); });
+      f.appendChild(inp); if (unit) f.appendChild(el("em", "", unit)); meas.appendChild(f);
     });
     p.grades = p.grades.slice();
-    paintGrades();
+    paintGrades(); paintLab();
 
     ref.line = el("div", "c-line"); card.appendChild(ref.line);
     ref.table = el("div", "c-table"); card.appendChild(ref.table);
-    const head2 = el("div", "r h"); ["VG", "Disc.", "$/ct.", "Total"].forEach((t) => head2.appendChild(el("div", "h", t))); ref.table.appendChild(head2);
-    ["Loose", "GIA", "IGI", "HRD"].forEach((n) => { const r = el("div", "r"); r.appendChild(el("div", "lab", n)); r.appendChild(el("div", "", "0.00%")); r.appendChild(el("div", "", "$0.00")); r.appendChild(el("div", "red", "$0.00")); ref.table.appendChild(r); });
+    const head2 = el("div", "r h"); ["Lab", "Disc.", "$/ct.", "Total"].forEach((t) => head2.appendChild(el("div", "h", t))); ref.table.appendChild(head2);
+    ref.labRows = [];
+    P.labs().forEach((name) => {
+      const r = el("div", "r"); const cells = [el("div", "", "0.00%"), el("div", "", "$0.00"), el("div", "red", "$0.00")];
+      r.appendChild(el("div", "lab", name)); cells.forEach((c) => r.appendChild(c)); ref.table.appendChild(r); ref.labRows.push(cells);
+    });
     return card;
   }
 
@@ -274,23 +356,68 @@
   function refresh() {
     if (!built || !st) return;
     const s = P.summary(st.parts, st.stone, st.drift);
-    ui.sum.polish.textContent = s.polish.toFixed(2) + " Ct.";
-    ui.sum.result.textContent = s.result.toFixed(2) + "%";
+    // a number that CHANGED pulses once (decorative: the text is set at once, the class only adds a short flourish)
+    const put = (node, text) => { if (node.textContent === text) return; node.textContent = text; if (ui.stage.classList.contains("intro")) return; node.classList.remove("bump"); void node.offsetWidth; node.classList.add("bump"); };
+    put(ui.sum.polish, s.polish.toFixed(2) + " Ct.");
+    put(ui.sum.result, s.result.toFixed(2) + "%");
     ui.sum.result.classList.toggle("pos", s.result > 0);
-    ui.sum.total.textContent = money(s.total);
-    ui.sum.rough.textContent = money(s.rough);
-    const showLabs = st.prefs.labs && P.num(st.stone) > 0;
+    put(ui.sum.total, money(s.total));
+    put(ui.sum.rough, money(s.rough));
+    s.labs.forEach((l, k) => { if (ui.labSpans[k]) ui.labSpans[k].textContent = money(l.rough) + "/Ct."; });   // each lab's rough $/Ct.
+    const showLabs = st.prefs.labs;   // shown from the start (zeros until a weight is entered), so the screen never opens half empty
     ui.labs.classList.toggle("show", showLabs);
     s.parts.forEach((r, i) => {
       const ref = cardRefs[i]; if (!ref) return;
       ref.line.textContent = "";
-      ref.line.append("List ", numSpan(String(r.list), r.list > 0), " $/Ct. ", numSpan(String(r.net), r.net > 0), " Total ", numSpan(String(Math.round(r.total)), r.total > 0));
+      ref.line.append("List ", numSpan(String(r.rate), r.rate > 0), " Disc ", numSpan(r.discount.toFixed(2) + "%", r.discount > 0), " $/Ct. ", numSpan(r.pcAvg.toFixed(2), r.pcAvg > 0), " Total ", numSpan(r.amount.toFixed(2), r.amount > 0));
       ref.table.classList.toggle("show", showLabs);
+      r.labs.forEach((l, k) => { const c = ref.labRows && ref.labRows[k]; if (!c) return; c[0].textContent = l.discount.toFixed(2) + "%"; c[1].textContent = money(l.pcAvg); c[2].textContent = money(l.amount); });
     });
   }
 
+  // ── the "Calculate" button: works everything out and shows it in one place - the four totals and one row per part. In memory only, like the settings dialog ──
+  function showResult() {
+    if (!st || ui.modal) return;
+    refresh();
+    const s = P.summary(st.parts, st.stone, st.drift);
+    const stone = P.num(st.stone);
+    const modal = el("div", "c-modal"); ui.modal = modal;
+    // (wide for the table, compact for a one-line message)
+    const dlg = el("div", "c-dialog " + (s.polish > 0 ? "wide" : "narrow")); dlg.setAttribute("role", "dialog"); dlg.setAttribute("aria-modal", "true"); dlg.setAttribute("aria-labelledby", "c-res-title"); modal.appendChild(dlg);
+    const h = el("h2"); h.id = "c-res-title"; h.appendChild(icon("calc")); h.appendChild(el("span", "", "Result")); dlg.appendChild(h);
+    dlg.appendChild(el("p", "c-sub", stone ? "Stone weight " + stone.toFixed(2) + " Ct." : "No stone weight entered: the result % and the rough price need it."));
+    if (!(s.polish > 0)) {
+      dlg.appendChild(el("p", "c-res-empty", "Enter at least one part weight to calculate."));
+    } else {
+      const tiles = el("div", "c-res-sum"); dlg.appendChild(tiles);
+      [["Polish", s.polish.toFixed(2) + " Ct.", ""], ["Result", s.result.toFixed(2) + "%", s.result > 0 ? "pos" : "res"], ["Total Polish", money(s.total), ""], ["Rough $/Ct.", money(s.rough), ""]]
+        .forEach(([label, value, cls]) => { const d = el("div"); d.appendChild(el("span", "", label)); d.appendChild(el("b", cls, value)); tiles.appendChild(d); });
+      const table = el("div", "c-res-table"); dlg.appendChild(table);
+      const row = (cells, cls) => { const r = el("div", "r" + (cls ? " " + cls : "")); cells.forEach((c) => r.appendChild(el("span", "", c))); table.appendChild(r); };
+      row(["Part", "Weight", "Stone", "Grade", "Lab", "Disc.", "List $/Ct.", "$/Ct.", "Net"], "h");
+      st.parts.forEach((p, i) => {
+        const r = s.parts[i];
+        row([letter(i), r.weight ? r.weight.toFixed(3) + " Ct." : "-", P.shapeOf(p.shape).name + " " + p.color + " " + p.clarity + " " + p.fluor, (P.presetOf(p.grades) || p.grades.join("/")) + (p.subCut ? " " + p.subCut : ""),
+          r.weight ? r.lab : "-", r.weight ? r.discount.toFixed(2) + "%" : "-", r.weight ? String(r.rate) : "-", r.weight ? r.pcAvg.toFixed(2) : "-", r.weight ? money(r.amount) : "-"]);
+      });
+    }
+    const foot = el("div", "c-foot2"); dlg.appendChild(foot);
+    foot.appendChild(el("span"));
+    const done = el("button", "c-dlgbtn primary", "Done"); done.type = "button"; done.dataset.act = "done"; done.addEventListener("click", closeSettings);
+    foot.appendChild(done);
+    modal.addEventListener("pointerdown", (e) => { if (e.target === modal) closeSettings(); });
+    ui.stage.appendChild(modal);
+    done.focus();
+  }
+
   // ── settings dialog (the gear): theme, default discount, lab table, reset. In memory only: gone with the calculator ──
-  function applyTheme() { ui.stage.classList.toggle("dark", st.prefs.dark); }
+  // the system's window buttons take the header's colour and height (electron/theme.js setCalcChrome); the header's height follows the window width, so it is read, not assumed
+  function syncChrome() { try { if (ui && ui.head && st) api.chrome({ dark: st.prefs.dark, height: Math.round(ui.head.getBoundingClientRect().height) }); } catch (_) {} }
+  window.addEventListener("resize", () => { clearTimeout(syncChrome.t); syncChrome.t = setTimeout(syncChrome, 120); });
+  // main (mainWindow.js) calls this while the window is still invisible and already maximized: the header has its final height by now, so the window buttons are
+  // given it (twice: the second time after the layout has settled) BEFORE anything is seen
+  window.__calcSettle = () => new Promise((resolve) => { syncChrome(); setTimeout(() => { syncChrome(); setTimeout(resolve, 60); }, 140); });
+  function applyTheme() { ui.stage.classList.toggle("dark", st.prefs.dark); syncChrome(); }
   function openSettings() {
     if (!st || ui.modal) return;
     const modal = el("div", "c-modal"); ui.modal = modal;
@@ -302,14 +429,14 @@
     const seg = el("div", "c-seg");
     [["light", "Light"], ["dark", "Dark"]].forEach(([k, t]) => { const b = el("button", "" + ((k === "dark") === st.prefs.dark ? "on" : ""), t); b.type = "button"; b.dataset.theme = k; b.addEventListener("click", () => { st.prefs.dark = k === "dark"; applyTheme(); seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); }); seg.appendChild(b); });
     row("Appearance", "Light or dark calculator", seg);
-    // default discount
-    const stepper = el("div", "c-stepper"); const dm = el("button", "", "−"), dp = el("button", "", "+"), out = el("output", "", st.prefs.defaultDisc + "%"); dm.type = dp.type = "button";
-    const setDisc = (v) => { st.prefs.defaultDisc = Math.max(-60, Math.min(10, v)); out.textContent = st.prefs.defaultDisc + "%"; };
-    dm.addEventListener("click", () => setDisc(st.prefs.defaultDisc - 1)); dp.addEventListener("click", () => setDisc(st.prefs.defaultDisc + 1));
+    // default additional discount
+    const stepper = el("div", "c-stepper"); const dm = el("button", "", "−"), dp = el("button", "", "+"), out = el("output", "", st.prefs.defaultAdDisc + "%"); dm.type = dp.type = "button";
+    const setDisc = (v) => { st.prefs.defaultAdDisc = Math.max(0, Math.min(20, v)); out.textContent = st.prefs.defaultAdDisc + "%"; };
+    dm.addEventListener("click", () => setDisc(st.prefs.defaultAdDisc - 1)); dp.addEventListener("click", () => setDisc(st.prefs.defaultAdDisc + 1));
     stepper.append(dm, out, dp);
-    const drow = row("Default discount", "Used for new parts", stepper);
+    const drow = row("Default additional discount", "Used for new parts (labs NONE / FC)", stepper);
     const apply = el("button", "c-dlgbtn", "Apply to all parts"); apply.type = "button"; apply.dataset.act = "apply";
-    apply.addEventListener("click", () => { st.parts.forEach((p, i) => { p.discount = st.prefs.defaultDisc; const w = cardRefs[i] && cardRefs[i].wheels[4]; if (w) w.set(DISCOUNTS.indexOf(p.discount)); }); refresh(); });
+    apply.addEventListener("click", () => { st.parts.forEach((p, i) => { p.adDisc = st.prefs.defaultAdDisc; const w = cardRefs[i] && cardRefs[i].wheels[4]; if (w) w.set(ADDISC.indexOf(p.adDisc)); }); refresh(); });
     drow.appendChild(apply); drow.style.flexWrap = "wrap";
     // lab table
     const sw = el("button", "c-switch" + (st.prefs.labs ? " on" : "")); sw.type = "button"; sw.setAttribute("role", "switch"); sw.setAttribute("aria-checked", String(st.prefs.labs)); sw.dataset.act = "labs";
@@ -332,12 +459,29 @@
   function show() {
     st = fresh(); st.parts = [newPart()];
     document.body.classList.add("calc-mode");      // FIRST: a hidden (display:none) wheel cannot scroll, so its start item would not stick
-    buildFrame(); applyTheme(); showTab("calc"); ui.upd.textContent = "Prices updated " + st.updated; renderParts();
+    buildFrame(); applyTheme(); showTab("calc"); ui.upd.textContent = "Prices updated " + st.updated;
+    ui.stage.classList.add("intro");               // the entrance animation (decorative; removed again so later changes do not replay it)
+    renderParts();
+    setTimeout(() => { if (ui && ui.stage) ui.stage.classList.remove("intro"); }, 1500);
+    syncChrome(); setTimeout(syncChrome, 200);
   }
   function hide() {
     document.body.classList.remove("calc-mode");
+    closeSettings();
     root.textContent = ""; ui = {}; built = false; st = null;   // nothing of the screen is kept while the browser is in use
+    cardRefs.length = 0;                                         // (the cards' elements and handlers can be collected)
+    try { P.configure(null); } catch (_) {}                      // ...and so is the price data: the calculator never comes back in this run
   }
-  api.onMode((on) => (on ? (st ? null : show()) : hide()));          // (never rebuild a screen that is already up: it would drop what was typed)
-  api.getMode().then((on) => { if (on && !st) show(); }).catch(() => {});
+  // The screen needs the data (calc-data.json, read by the main process each time) before it can be built. begin() fetches it, then shows - once, and only if the
+  // calculator is still wanted by then.
+  let wanted = false, starting = false;
+  async function begin() {
+    if (st || starting) return;
+    starting = true;
+    try { const d = await api.getData(); if (d) P.configure(d); } catch (_) {}
+    starting = false;
+    if (wanted && !st) { show(); setTimeout(() => { try { api.ready(); } catch (_) {} }, 60); }   // (main shows the window once this arrives)
+  }
+  api.onMode((on) => { wanted = !!on; if (on) begin(); else hide(); });         // (never rebuild a screen that is already up: it would drop what was typed)
+  api.getMode().then((on) => { if (on) { wanted = true; begin(); } else if (!st) { document.body.classList.remove("calc-mode"); try { api.ready(); } catch (_) {} } }).catch(() => { document.body.classList.remove("calc-mode"); });
 })();

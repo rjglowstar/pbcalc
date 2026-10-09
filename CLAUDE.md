@@ -259,8 +259,8 @@ Two things define this browser against every mainstream one:
 - **Wipe on exit** (`electron/privacy.js`): the user chose the strict policy — cookies, cache,
   localStorage, IndexedDB etc. never survive a restart, so logins do not persist either. On quit
   the session is cleared, then a detached helper process deletes everything in `userData` except
-  `password-vault.json`, `vault-lock.json`, `bookmarks.json`, `bookmarks-dummy.json`, `settings.json` and `Local State` once our PID is
-  gone (the `KEEP` set in privacy.js — six files); the same sweep
+  `password-vault.json`, `vault-lock.json`, `bookmarks.json`, `bookmarks-dummy.json`, `settings.json`, `calc-data.json` and `Local State` once our PID is
+  gone (the `KEEP` set in privacy.js — seven files); the same sweep
   runs at startup for crash leftovers. **`Local State` must stay in the keep list** — it holds the
   `safeStorage` key; deleting it makes the vault undecryptable.
 - **Bookmarks** (`electron/bookmarks/`): user-curated, persisted in `bookmarks.json`; bar + star
@@ -950,14 +950,16 @@ deleted; if the folder is read-only its modification time is remembered (`instal
 **Calculator screen** (`renderer/calc/{pricing.js,calc.css,calc.js}`, lives INSIDE the shell page; `electron/calcMode.js`): when `settings.json ->
 calculatorStart` is true PBCalc starts on a copy of the owner's iPad recording (Apple look, 1376x1032 stage scaled into the window, black letterbox, iOS
 scroll-snap WHEELS for Shape / Colour / Clarity / Fluorescence / Discount - no dropdowns; mint chips 3EX / EX-VG / VG / GD and C P S rows; Stone Weight, Polish /
-Result / Total Polish / Rough $/Ct., Add St. = more parts, red minus, gray minus/plus = +-0.05 ct, Update Price = +-2 % list drift). Prices are DUMMY
+Result / Total Polish / Rough $/Ct., blue **Calculate** (was Add St.; owner's choice) = opens the RESULT dialog (`showResult` in calc.js: the four totals and one row per part - weight, stone, grade, discount, list / net $/Ct., total; "Enter at least one part weight" when none; Esc / Done close it; it changes nothing - the numbers on the screen stay live), red minus = removes ALL parts (one fresh empty part A is left, the stone weight stays; it used to remove only the last one), gray PLUS = one more part (same as Add St., max 6) and gray MINUS = takes the LAST added part away (never the first; owner's change - they used to be +-0.05 ct; the + still sends `calc:plus`, so five quick presses open the browser), Update Price = +-2 % list drift). Prices are DUMMY
 (`pricing.js`; the real list is a SQL proc in Mfg.API, deliberately not copied) calibrated to the recording: 0.5 ct ROUND D FL -30 % = 4700 / 3290 / 1645, F VS1
 2600 / 1820 / 910, F VS2 2200 / 1540 / 770, stone 1.05 -> 47.62 % and $1566.67 (`scripts/verify-calc-pricing.js`, 22). There is NO Settings switch for it
 (it would give the disguise away); only the installer sets it. While it shows NO tab exists (`state.calcMode`): `createTab`, every shortcut, files dropped, and
 links from Windows are refused. **Five presses of the gray + within 1.5 s each** (counted in MAIN, `calc:plus`, shell page only) open the browser (a New Tab
-page at 100 % zoom; the Restricted home when Restricted Mode is on). **Closing the browser - the last tab OR the window's X - returns to the calculator
-instead of quitting** (`calcMode.onWindowClose`): every tab closed, the session wiped like at quit (`privacy.clearSession`), the Ctrl+Shift+T list forgotten, a
-FRESH calculator. The calculator's own X and the menu's Exit quit (`state.quitting` from `before-quit` / `session-end`). Window buttons turn white-on-black
+page at 100 % zoom; the Restricted home when Restricted Mode is on). **Once the browser is open the calculator is GONE for good (owner's change
+2026-10-09: "after close browser direct close browser; open PBCalc again -> calculator screen"):** closing the browser - the last tab OR the window's X - quits PBCalc like any browser
+(the session is wiped by the quit, `privacy.js`); nothing returns to the calculator in that run, and the calculator shows again only at the NEXT start. `hide()` in `calc.js` empties the page, drops the
+card references and releases the price data (`P.configure(null)`). The old return-to-calculator code (`calcMode.returnToCalc` / `onWindowClose`) is deleted. The calculator's own X and the menu's Exit quit as always
+(`state.quitting` from `before-quit` / `session-end`). Window buttons turn white-on-black
 (`theme.setCalc`). **Traps found by measuring:** (1) a wheel cannot scroll while `display:none` - add `body.calc-mode` BEFORE building the cards (the wheels
 started on the wrong item only when a late second `show()` did not rescue it); (2) `requestAnimationFrame` does not run while the window is covered, so the
 selected item and the price never wait for a frame (only the fade does); (3) a plain `.c-stage button {...}` reset out-ranked the buttons' own classes
@@ -965,7 +967,18 @@ selected item and the price never wait for a frame (only the fade does); (3) a p
 lock): probe it with ONE launch. Tests: `scripts/verify-calc-screen.js` (81 now; first version 54: start state, the recording's numbers, real mouse wheel + drag on a wheel, parts, nothing
 opens behind it, the 5-press rule incl. the pause that restarts the count and forged presses, close-returns-to-calculator incl. cookie wiped, X quits) plus
 `PBCALC_TEST_PLAIN=1` (no setting = browser starts as always); also run against the INSTALLED obfuscated exe through `--remote-debugging-port` (3 close/open cycles clean).
-**Assumption to confirm with the owner:** "when the browser closes we go back to the calculator" was implemented for BOTH the last tab and the window X.
+(The earlier "back to the calculator when the browser closes" behaviour was replaced as described above.)
+**No flash of the browser at start (owner, 2026-10-09: opening PBCalc from the taskbar showed the tab strip / address bar for a few ms before the calculator):** ROOT CAUSE measured - the window was SHOWN at
+`ready-to-show`, ~40 ms before the calculator had been built (the page asks main for its mode and data first), and `body.calc-mode` was only added then. Now (`mainWindow.js`): with calculator start on, main switches
+calculator mode on BEFORE the page loads (`calcMode.enter()`), loads the shell with `?calc=1` (`calc.js` adds `body.calc-mode` on its first line, so the browser chrome is hidden from the very first paint), and does NOT show the
+window until the page sends `calc:ready` (built; `calcAPI.ready`, shell only) - safety net 2.5 s, `CALC_READY_MAX_MS`. The `calc:ready` listener is registered before the page exists, so it cannot be missed.
+`verify-calc-screen.js` checks the order of the window's own calls (see the next paragraph).
+**No "small -> large" growing at start (owner, 2026-10-09: "open, close, open, close ... the calculator opens small and then large"):** measured with a timeline of window events - the page was loaded at the RESTORE size (1400x900), the
+calculator laid itself out for that width (its em-based layout follows the window width), and the window was then maximized and shown AT ONCE: first frames small, then a jump to 1920; the title-bar overlay (window buttons) also went
+40 -> 55 -> 63 px tall ~300-500 ms after the window was visible, and the content grew 1038 -> 1040. **Fix (`mainWindow.js`, calculator start only):** `setOpacity(0)` first (maximize() shows a hidden window, so it is done invisibly),
+`maximize(); show();`, wait for `calc:ready`, +150 ms (the page re-lays out at the final width), call `window.__calcSettle()` in the page (it sends the header's final height to main twice, `calc:chrome`), +120 ms, THEN `setOpacity(1)`. The window
+becomes visible ~0.8 s after launch (about 0.5 s later than before) and nothing changes after that. `verify-calc-screen.js` checks: first shown at opacity 0, visible only after `calc:ready`, the page already at the maximized size with the tab strip hidden,
+window-button height = header height at that moment and unchanged afterwards, no page resize after it became visible (the old code fails 5 of these checks: it laid the page out again 55 ms and 580 ms after showing it).
 **REDESIGN (owner's request, 2026-10-08) - the screen is no longer an iPad picture.** The first version copied the recording literally: a fixed 1376x1032 stage scaled into the window (black
 bars left and right) with an iPad status bar (clock, wifi, battery). Now `renderer/calc/calc.{css,js}` lay it out FLUID so it fills the whole window at any size (tested 1920 wide and 980 wide:
 `.c-stage` = the window, nothing scrolls sideways), without the status bar. Functionality and numbers are unchanged. Header (also the window's drag area; the window buttons sit over its right end,
@@ -974,10 +987,16 @@ Calculator view: Stone Weight tile + four summary tiles (Polish / Result / Total
 wheels with column titles Shape / Colour / Clarity / Fluor. / Discount, Grade chips and Cut / Polish / Symmetry rows, the "List .. $/Ct. .. Total .." strip, the lab table), the red / blue / gray buttons, a
 dark footer with the "Calculator" pill and the **gear = Settings dialog** (Appearance Light/Dark for the calculator, Default discount stepper + "Apply to all parts", Lab price table switch, Reset calculator,
 Done; Esc, Done or a click outside closes it; in memory only, gone with the session). Wheel items are 36px (`WHEEL_H` in calc.js = `.c-wheel-item` in calc.css: keep both). **Traps found while building it:**
-a CSS `transition` on the weight label never finished while the window was covered (the label stayed over the typed value) - no transitions on anything that carries meaning; the class names the tests and
+a CSS `transition` on the weight label never finished while the window was covered (the label stayed over the typed value) - no transitions on anything that carries meaning; **a click on the part-weight box must SHOW the input before focusing it** (it is `display:none` until `.focus`/`.has`, and a hidden input cannot take focus: clicking did nothing and typing was impossible until the owner noticed - `openInput` in `buildCard`; the test now clicks and types with real input events); the class names the tests and
 the 5-press code rely on (`.c-tab`, `.c-update`, `.c-sum`, `.c-card`, `.c-wheel*`, `.c-chip` in the order 3EX / EX-VG / VG / GD first, `.c-btn.grey` index 1 = +) were kept. Test: `verify-calc-screen.js`
 now has 81 checks (layout fills the window, tabs, Update Price stamp, every settings control, narrow window); its real-mouse wheel/drag checks can fail once in a while when someone moves the real
 mouse over the test window (re-run).
+**MODERN SKIN (owner: "more attractive, with animation, modern")** = the block at the END of `renderer/calc/calc.css` (visual only: no size, class or behaviour changed; `verify-calc-screen.js` 81/81 after it).
+Frosted-glass header, tiles, cards and action bar (`--glass*` variables, light + dark), a slowly drifting colour glow behind everything (`.c-stage::before/::after`), gradient accents (brand, part badge,
+tile top lines, number text, selected chips, buttons), a shine sweep on the brand diamond / Update Price / buttons, lift-and-press effects, pill chips with a "pop" on the selected dot, the selected-wheel band
+with a glow, a gentle entrance of tiles and cards at start (`.c-stage.intro`, removed after 1.5 s), a new part slides in (`.enter`), a changed summary number pulses once (`.bump`; the text is set at once,
+`put()` in `refresh()`), views and the settings dialog ease in, the "coming soon" ring floats, a moving line on top of the footer. **Rules kept:** every animation is DECORATIVE (final look = plain CSS; keyframe
+start states stay readable, opacity >= .9, because animations do not run while the window is covered), nothing animates the part-weight label, `prefers-reduced-motion` switches all of it off. **Scrolling parts:** the scrolled cards fade over 18px at the top / bottom edge (mask) instead of being cut by a hard line, `.c-top` has 0.5em of air below it, and with ONE part (`.c-body.one`, set in `renderParts`) there is no scrollbar and no spare space under the card, so a single part with the lab table fits at 1920x1040 without scrolling (owner's request); with several parts the thin scrollbar is back. **The system's window buttons match the header** (they were a black 138 x 40 box in a taller white header): `theme.js` `setCalcChrome` gives `setTitleBarOverlay` the header's own colour (light `#f3f9fc` / dark `#132030`, sampled from the rendered header), symbol colour and its HEIGHT; the page reports the header's real height (it follows the window width, em units) and the calculator's light / dark choice through `calcAPI.chrome` -> IPC `calc:chrome` (shell only, calculator mode only) at start, on resize and on every theme change. Seen on the real window in both modes; `verify-calc-screen.js` (82) checks colour and height.
 
 ## In-app updates (`electron/updater.js`, dialog `electron/updateDialog.js`; tests `verify-updater.js` 50, `verify-updater-popup.js` 10, `verify-update-dialog.js` 23, installer part of `verify-uninstall.js`)
 Built like the ERP shell (`PBERP-EXE - Barcode/electron/updater/autoUpdater.js`: electron-updater + a plain web folder). **The admin puts the THREE files that
@@ -994,8 +1013,8 @@ and is baked into the installed app as `resources/app-update.yml`. A release = r
   that Cancel installs it automatically the next time you close or open PBCalc, and two buttons **Cancel** / **Update** (filled). Light and dark like the browser. **Only a click on Update answers yes**;
   Cancel, Esc, the window's X, and the main window closing are all "no", and Enter decides nothing (no button has keyboard focus at the start, so a stray Enter while typing in a page cannot
   answer). Only THIS dialog's own window may send the answer (an `updatedialog:answer` forged by another window is ignored). Update -> `quitAndInstall(true, true)`. Cancel -> nothing starts,
-  `updateDeclined = <version>` is saved in settings.json; the update then installs (a) when PBCalc really quits (electron-updater `autoInstallOnAppQuit`, silent, no restart), (b) when the calculator's
-  "browser closed" happens (`calcMode.returnToCalc` -> `updater.installIfPending`), (c) at the NEXT START: the same version is found again, equals `updateDeclined`, so it installs at once WITHOUT
+  `updateDeclined = <version>` is saved in settings.json; the update then installs (a) when PBCalc really quits (electron-updater `autoInstallOnAppQuit`, silent, no restart), (b) [no longer: the calculator does not come back
+  after the browser closes, so a postponed update installs at the real quit (a)], (c) at the NEXT START: the same version is found again, equals `updateDeclined`, so it installs at once WITHOUT
   asking. A dialog that cannot be shown counts as Cancel. A newer version than the declined one asks again. **Trap (crashed the test process): close the dialog with `win.close()`, never
   `win.destroy()`** - after several destroyed modal dialogs a later `nativeTheme.themeSource` change took the whole process down (native crash, exit 127); `close()` fixed it.
   An earlier version used Electron's message box: UI Automation lists it INSIDE the main window with `CCPushButton` buttons - not relevant for the new HTML dialog, whose buttons are ordinary.
@@ -1028,7 +1047,7 @@ and is baked into the installed app as `resources/app-update.yml`. A release = r
 - **The installer shows the window too, so updates FROM OLD versions are covered** (owner: "after Update PBCalc closes and this window does not show - 3 user PCs and mine"). ROOT CAUSE: the window
   above is started by the RUNNING program, i.e. by the version that is being replaced - a copy installed before 0.1.3 does not have that code, so the update FROM it showed nothing (measured: the
   update on this PC had been downloaded and installed by such a copy). The installer is the one thing that always runs during an update, so `installer/installer.nsh` (`customInit` ->
-  `PbcStartUpdateWindow`) starts the same window itself: `build/update-ui.ps1` (STATIC, generated by `scripts/make-update-ui.js` from `updateProgress.buildScript({argsMode:true})`; `npm run dist` runs it first;
+  `PbcStartUpdateWindow`) starts the same window itself: `installer-files/update-ui.ps1` (STATIC, generated by `scripts/make-update-ui.js` from `updateProgress.buildScript({argsMode:true})`; `npm run dist` runs it first;
   the installer packs it with `File "${BUILD_RESOURCES_DIR}\update-ui.ps1"` - `${__FILEDIR__}` is the builder's template folder, not ours) via `ExecShell ... SW_HIDE` with `-To ${VERSION} -Exe $INSTDIR\PBCalc.exe`.
   Only for a SILENT update that restarts PBCalc (`--updated` and `--force-run`; the quit-time install has no `--force-run` and stays invisible). The window treats the PBCalc processes that exist
   when it starts as the OLD program (the installer starts it while the old app may still be closing). Several windows are prevented by a LOCK FILE (`%TEMP%\pbcalc-update-ui.lock`, released by the
@@ -1053,6 +1072,29 @@ and is baked into the installed app as `resources/app-update.yml`. A release = r
   A periodic re-check while PBCalc stays open was offered to the owner and NOT built (ask first).
 - Limits to say plainly: the build is unsigned, so the only integrity check is the sha512 in `pbcalc.yml` (a server that is taken over can serve a malicious installer; use https and a trusted
   folder in production); a differential download needs the previous version's blockmap on the server (otherwise the full file is fetched - works, just bigger).
+
+## The calculator's calculation = the ERP's Plan Maker (owner's request 2026-10-09; `renderer/calc/pricing.js`, `electron/calcData.js`, `electron/calcData.default.json`)
+Reviewed READ-ONLY in `Mfg.Web/.../globalmenu/planmaker/planmaker.component.{html,ts}` and `domain/services/planning/pricing.service.ts` (+ `Mfg.API` `PricingRepository`). **What the original does:** fields Shape, Color, Clarity (chips),
+Weight, CPS presets (3X / 2X / VX / 3V / GX / 3G / 3F = cut, polish, symmetry triples set in `setValue`), Cut, SubCut (`getSubCut`: depends on shape + cut grade, none for FR/PR), Polish, Symmetry, Fluorescence, Lab (AUTO + the labs),
+Depth, Ratio; the price of a part comes from the pricing server / SQL procedure `GetDiamondRate` (**not in the repos**, so the rate and discount tables are DUMMY here). The ERP-side arithmetic IS in the repos and is copied exactly:
+`oAmount = (rate - rate x discount / 100) x polishWt`; `mfgLabour` = a % of oAmount by amount range (`GetLabourCharge`: roundPercentage, and for a non-RD shape `labour x fancyPercentage / 100 + labour`), rounded to 0 decimals;
+`labLabour` = the lab's "Certificate Cost" for that weight (`ratePer` Pcs or Carets), 0 for NONE / FC; **`amount = (oAmount - mfgLabour - labLabour) / 14`**; `pcAvg = oAmount / wt`; lab **AUTO = the higher of GIA and NONE** (both > 0);
+**"Additional Discount" (adDisc) REPLACES the discount and only counts for NONE / FC** (the ERP resets it to 0 for other labs). The screen's tiles are the ERP's header line: Polish = sum of polishWt, **Result = RtP = polish x 100 / rough weight**,
+**Total Polish = sum of `amount`**, **Rough $/Ct. = Avg = sum of amount / rough weight** (the stone weight box is the packet's roughWeight).
+**Our fields (UI layout unchanged, only the fields):** wheels Shape / Colour / Clarity / Fluor. / **Add. Disc.** (0..20 %, was the Discount wheel; dimmed when the lab is not NONE / FC / AUTO); the right column: **CPS** chips, Cut, **SubCut**,
+Polish, Symmetry, **Lab** (AUTO + labs) rows, **Depth** and **Ratio** boxes; the price line `List <rate> Disc <d>% $/Ct. <pcAvg> Total <amount>`; the lab table and the lab row above the parts list the labs of the data (what each lab would give).
+Weight is shown with 3 decimals after leaving the box (`validateWeight`). The grey +/- and the red button, Calculate (result dialog, now with Lab and net columns) are unchanged in behaviour.
+**The data file: `calc-data.json` in PBCalc's data folder** (= `%LOCALAPPDATA%\PBCalc`; **on the keep list in privacy.js**, now seven files). `calcData.load()` (main; IPC `calc:get-data`, shell only, calculator mode only) writes it from
+`calcData.default.json` when it is missing, and reads it EACH TIME the calculator comes up (`begin()` in calc.js), so editing it needs no rebuild and no restart of the browser part. A section that is missing or has the wrong shape falls
+back to the default section (`merge`, `CHECK`), so a typo cannot empty the screen. It holds: shapes (code, name, group round/fancy, factor), colors, clarities, fluorescence, cuts, `cps` presets, `subCuts` (code, cut, shapes, adjust), `labs`,
+`netDivisor` (14), `adDiscLabs`, defaults, `rate` (weight bands base x colour factor x clarity factor x shape factor x Update Price drift, rounded to 10), `discount` (lab base, shape group, grade points x weights, fluorescence, depth, ratio),
+`mfgLabourPercents`, `labCosts`. **All numbers are made up** (seeded so a part on the defaults keeps the old list rate 4700; its net amount is 102.64: (1645 - 148 - 60) / 14). A very cheap stone with a costly lab is shown as 0, not negative.
+Tests: `verify-calc-pricing.js` (39, every expectation worked by hand in the file, plus the loader's fallback), `verify-calc-screen.js` (108).
+**Part card layout (no empty block under the wheels):** the right column (CPS / Cut / SubCut / Polish / Symmetry) is taller than the wheels, so the **Lab row and the Depth / Ratio boxes live in `.c-under`**, grid row 2 of the LEFT column
+(`.c-wheelbox` row 1, `.c-grades` spans rows 1-2, `.c-under` row 2); measured: wheels 349-553, under 566-611, right column 349-615. Keep new rows in the column that is shorter; below 1060px px the grid collapses to one column.
+**Lists = the ERP's (owner, 2026-10-09, read from the ERP's Price Calculator screenshot):** 59 shapes (RD, OV.2, OV, F.OV ... BLT, Other), 32 colours (D..Z in the ERP's groups O-P / Q-R ..., LFY ... FGY, Other, N/A), 15 clarities (FL .. I5, N/A); the made-up factors for the new ones are in `rate` / `shapes`. The default file is `version: 2`; **a `calc-data.json` with a lower version keeps its other sections but gets the default shapes / colours / clarities / subCuts / rate / discount** (`merge` in calcData.js), otherwise the old short lists would hide the new ones. Bump `version` whenever the default lists change. **Depth has no % sign** (it is just a number like Ratio).
+**ERP selection values (data version 3, owner: "you miss too many values"):** every selection carries ALL the ERP's values: 59 shapes (ERP spelling L.CU / L.CB / OLD L.CB, ERP order), 32 colours, 15 clarities (..I6, N/A), fluorescence NON FNT MED STG VSTG N/A, Cut / Polish / Symmetry EX VG GD FR PR **N/A**, **SubCut EX-ID (RD only), EX-1 .. EX-5, Excellent** (+ VG-1..3 / Very Good, GD-1,2 / Good: made up, the ERP's list for those cuts was not on the screenshot), and the **11 labs** (GIA IGI HRD NONE FC JP-GIA JP-IGI JP-HRD JP-NONE JP-FC OR-NONE; `adDiscLabs` NONE FC JP-NONE JP-FC OR-NONE; JP labs share their base lab's cost rows via `labCosts[].lab = "GIA,JP-GIA"`). A two-column lab-table / one-line lab-strip layout for them was tried and the owner removed it; **with this many values one part no longer fits without scrolling** (open).
+Not copied (not needed for this screen): the ERP's inclusion / measurement parameter lists, colour up/down price, secondary colour, solution numbers, pair ranges, the BUG local price table, the keypad buttons.
 
 ## Video files open in a tab (`fileTypes.VIDEO`, `scripts/verify-video-open.js`, 18 checks)
 Chrome plays a local .mp4 in a tab; PBCalc ignored a dropped video and sent a downloaded one to another program. `.mp4 .webm .m4v .ogv .mov` are
@@ -1136,6 +1178,27 @@ outcome, so a FAIL is a vulnerability. Found by measuring, fixed, and each fix h
 - **Not done / for the owner's decision:** Electron fuses (disable `--inspect`, `NODE_OPTIONS`, force asar-only + integrity) need a packaged-exe launch test and
   `runAsNode` must STAY on (the exit-wipe helper in privacy.js runs through it); the page-facing `window.vaultAPI` (save / deleteSaved / neverSave let any page of that origin
   edit its own saved logins - kept at the owner's request); UNC paths (`\\host\share\x.pdf`) handed in by Windows make the OS contact that server (normal for any Windows app).
+
+## Full review 2026-10-09 (bugs / leaks / security / logic) - `scripts/verify-hardening.js` (22 checks)
+Every item below was reproduced first, then fixed; `verify-hardening.js` holds the regression checks (the blob: and Retry ones were also run against the old code and failed there).
+- **`window.open(blob:https://...)` was dropped** (`setWindowOpenHandler` allowed only http(s) / about:). A page opening its OWN generated content in a new tab (report / invoice PDF through `URL.createObjectURL`)
+  got `null` and nothing happened - the ERP-style print / report flows. Now `blob:http(s)://` is allowed; file:, data:, javascript: (opens an about:blank page, as Chrome), ms-settings:, pbcalc: stay refused.
+  `restricted.sameSite` unwraps `blob:https://site/..` to that site (only script of the origin can create such a blob).
+- **Download Retry used `session.defaultSession`**, the tabs use `TAB_PARTITION`: the site's cookie / login was missing, so a Retry of a download behind a login fetched an error page. Now the tabs' session.
+- **"Open external application?" could be stacked** (a page navigating to mailto: in a loop opened one modal dialog per attempt): one question at a time (`externalAsking`).
+- **`window.vaultAPI` had no limits** (kept exposed on purpose): a page could fill the vault without end - every save encrypts and writes the WHOLE vault on the main thread. Now username <= 256, password <= 1024
+  characters, 50 logins per site, 2000 in all (`passwordVault.js`), both must be text.
+- **A failed save of the vault password** (`vaultLock.change`) left the NEW password active in memory only; the old one came back at the next start. Now rolled back.
+- **Half-written files**: the vault, the vault password, bookmarks and settings were written in place; a crash in the middle left half a file (settings.json also holds `calculatorStart`: the disguise would silently switch off).
+  `electron/atomicWrite.js` writes `<file>.tmp` and renames it over the old one (fallback: the plain write); a leftover .tmp is not on the keep list, so the sweep removes it.
+- **Update popup**: a second "Check for update" while the popup is open could open a second popup (`asking` flag); the taskbar progress stays on after a failed download (reset on "error").
+- **Address bar**: an IPv6 literal (`[::1]:8080`) became a Google search; now http://. (Mirrored in `renderer/newtab/newtab.js`.)
+- **Pricing**: weight bands in any order (a hand-edited `calc-data.json`).  Installer text: the "default browser" option no longer says Windows opens Default apps by itself.
+- Checked and fine (measured): 60 000 random calculator parts - every number finite, >= 0, discount <= 100; the calculator's enter / leave cycle 40 times - same DOM node count, same renderer heap, same number of
+  webContents, window listeners flat, main heap flat after the first cycles; strict CSP on every page, no `innerHTML` anywhere in `renderer/`; every IPC channel that drives the browser checks its sender.
+- **Known, left alone (decisions for the owner):** (1) the update feed is plain `http://` and the installer is not signed: anyone who can alter the traffic between the PC and the update server can serve their own
+  `pbcalc.yml` + installer (the sha512 comes from the same server) - use https + code signing; (2) the hidden admin shortcut ARMS on any bare Ctrl+Shift press (also the Windows language switch) and swallows the next
+  `p` typed within 12 s; (3) `top-level-storage-access` is allowed without asking (third-party cookie access); (4) NOT measured, from reading `privacy.js`: a relaunch within ~3 s of quitting may have session files removed by the previous run's detached cleanup helper (session files only, nothing the user keeps).
 
 ## Notable gotchas
 

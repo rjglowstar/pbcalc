@@ -266,8 +266,10 @@ function openInNewTab(url, background = false, opener = null) {
   createTab(url, { background, openerId: opener ? opener.id : null, index: indexAfterOpener(opener) });
 }
 
+let externalAsking = false;   // one question at a time: a page that navigates to mailto: in a loop used to stack modal dialogs
 function handleExternalUrl(url) {
   if (state.restricted) return; // no external applications in Restricted Mode
+  if (externalAsking) return;
   let parsed;
   try {
     parsed = new URL(url);
@@ -276,6 +278,7 @@ function handleExternalUrl(url) {
   }
   if (!EXTERNAL_SCHEMES.has(parsed.protocol)) return;
   const win = state.mainWindow;
+  externalAsking = true;
   dialog
     .showMessageBox(win && !win.isDestroyed() ? win : undefined, {
       type: "question",
@@ -289,7 +292,8 @@ function handleExternalUrl(url) {
       detail: parsed.href.length > 1500 ? parsed.href.slice(0, 1500) + "…  (very long address)" : parsed.href,
     })
     .then((r) => { if (r.response === 0 && parsed.href.length <= 1500) shell.openExternal(parsed.href); })
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => { externalAsking = false; });
 }
 
 // Chromium asks THIS before handing a link such as whatsapp://, steam:// or ms-settings: to Windows ("openExternal"). With no
@@ -557,7 +561,8 @@ function wireTabEvents(tab) {
       handleExternalUrl(url);
       return { action: "deny" };
     }
-    if (/^https?:$/.test(protocol) || protocol === "about:" || !protocol) {
+    // blob:https://... = content the page generated itself (window.open(URL.createObjectURL(pdf)) - reports, invoices): Chrome opens it, it used to be dropped here
+    if (/^https?:$/.test(protocol) || protocol === "about:" || !protocol || (protocol === "blob:" && /^blob:https?:\/\//i.test(url))) {
       return {
         action: "allow",
         overrideBrowserWindowOptions: { show: false, width: 0, height: 0 },
@@ -674,9 +679,6 @@ function closePageEndedTab(tab) {
   closeTab(tab.id, { pageGone: true });
   if (wasActive && opener && state.tabs.includes(opener)) switchTab(opener.id);
 }
-
-// the Ctrl+Shift+T list is forgotten when the browser closes back to the calculator (calcMode.returnToCalc)
-function forgetClosedTabs() { closedTabsHistory.length = 0; }
 
 function closeTab(id, opts = {}) {
   const idx = state.tabs.findIndex((t) => t.id === Number(id));
@@ -1402,7 +1404,6 @@ module.exports = {
   toggleBookmarkMode,
   permissionRequestHandler,
   openLocalFile,
-  forgetClosedTabs,
   chromeHeight,
   siteKind,
   setCapture,

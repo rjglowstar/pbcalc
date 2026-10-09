@@ -12,8 +12,11 @@ const on = (channel, callback) => {
 // The calculator screen (renderer/calc): asks whether it is showing, and reports presses of its gray "+" button (main counts them).
 contextBridge.exposeInMainWorld("calcAPI", {
   getMode: () => ipcRenderer.invoke("calc:get-mode"),
+  getData: () => ipcRenderer.invoke("calc:get-data"),   // the dummy price / list data (calc-data.json), only while the calculator shows
   onMode: (cb) => on("calc:mode", cb),
   plus: () => ipcRenderer.send("calc:plus"),
+  ready: () => ipcRenderer.send("calc:ready"),            // the calculator screen is built: the window may be shown now (main waits for this at start)
+  chrome: (o) => ipcRenderer.send("calc:chrome", { dark: !!(o && o.dark), height: Number(o && o.height) || 0 }),   // header height + theme, for the window buttons
 });
 
 contextBridge.exposeInMainWorld("browserAPI", {

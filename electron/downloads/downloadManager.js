@@ -303,7 +303,8 @@ function retry(id) {
   if (d.state === "progressing" && !d.stalled) return;
   if (d.item) { try { d.item.cancel(); } catch (_) {} }
   items.splice(items.indexOf(d), 1);
-  try { session.defaultSession.downloadURL(d.url); } catch (_) {}
+  // the TABS' session (cookies / login of the site that offered the file): defaultSession has none of them, so a Retry of a download behind a login got an error page
+  try { session.fromPartition(require("../constants").TAB_PARTITION).downloadURL(d.url); } catch (_) {}
   notify();
 }
 

@@ -177,3 +177,207 @@ body.calc-mode #calc-root { display: block; }
 .c-dlgbtn:hover { background: var(--soft); }
 .c-dlgbtn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .c-dlgbtn.danger { color: #e0352b; }
+
+/* ======================================================================================================================================
+   MODERN SKIN (the owner asked for a more attractive screen with animation). VISUAL ONLY: sizes, structure, class names and behaviour above are unchanged
+   (the tests and the 5-press code rely on them). RULES kept from the traps found before:
+   - every animation is DECORATIVE: the final look is the plain CSS; a keyframe 'from' state is always still readable (opacity >= .9), because
+     animations do not run while the window is covered and the element would stay in its first frame there;
+   - no transition on anything that carries meaning (the part-weight label); the wheels' selected item is toggled by script, not animated;
+   - prefers-reduced-motion switches every animation off (last block).
+   ====================================================================================================================================== */
+.c-stage { --glass: rgba(255, 255, 255, 0.74); --glass-strong: rgba(255, 255, 255, 0.9); --glass-line: rgba(255, 255, 255, 0.7); --edge: rgba(16, 24, 40, 0.08);
+  --glow: rgba(10, 132, 255, 0.38); --g1: #0a84ff; --g2: #7c5cff; --g3: #12c2b0; --aurora: 0.5; --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  background: radial-gradient(60vw 36vw at 78% 6%, rgba(18, 194, 176, 0.13), transparent 70%), var(--bg); isolation: isolate; }
+.c-stage.dark { --glass: rgba(23, 30, 46, 0.7); --glass-strong: rgba(32, 41, 62, 0.88); --glass-line: rgba(255, 255, 255, 0.08); --edge: rgba(255, 255, 255, 0.07);
+  --glow: rgba(90, 169, 255, 0.34); --g1: #5aa9ff; --g2: #9b7bff; --g3: #2fd6c0; --aurora: 0.4;
+  background: radial-gradient(60vw 36vw at 78% 6%, rgba(47, 214, 192, 0.1), transparent 70%), var(--bg); }
+
+/* soft moving colour behind everything */
+.c-stage::before, .c-stage::after { content: ""; position: absolute; z-index: 0; pointer-events: none; border-radius: 50%; filter: blur(72px); opacity: var(--aurora); }
+.c-stage::before { width: 52vw; height: 52vw; left: -14vw; top: -24vw; background: radial-gradient(circle, var(--g1), transparent 66%); animation: c-drift1 28s ease-in-out infinite alternate; }
+.c-stage::after { width: 46vw; height: 46vw; right: -12vw; bottom: -22vw; background: radial-gradient(circle, var(--g2), transparent 66%); animation: c-drift2 34s ease-in-out infinite alternate; }
+@keyframes c-drift1 { to { transform: translate3d(9vw, 7vw, 0) scale(1.14); } }
+@keyframes c-drift2 { to { transform: translate3d(-8vw, -6vw, 0) scale(1.18); } }
+.c-stage > :not(.c-modal) { position: relative; z-index: 1; }
+
+/* ---- header ---- */
+.c-head { background: var(--glass); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5); border-bottom: 1px solid var(--edge);
+  box-shadow: 0 10px 28px -16px rgba(16, 24, 40, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.6); }
+.c-stage.dark .c-head { box-shadow: 0 10px 28px -16px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+.c-brand i { position: relative; overflow: hidden; background: linear-gradient(145deg, var(--g1), var(--g2)); box-shadow: 0 6px 16px -4px var(--glow); }
+.c-brand i::after { content: ""; position: absolute; top: -20%; bottom: -20%; width: 55%; left: -80%; background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.6), transparent); transform: skewX(-18deg); animation: c-shine 6s ease-in-out infinite; }
+@keyframes c-shine { 0%, 55% { left: -80%; } 100% { left: 150%; } }
+.c-tabs { background: rgba(127, 127, 127, 0.12); border: 1px solid var(--edge); }
+.c-tab { transition: background 0.2s var(--ease), color 0.2s var(--ease), box-shadow 0.25s var(--ease), transform 0.15s var(--ease); }
+.c-tab:hover:not(.on) { transform: translateY(-1px); }
+.c-tab:active { transform: scale(0.97); }
+.c-tab.on { background: var(--glass-strong); color: var(--accent); box-shadow: 0 8px 18px -8px var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.8); animation: c-pop 0.4s cubic-bezier(0.2, 1.4, 0.4, 1); }
+@keyframes c-pop { from { transform: scale(0.95); } }
+.c-update { position: relative; overflow: hidden; background: linear-gradient(135deg, #0f172a, #1d2f5a 62%, #2a4a8f); box-shadow: 0 10px 22px -10px rgba(29, 47, 90, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: transform 0.16s var(--ease), box-shadow 0.25s var(--ease); }
+.c-stage.dark .c-update { background: linear-gradient(135deg, #f2f5fb, #c7d7ff); box-shadow: 0 10px 22px -10px rgba(138, 180, 255, 0.6), inset 0 1px 0 #fff; }
+.c-update:hover { filter: none; transform: translateY(-1px); box-shadow: 0 16px 28px -10px rgba(42, 74, 143, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+.c-update:active { transform: scale(0.97); }
+.c-update::after, .c-btn::after { content: ""; position: absolute; top: 0; bottom: 0; width: 38%; left: -60%; background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.38), transparent); transform: skewX(-18deg); transition: left 0.65s var(--ease); pointer-events: none; }
+.c-update:hover::after, .c-btn:hover::after { left: 130%; }
+
+/* ---- stone weight + summary tiles ---- */
+.c-stone { background: var(--glass); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1.5px solid var(--glass-line); border-radius: 1.2em;
+  box-shadow: 0 14px 34px -18px rgba(16, 24, 40, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.6); transition: border-color 0.2s, box-shadow 0.3s var(--ease); }
+.c-stone .c-icon { filter: drop-shadow(0 4px 8px var(--glow)); }
+.c-stone.focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--band), 0 18px 36px -16px var(--glow); }
+.c-sum > div { position: relative; overflow: hidden; background: var(--glass); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--glass-line); border-radius: 1.2em;
+  box-shadow: 0 14px 34px -18px rgba(16, 24, 40, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.6); transition: transform 0.25s var(--ease), box-shadow 0.3s var(--ease); }
+.c-sum > div::before { content: ""; position: absolute; left: 1.2em; right: 1.2em; top: 0; height: 3px; border-radius: 0 0 6px 6px; background: linear-gradient(90deg, var(--g1), var(--g3)); opacity: 0.95; }
+.c-sum > div:nth-child(2)::before { background: linear-gradient(90deg, #ff4d8d, #ff9a3d); }
+.c-sum > div:nth-child(3)::before { background: linear-gradient(90deg, var(--g2), var(--g1)); }
+.c-sum > div:nth-child(4)::before { background: linear-gradient(90deg, var(--g3), #4cd68a); }
+.c-sum > div:hover { transform: translateY(-3px); box-shadow: 0 22px 40px -18px rgba(16, 24, 40, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.6); }
+.c-sum b { background: linear-gradient(90deg, var(--teal), var(--g1)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; transform-origin: left center; }
+.c-sum > div:nth-child(2) b { background-image: linear-gradient(90deg, var(--pink), #ff7a45); }
+.c-sum > div:nth-child(2) b.pos { background-image: linear-gradient(90deg, var(--green), var(--g3)); }
+.c-sum > div:nth-child(3) b { background-image: linear-gradient(90deg, var(--g2), var(--g1)); }
+.c-sum b.bump { animation: c-bump 0.55s cubic-bezier(0.2, 1.3, 0.4, 1); }
+@keyframes c-bump { 0% { transform: scale(1); filter: brightness(1.5); } 35% { transform: scale(1.07); } 100% { transform: scale(1); filter: none; } }
+.c-labs div { background: var(--glass); border-color: var(--glass-line); border-radius: 1em; }
+
+/* ---- part cards ---- */
+.c-body { scrollbar-color: rgba(127, 127, 127, 0.4) transparent; }
+.c-card { position: relative; overflow: hidden; background: var(--glass-strong); border: 1px solid var(--glass-line); border-radius: 1.4em;
+  box-shadow: 0 24px 50px -26px rgba(16, 24, 40, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.7); }
+.c-card::before { content: ""; position: absolute; left: 0; top: 1.3em; bottom: 1.3em; width: 4px; border-radius: 0 6px 6px 0; background: linear-gradient(var(--g1), var(--g2)); }
+.c-stage.dark .c-card { box-shadow: 0 24px 50px -26px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+.c-card.enter, .c-stage.intro .c-card, .c-stage.intro .c-stone, .c-stage.intro .c-sum > div { animation: c-rise 0.55s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.c-stage.intro .c-sum > div:nth-child(1) { animation-delay: 0.04s; } .c-stage.intro .c-sum > div:nth-child(2) { animation-delay: 0.1s; }
+.c-stage.intro .c-sum > div:nth-child(3) { animation-delay: 0.16s; } .c-stage.intro .c-sum > div:nth-child(4) { animation-delay: 0.22s; }
+.c-stage.intro .c-card { animation-delay: 0.18s; }
+@keyframes c-rise { from { opacity: 0.9; transform: translateY(16px) scale(0.985); } }
+.c-partbadge { background: linear-gradient(145deg, var(--g1), var(--g2)); color: #fff; box-shadow: 0 8px 16px -8px var(--glow); }
+.c-pw { border-radius: 1em; transition: border-color 0.2s, box-shadow 0.3s var(--ease); }
+.c-pw.focus { box-shadow: 0 0 0 4px var(--band), 0 14px 28px -16px var(--glow); }
+
+/* ---- wheels ---- */
+.c-wheels { border-radius: 1.1em; box-shadow: inset 0 2px 10px rgba(16, 24, 40, 0.07); }
+.c-wheel-sel { border-radius: 0.8em; background: linear-gradient(90deg, rgba(10, 132, 255, 0.17), rgba(124, 92, 255, 0.17)); border: 1px solid rgba(10, 132, 255, 0.38);
+  box-shadow: 0 8px 18px -10px var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.55); }
+.c-stage.dark .c-wheel-sel { background: linear-gradient(90deg, rgba(90, 169, 255, 0.22), rgba(155, 123, 255, 0.2)); border-color: rgba(90, 169, 255, 0.45); }
+.c-wheel-item.on { transform: scale(1.07); }
+
+/* ---- chips ---- */
+.c-chip { border-radius: 999px; background: var(--glass-strong); box-shadow: 0 3px 8px -5px rgba(16, 24, 40, 0.35); transition: transform 0.14s var(--ease), box-shadow 0.22s var(--ease), background 0.18s, border-color 0.18s; }
+.c-chip:hover:not(.on) { transform: translateY(-1px); box-shadow: 0 8px 16px -8px rgba(16, 24, 40, 0.4); }
+.c-chip:active { transform: scale(0.96); }
+.c-chip.on { background: linear-gradient(135deg, #bcf8dc, #8de8c2); border-color: transparent; box-shadow: 0 10px 20px -10px rgba(23, 164, 91, 0.7); }
+.c-stage.dark .c-chip.on { background: linear-gradient(135deg, #36836a, #2c6b53); box-shadow: 0 10px 20px -10px rgba(76, 214, 138, 0.4); }
+.c-chip.on .c-radio::after { animation: c-dot 0.3s cubic-bezier(0.2, 1.6, 0.4, 1); }
+@keyframes c-dot { from { transform: scale(0.2); } }
+.c-line { background: linear-gradient(90deg, var(--soft), transparent 85%); border: 1px solid var(--edge); border-radius: 1em; }
+
+/* ---- bottom ---- */
+.c-actions { background: var(--glass); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-top: 1px solid var(--edge); }
+.c-btn { position: relative; overflow: hidden; border-radius: 1em; box-shadow: 0 12px 22px -12px rgba(16, 24, 40, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.28); transition: transform 0.16s var(--ease), box-shadow 0.25s var(--ease), filter 0.2s; }
+.c-btn.red { background: linear-gradient(145deg, #ff5757, #e11d2e); }
+.c-btn.blue { background: linear-gradient(135deg, #34a0ff, #0a5fe6); box-shadow: 0 14px 26px -12px rgba(10, 132, 255, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.3); }
+.c-btn.grey { background: linear-gradient(145deg, #758f9f, #51697a); }
+.c-btn:hover { filter: brightness(1.05); transform: translateY(-2px); }
+.c-btn:active { filter: brightness(0.92); transform: scale(0.95); }
+.c-foot { position: relative; background: linear-gradient(180deg, #0f1626, #070a12); border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.c-foot::before { content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 1px; background: linear-gradient(90deg, transparent, var(--g1), var(--g2), var(--g3), transparent); background-size: 200% 100%; opacity: 0.8; animation: c-line 7s linear infinite; }
+@keyframes c-line { to { background-position: -200% 0; } }
+.c-pill { background: linear-gradient(145deg, #ffffff, #e6edfb); box-shadow: 0 8px 20px -8px rgba(138, 180, 255, 0.85), inset 0 1px 0 #fff; }
+.c-pill .c-icon { color: var(--g1); }
+.c-gear { transition: background 0.2s, transform 0.4s var(--ease); }
+.c-gear:hover { transform: rotate(90deg); }
+
+/* ---- the two "coming soon" views, view changes, settings dialog ---- */
+.c-view:not([hidden]) { animation: c-view 0.34s var(--ease); }
+@keyframes c-view { from { opacity: 0.92; transform: translateY(10px); } }
+.c-soon .c-ring { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.8), transparent 55%), var(--band); box-shadow: 0 0 0 12px rgba(10, 132, 255, 0.07), 0 22px 44px -18px var(--glow); animation: c-float 4.5s ease-in-out infinite; }
+@keyframes c-float { 50% { transform: translateY(-8px); } }
+.c-soon .c-pillsoon { background: linear-gradient(135deg, var(--g1), var(--g2)); color: #fff; box-shadow: 0 10px 20px -10px var(--glow); }
+.c-modal { backdrop-filter: blur(8px); }
+.c-dialog { background: var(--glass-strong); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border: 1px solid var(--glass-line); border-radius: 1.5em; animation: c-dlg 0.32s cubic-bezier(0.2, 1.1, 0.3, 1); }
+@keyframes c-dlg { from { opacity: 0.92; transform: translateY(14px) scale(0.97); } }
+.c-switch.on { background: linear-gradient(90deg, var(--g1), var(--g2)); }
+.c-switch, .c-switch::after { transition: background 0.2s var(--ease), transform 0.2s var(--ease); }
+.c-dlgbtn { transition: background 0.15s, transform 0.12s; }
+.c-dlgbtn:active { transform: scale(0.96); }
+.c-dlgbtn.primary { background: linear-gradient(135deg, var(--g1), var(--g2)); border-color: transparent; color: #fff; }
+
+@media (prefers-reduced-motion: reduce) {
+  .c-stage *, .c-stage::before, .c-stage::after { animation: none !important; transition: none !important; }
+}
+
+/* scrolling parts: the cards used to be cut by a hard straight line right under the tiles / the lab row (and above the action bar). They now fade out over the
+   last 18px at each edge instead (no size or position changes: it is only a mask; at scroll 0 the card's own top margin keeps it fully visible) */
+.c-body { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%); }
+.c-top { padding-bottom: 0.5em; }   /* a little air between the tiles / lab row and the scrolling parts (they used to touch) */
+/* ONE part: no scrollbar, and no spare space under the card (owner: "remove the scroll when there is only 1 part"); with several parts the thin scrollbar stays */
+.c-body.one { scrollbar-width: none; padding-bottom: 0.6em; }
+.c-body.one::-webkit-scrollbar { display: none; }
+.c-body.one .c-card { margin-bottom: 0; }
+
+/* ---- the result dialog (the "Calculate" button) ---- */
+.c-dialog.wide { width: min(58em, calc(100% - 2em)); }
+.c-dialog.narrow { width: min(26em, calc(100% - 2em)); }
+.c-res-empty { margin: 1.2em 0 0.4em; padding: 1.1em; border-radius: 0.9em; background: var(--soft); color: var(--muted); text-align: center; }
+.c-res-sum { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7em; margin: 0.3em 0 1.1em; }
+.c-res-sum div { padding: 0.7em 1em; border-radius: 0.95em; background: var(--soft); border: 1px solid var(--edge); min-width: 0; }
+.c-res-sum span { display: block; color: var(--muted); font-size: 0.78em; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
+.c-res-sum b { display: block; font-size: 1.4em; font-weight: 650; color: var(--teal); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-res-sum b.res { color: var(--pink); } .c-res-sum b.pos { color: var(--green); }
+.c-res-table { border: 1px solid var(--line); border-radius: 0.9em; overflow: hidden; font-size: 0.94em; font-variant-numeric: tabular-nums; }
+.c-res-table .r { display: grid; grid-template-columns: 0.5fr 0.9fr 2.2fr 0.8fr 0.7fr 1fr 0.9fr 1.1fr; align-items: center; border-bottom: 1px solid var(--line); }
+.c-res-table .r:last-child { border-bottom: 0; }
+.c-res-table .r span { padding: 0.55em 0.8em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-res-table .r:not(.h) span:first-child { font-weight: 800; color: var(--accent); }
+.c-res-table .r.h { background: var(--soft); color: var(--muted); font-size: 0.8em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; }
+.c-res-table .r:not(.h) span:last-child { font-weight: 700; color: var(--teal); }
+@media (max-width: 760px) { .c-res-sum { grid-template-columns: repeat(2, 1fr); } .c-res-table { overflow-x: auto; } .c-res-table .r { min-width: 40em; } }
+
+/* ---- the ERP's Plan Maker fields: the CPS / SubCut / Lab chips, Depth + Ratio, the dimmed Add. Disc. wheel, more labs than four ---- */
+.c-meas { display: flex; gap: 0.8em; margin-top: 0.7em; flex-wrap: wrap; }
+.c-mini { display: flex; align-items: center; gap: 0.55em; height: 2.6em; padding: 0 0.9em; border: 1.5px solid var(--line); border-radius: 0.9em; background: var(--soft); cursor: text; }
+.c-mini span { color: var(--muted); font-size: 0.74em; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
+.c-mini input { width: 4.2em; font-weight: 650; font-size: 1.05em; text-align: right; }
+.c-mini em { font-style: normal; color: var(--muted); }
+.c-mini:focus-within { border-color: var(--accent); background: var(--card); box-shadow: 0 0 0 3px var(--band); }
+.c-wheel.na { opacity: 0.45; }
+.c-labs { grid-template-columns: repeat(auto-fit, minmax(11em, 1fr)); }
+.c-res-table .r { grid-template-columns: 0.7fr 0.95fr 2fr 1.05fr 0.65fr 0.8fr 0.95fr 0.95fr 1fr; }
+@media (max-width: 760px) { .c-res-table .r { min-width: 48em; } }
+
+/* the two columns of a part: wheels (+ Lab, Depth, Ratio under them) on the left, CPS / Cut / SubCut / Polish / Symmetry on the right, both ending at about the same height */
+.c-wheelbox { grid-column: 1; grid-row: 1; }
+.c-grades { grid-column: 2; grid-row: 1 / span 2; }
+.c-under { grid-column: 1; grid-row: 2; margin-top: 0.2em; }
+.c-under .c-meas { margin-top: 0.6em; }
+@media (max-width: 1060px) { .c-wheelbox, .c-grades, .c-under { grid-column: auto; grid-row: auto; } }
+/* one row under the wheels: the Lab chips, and Depth + Ratio at its right end */
+.c-work { row-gap: 0.5em; }
+.c-under { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6em 1.2em; margin-top: 0; }
+.c-under .c-row { margin-bottom: 0; flex: 1 1 auto; }
+.c-under .c-meas { margin: 0 0 0 auto; flex: none; }
+
+/* EVERY part (one or many) has the same tight spacing, so a single part fits without scrolling and no card looks different from another - tighter spacing under the wheels, the price line and the lab table (the body has no scrollbar then) */
+.c-body.one { padding-top: 0.2em; }
+.c-card { padding-top: 0.8em; padding-bottom: 0.8em; }
+.c-line { margin-top: 0.6em; padding: 0.45em 1.1em; }
+.c-table { margin-top: 0.6em; font-size: 0.88em; }
+.c-table div.r > * { padding: 0.42em 0.9em; }
+
+/* ONE part does not scroll, so it gets NO fade at the top / bottom edge (the fade was washing out the top of the card - "Part A Weight" and the card's own edge looked like a shadow) */
+.c-body.one { -webkit-mask-image: none; mask-image: none; padding-top: 0.5em; }
+
+/* every chip row (CPS, Cut, SubCut, Polish, Symmetry, Lab) is ONE line that scrolls sideways - mouse wheel / touchpad, no scrollbar, a soft fade at the side that has more - so a long list (7 sub-cuts, 12 labs) never makes the card taller */
+.c-chips, .c-rowscroll { display: flex; flex-wrap: nowrap; gap: 0.55em; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; min-width: 0;
+  padding: 0.45em 0.35em 0.6em; margin: -0.45em -0.35em -0.25em; }   /* room for the chips' shadows, taken back by the negative margin so the row keeps its height */
+.c-chips::-webkit-scrollbar, .c-rowscroll::-webkit-scrollbar { display: none; }
+.c-chips > .c-chip, .c-rowscroll > .c-chip { flex: none; }
+.c-row { flex-wrap: nowrap; }
+.c-row .c-rowscroll { flex: 1 1 0; }
+.c-chips.more-r, .c-rowscroll.more-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.2em), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 2.2em), transparent); }
+.c-chips.more-l, .c-rowscroll.more-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 2.2em); mask-image: linear-gradient(to right, transparent, #000 2.2em); }
+.c-chips.more-l.more-r, .c-rowscroll.more-l.more-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 2.2em, #000 calc(100% - 2.2em), transparent); mask-image: linear-gradient(to right, transparent, #000 2.2em, #000 calc(100% - 2.2em), transparent); }
+.c-under .c-row { flex: 1 1 0; min-width: 0; }

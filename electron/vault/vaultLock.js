@@ -54,7 +54,7 @@ function save() {
   }
   try {
     fs.mkdirSync(path.dirname(FILE()), { recursive: true });
-    fs.writeFileSync(FILE(), JSON.stringify(out));
+    require("../atomicWrite").writeFileAtomic(FILE(), JSON.stringify(out));
     return true;
   } catch (_) { return false; }
 }
@@ -114,8 +114,11 @@ function change(oldPw, newPw, confirmPw) {
   if (newPw !== confirmPw) return { ok: false, error: "mismatch" };
   if (newPw === oldPw) return { ok: false, error: "same" };
   const salt = crypto.randomBytes(16).toString("hex");
-  load().rec = { salt, hash: hashOf(newPw, salt) };
-  return save() ? { ok: true } : { ok: false, error: "save-failed" };
+  const c = load(), before = c.rec;
+  c.rec = { salt, hash: hashOf(newPw, salt) };
+  if (save()) return { ok: true };
+  c.rec = before;   // not written: the old password stays in force (it used to work until the next start, then the old one came back)
+  return { ok: false, error: "save-failed" };
 }
 
 const isDefault = () => !load().rec;

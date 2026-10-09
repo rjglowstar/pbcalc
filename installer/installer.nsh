@@ -86,7 +86,7 @@
       ; has no ${NSD_CreateFirstRadioButton}, so it is created by hand with the style the macro would add.
       nsDialogs::CreateControl ${__NSD_RadioButton_CLASS} "${__NSD_RadioButton_STYLE}|${WS_GROUP}" ${__NSD_RadioButton_EXSTYLE} 0 8u 100% 12u "Make PBCalc my default browser"
       Pop $PbcOptDefault
-      ${NSD_CreateLabel} 12u 22u 95% 20u "Windows opens its Default apps page when PBCalc first starts, so you can pick it there."
+      ${NSD_CreateLabel} 12u 22u 95% 20u "PBCalc lists itself in Windows Settings > Default apps (Web browser); you pick it there."
       Pop $0
       ${NSD_CreateRadioButton} 0 52u 100% 12u "Start PBCalc on the calculator screen"
       Pop $PbcOptCalc

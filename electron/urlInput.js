@@ -14,6 +14,7 @@ function resolveInput(text) {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t) || /^(file|about|data):/i.test(t)) return t;
   if (/\s/.test(t)) return SEARCH + encodeURIComponent(t);
 
+  if (/^\[[0-9a-f:.]+\](:\d{1,5})?([\/?#].*)?$/i.test(t)) return "http://" + t;   // an IPv6 literal, e.g. [::1]:8080 (it used to become a Google search)
   const m = /^([^\/:?#]+)(:\d{1,5})?([\/?#].*)?$/.exec(t);
   if (m) {
     const host = m[1];

@@ -59,7 +59,7 @@ function persist() {
   try {
     if (!isAvailable()) return false;
     const enc = safeStorage.encryptString(JSON.stringify(cache || emptyData())).toString("base64");
-    fs.writeFileSync(VAULT_FILE(), JSON.stringify({ v: 1, enc }), "utf8");
+    require("../atomicWrite").writeFileAtomic(VAULT_FILE(), JSON.stringify({ v: 1, enc }), "utf8");
     return true;
   } catch (_) {
     return false;
@@ -97,10 +97,15 @@ function getLastSaved(origin) {
   return best ? { username: best.username, password: best.password } : null;
 }
 
+// Limits (window.vaultAPI is open to the page of an origin, so a hostile page could otherwise fill the vault without end: every save encrypts and
+// writes the WHOLE vault on the main thread, and the file only grows). Real logins are far below these.
+const MAX_USER = 256, MAX_PASS = 1024, MAX_PER_ORIGIN = 50, MAX_TOTAL = 2000, MAX_NEVER = 2000;
+
 function saveCredential({ origin, username, password } = {}) {
-  const u = (username || "").toString().trim();
-  const p = (password || "").toString();
+  const u = (typeof username === "string" ? username : "").trim();
+  const p = typeof password === "string" ? password : "";
   if (!u || !p || !isAvailable()) return false;
+  if (u.length > MAX_USER || p.length > MAX_PASS) return false;
   const o = normOrigin(origin);
   const data = loadData();
   // Saving explicitly clears any prior "never" entry for this user.
@@ -110,6 +115,7 @@ function saveCredential({ origin, username, password } = {}) {
     data.credentials[idx].password = p;
     data.credentials[idx].savedAt = Date.now();
   } else {
+    if (data.credentials.length >= MAX_TOTAL || data.credentials.filter((c) => normOrigin(c.origin) === o).length >= MAX_PER_ORIGIN) return false;
     data.credentials.push({ origin: o, username: u, password: p, savedAt: Date.now() });
   }
   return persist();
@@ -128,11 +134,11 @@ function deleteCredential({ origin, username } = {}) {
 // any stored password for it.
 function neverSave({ origin, username } = {}) {
   const o = normOrigin(origin);
-  const u = (username || "").toString().trim();
-  if (!u) return false;
+  const u = (typeof username === "string" ? username : "").trim();
+  if (!u || u.length > MAX_USER) return false;
   const data = loadData();
   data.credentials = data.credentials.filter((c) => !(normOrigin(c.origin) === o && c.username === u));
-  if (!data.never.some((n) => normOrigin(n.origin) === o && n.username === u)) {
+  if (!data.never.some((n) => normOrigin(n.origin) === o && n.username === u) && data.never.length < MAX_NEVER) {
     data.never.push({ origin: o, username: u });
   }
   return persist();

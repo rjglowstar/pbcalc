@@ -1,4 +1,4 @@
-// Writes build/update-ui.ps1: the "Updating PBCalc" window as a STATIC script that the INSTALLER starts during a silent update
+// Writes installer-files/update-ui.ps1: the "Updating PBCalc" window as a STATIC script that the INSTALLER starts during a silent update
 // (installer/installer.nsh, customInit). Run by `npm run dist` before the installer is built.
 //
 // WHY: the window PBCalc starts itself (electron/updateProgress.js) is part of the program that is being REPLACED, so an update from a version
@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const { buildScript, DEFAULTS } = require("../electron/updateProgress");
 
-const out = path.join(__dirname, "..", "build", "update-ui.ps1");
+const out = path.join(__dirname, "..", "installer-files", "update-ui.ps1");
 const script = buildScript({ ...DEFAULTS, argsMode: true, dark: false, from: "", to: "", exe: "", oldPid: 0, stopFile: "" });
 // UTF-8 with a BOM (Windows PowerShell 5.1 reads a script without it as ANSI)
 fs.mkdirSync(path.dirname(out), { recursive: true });
