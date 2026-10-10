@@ -6,6 +6,7 @@
   const barSwitch = document.getElementById("bookmarks-bar");
   const suggestSwitch = document.getElementById("suggest-switch");
   const dlAsk = document.getElementById("dl-ask");
+  const memorySw = document.getElementById("memory-sw");
 
   function render(s) {
     if (!s) return;
@@ -18,6 +19,7 @@
     modeButtons.forEach((b) => b.setAttribute("aria-checked", String(b.dataset.mode === s.themeMode)));
     barSwitch.setAttribute("aria-checked", String(!!s.showBookmarksBar));
     suggestSwitch.setAttribute("aria-checked", String(!!s.searchSuggestions));
+    memorySw.setAttribute("aria-checked", String(s.memorySaver !== false));
     if (s.downloads) {
       document.getElementById("dl-dir").textContent = s.downloads.dir;
       dlAsk.setAttribute("aria-checked", String(!!s.downloads.ask));
@@ -56,6 +58,14 @@
     try { await api.checkUpdate(); } catch (_) {}
     checkBtn.disabled = false;
   });
+
+  memorySw.addEventListener("click", () => {
+    const next = memorySw.getAttribute("aria-checked") !== "true";
+    api.set("memorySaver", next);
+    memorySw.setAttribute("aria-checked", String(next));
+  });
+
+  document.getElementById("send-report").addEventListener("click", () => { try { api.sendReport(); } catch (_) {} });
 
   suggestSwitch.addEventListener("click", () => {
     const next = suggestSwitch.getAttribute("aria-checked") !== "true";

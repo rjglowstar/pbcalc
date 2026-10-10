@@ -10,7 +10,7 @@ const FILE = () => path.join(app.getPath("userData"), "settings.json");
 // Restricted Mode. (Restricted Mode itself is per session and is not saved.)
 // downloads.dir: "" = the OS Downloads folder; downloads.ask = Chrome's "Ask where to save each
 // file" switch (off by default, exactly as in Chrome).
-const DEFAULTS = { showBookmarksBar: true, themeMode: "system", searchSuggestions: true, downloads: { dir: "", ask: false }, restricted: { startRestricted: false } };
+const DEFAULTS = { showBookmarksBar: true, themeMode: "system", searchSuggestions: true, memorySaver: true, downloads: { dir: "", ask: false }, restricted: { startRestricted: false } };
 
 let cache = null;
 
@@ -23,6 +23,11 @@ function load() {
       if (typeof parsed.showBookmarksBar === "boolean") cache.showBookmarksBar = parsed.showBookmarksBar;
       if (["system", "light", "dark"].includes(parsed.themeMode)) cache.themeMode = parsed.themeMode;
       if (typeof parsed.searchSuggestions === "boolean") cache.searchSuggestions = parsed.searchSuggestions;
+      // a random id of THIS installation (support report, diagnostics.js) and an optional folder for the reports (default: the IT department's network folder)
+      if (typeof parsed.installId === "string" && parsed.installId.length >= 16 && parsed.installId.length <= 64) cache.installId = parsed.installId;
+      if (typeof parsed.reportShare === "string" && parsed.reportShare.trim() && parsed.reportShare.length <= 300) cache.reportShare = parsed.reportShare.trim();
+      // Settings > Memory saver: tabs not looked at for a long time give their page back (tabManager.discardIdleTabs)
+      if (typeof parsed.memorySaver === "boolean") cache.memorySaver = parsed.memorySaver;
       // set once by the installer's answer (installChoices.js): start on the calculator screen. No switch for it in Settings on purpose.
       if (typeof parsed.calculatorStart === "boolean") cache.calculatorStart = parsed.calculatorStart;
       if (typeof parsed.installChoicesStamp === "number") cache.installChoicesStamp = parsed.installChoicesStamp;

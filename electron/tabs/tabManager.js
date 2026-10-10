@@ -113,6 +113,7 @@ function getTabState() {
         siteKind: siteKind(t),
         capture: captureKind(t),
         favicon: t.favicon || "",
+        discarded: !!t.discarded,
         canGoBack: alive && wc.navigationHistory.canGoBack(),
         canGoForward: alive && wc.navigationHistory.canGoForward(),
         loading: alive && wc.isLoading(),
@@ -140,6 +141,24 @@ function resizeActiveView() {
   tab.view.setBounds({ x: 0, y: top, width: w, height: Math.max(0, h - top) });
 }
 
+// The page of a tab (a BrowserView). Used for a new tab and to bring a discarded one back (reviveTab).
+function newPageView(withSessionRestore) {
+  return new BrowserView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      // Only a duplicated tab carries this flag; its preload then asks for the source tab's
+      // sessionStorage before any page script runs. Every other tab skips that round trip.
+      additionalArguments: withSessionRestore ? ["--pbcalc-restore-session"] : [],
+      // One shared session for all tabs (see constants.TAB_PARTITION: persistent on purpose, so Chromium's PDF viewer
+      // works; privacy.js wipes it on quit and at the next start). NOTE: main.js (UA/headers) and downloadManager
+      // (will-download) MUST target this same session, or tabs leak the Electron UA and downloads are not caught.
+      partition: TAB_PARTITION,
+      preload: path.join(__dirname, "..", "..", "preloads", "tab-preload.js"),
+    },
+  });
+}
+
 // opts.background: open without switching to it (middle-click / ctrl-click on a link).
 // Restricted Mode: nothing may open a tab unless it passes opts.allowRestricted (the home page, a
 // preset bookmark, or a same-site popup) — so every "new tab" path (shortcut, IPC, menu, page
@@ -152,20 +171,7 @@ function createTab(url, opts = {}) {
 
   const view = opts.webContents
     ? new BrowserView({ webContents: opts.webContents })
-    : new BrowserView({
-        webPreferences: {
-          contextIsolation: true,
-          nodeIntegration: false,
-          // Only a duplicated tab carries this flag; its preload then asks for the source tab's
-          // sessionStorage before any page script runs. Every other tab skips that round trip.
-          additionalArguments: opts.sessionRestore ? ["--pbcalc-restore-session"] : [],
-          // One shared session for all tabs (see constants.TAB_PARTITION: persistent on purpose, so Chromium's PDF viewer
-          // works; privacy.js wipes it on quit and at the next start). NOTE: main.js (UA/headers) and downloadManager
-          // (will-download) MUST target this same session, or tabs leak the Electron UA and downloads are not caught.
-          partition: TAB_PARTITION,
-          preload: path.join(__dirname, "..", "..", "preloads", "tab-preload.js"),
-        },
-      });
+    : newPageView(!!opts.sessionRestore);
 
   // The page canvas stays WHITE even when PBCalc's own UI is dark. Chromium otherwise paints the
   // base background of a page that sets none in its dark colour (measured: #3C3C3C), which made
@@ -195,6 +201,9 @@ function createTab(url, opts = {}) {
     // tab turns out to have been opened just to start a download (closeTabOpenedForDownload).
     openerId: opts.openerId || null,
     isHome: !!(state.restricted && !url),
+    // Memory saver (see the section below): when this tab was last looked at, and - once its page has been freed - what is needed to bring it back.
+    lastActiveAt: Date.now(),
+    discarded: null,
   };
   if (opts.sessionRestore) {
     const now = Date.now();
@@ -212,6 +221,7 @@ function createTab(url, opts = {}) {
     state.tabs.push(tab);
   }
   wireTabEvents(tab);
+  startMemorySaver();
 
   if (opts.background && state.activeTabId != null) {
     // Not attached to the window: only the active tab's view ever is (see switchTab).
@@ -399,7 +409,9 @@ function wireTabEvents(tab) {
   // it ("New Tab", spinning) and the next reload / shortcut threw "Cannot read properties of undefined". Chrome closes
   // the tab and goes back to the page that opened it. Our own closeTab removes the tab from the list BEFORE it
   // destroys the page, so this only fires for pages that ended themselves.
-  wc.once("destroyed", () => closePageEndedTab(tab));
+  const wcId0 = wc.id;
+  // (a page destroyed on purpose by the memory saver is not "a page that ended itself": the tab stays, discarded)
+  wc.once("destroyed", () => { if (tab.discarded && tab.discarded.wcId === wcId0) return; closePageEndedTab(tab); });
   wc.on("did-navigate", () => require("../permissions").forgetPage(wc));   // "Allow this time" ends when the page is left
   // Whatever was keyed by this page's id must not outlive it: a typed login waiting for the next load, a fill grant, a
   // sessionStorage snapshot waiting to be collected (up to 512KB each) - measured to stay behind for ever when never collected.
@@ -604,7 +616,7 @@ async function captureThumb(tab) {
 // Restricted Mode.
 async function hoverInfo(id) {
   const tab = state.tabs.find((t) => t.id === Number(id));
-  if (!tab || tab.view.webContents.isDestroyed()) return null;
+  if (!tab || (tab.view.webContents.isDestroyed() && !tab.discarded)) return null;
   // Chrome shows no preview for the tab you are already looking at — the page itself is on screen
   // right below the card. Only background tabs get a thumbnail (their last capture).
   const active = tab.id === state.activeTabId;
@@ -620,11 +632,16 @@ function switchTab(id) {
   if (!next || !state.mainWindow || state.mainWindow.isDestroyed()) return getTabState();
 
   if (state.activeTabId !== next.id) {
+    const was = getActiveTab();
+    if (was) was.lastActiveAt = Date.now();   // memory saver: the tab being left starts its idle time now
     if (state.findOpen) closeFind();
     if (popup().isOpen()) popup().close();
     require("../hovercard").hide();
     require("../omnibox").hide();
   }
+
+  next.lastActiveAt = Date.now();
+  if (next.discarded) reviveTab(next);   // its page was freed (memory saver): load it again BEFORE it is attached
 
   const current = getActiveTab();
   const leaving = current && current.id !== next.id && !current.view.webContents.isDestroyed() ? current : null;
@@ -718,7 +735,10 @@ function closeTab(id, opts = {}) {
     }
     if (closedWc && !closedWc.isDestroyed()) closedWc.destroy();
   };
-  if (entry) {
+  if (entry && removed.discarded) {
+    entry.session = removed.discarded.session;   // its page is already gone (memory saver): what was kept then is what Ctrl+Shift+T brings back
+    destroyPage();
+  } else if (entry) {
     entry.pending = Promise.race([snapshotSessionStorage(closedWc), new Promise((r) => setTimeout(() => r(null), SESSION_SNAPSHOT_MS))])
       .then((data) => { entry.session = packSessionStorage(entry.url, data); })
       .catch(() => {})
@@ -1135,6 +1155,7 @@ function settingsSnapshot() {
   return {
     themeMode: settings.get("themeMode"),
     searchSuggestions: !!settings.get("searchSuggestions"),
+    memorySaver: settings.get("memorySaver") !== false,
     version: require("../../package.json").version, // package.json is the one place to bump it
     downloads: require("../downloads/downloadManager").config(), // { dir, ask } for Settings → Downloads
     showBookmarksBar: state.bookmarksBarVisible,
@@ -1149,6 +1170,11 @@ function broadcastSettings() {
     if (!isSettingsUrl(t.url) || t.view.webContents.isDestroyed()) return;
     try { t.view.webContents.send("settings:changed", snap); } catch (_) {}
   });
+}
+
+function setMemorySaver(on) {
+  settings.set("memorySaver", on !== false);
+  broadcastSettings();
 }
 
 function setSearchSuggestions(on) {
@@ -1261,6 +1287,107 @@ async function snapshotSessionStorage(wc) {
   }
 }
 
+// ── Memory saver (Chrome's "Memory Saver": tab discarding) ───────────────────────────────────────────────────────────────────────────────────────
+// Background tabs are already FROZEN the way Chrome does it - measured: a hidden tab gets visibilityState "hidden", no animation frames and its timers run
+// about once a second - but the page itself stays in memory for ever. A tab that has not been looked at for DISCARD_AFTER_MS gives its page back: the
+// renderer process is destroyed and the tab stays in the strip (dimmed) with its title, icon and address; clicking it loads the page again (reviveTab)
+// from what was kept - the whole back/forward list and the tab's sessionStorage (the PB ERP keeps its login there; same mechanism as Duplicate / Ctrl+Shift+T).
+// Like Chrome it never discards a tab that: plays sound, uses the camera / microphone / is being captured, is loading, has DevTools open, has text typed into a
+// form (or an editable area) that was not saved, is allowed to show notifications (WhatsApp Web...), opened other tabs that are still open or was itself opened
+// by a page (a pop-up keeps a link to its opener), shows an error page, or is not an ordinary web page. The switch is Settings > Memory saver (on by default).
+const DISCARD_AFTER_MS = 30 * 60 * 1000;
+const DISCARD_SWEEP_MS = 60 * 1000;
+const DEAD_WC = Object.freeze({ id: -1, isDestroyed: () => true });   // what tab.view.webContents is for a discarded tab: every "is it alive?" check says no
+let memorySaverTimer = null;
+
+function startMemorySaver() {
+  if (memorySaverTimer) return;
+  memorySaverTimer = setInterval(() => { discardIdleTabs().catch(() => {}); }, DISCARD_SWEEP_MS);
+  if (memorySaverTimer.unref) memorySaverTimer.unref();
+}
+
+// the checks that need no question to the page; true = this tab may be discarded now
+function discardableNow(tab, now, afterMs) {
+  if (!tab || tab.discarded || tab.id === state.activeTabId || state.calcMode) return false;
+  if (now - (tab.lastActiveAt || 0) < afterMs) return false;
+  if (!/^https?:\/\//i.test(String(tab.url || "")) || tab.errorPage || tab.childWindow) return false;
+  if (state.tabs.some((t) => t.openerId === tab.id)) return false;
+  const wc = tab.view && tab.view.webContents;
+  if (!wc || wc.isDestroyed()) return false;
+  try {
+    if (wc.isLoading() || wc.isCurrentlyAudible() || wc.isBeingCaptured() || wc.isDevToolsOpened() || tab.capture) return false;
+    if (require("../permissions").statesFor(wc).notifications === "granted") return false;
+  } catch (_) { return false; }
+  return true;
+}
+
+// does the page hold something the user typed that has not been sent / saved? (an edited field, a ticked box, a chosen file, text in an editable area)
+const UNSAVED_FORM_CHECK = `(() => { try {
+  for (const e of document.querySelectorAll("input,textarea,select")) {
+    const t = (e.type || "").toLowerCase();
+    if (t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "image") continue;
+    if (t === "file") { if (e.files && e.files.length) return true; continue; }
+    if (t === "checkbox" || t === "radio") { if (e.checked !== e.defaultChecked) return true; continue; }
+    if (e.tagName === "SELECT") { if (Array.prototype.some.call(e.options, (o) => o.selected !== o.defaultSelected)) return true; continue; }
+    if (e.value !== e.defaultValue) return true;
+  }
+  for (const e of document.querySelectorAll("[contenteditable]")) if (e.isContentEditable && e.textContent.trim()) return true;
+  return false;
+} catch (_) { return true; } })()`;
+
+async function hasUnsavedInput(wc) {
+  try {
+    return await Promise.race([wc.executeJavaScript(UNSAVED_FORM_CHECK, true), new Promise((r) => setTimeout(() => r(true), 800))]);   // no answer = do not discard
+  } catch (_) { return true; }
+}
+
+// Frees the page of one tab. Resolves true when it was discarded. opts.afterMs: tests.
+async function discardTab(tab, opts = {}) {
+  const afterMs = opts.afterMs == null ? DISCARD_AFTER_MS : opts.afterMs;
+  if (!discardableNow(tab, Date.now(), afterMs)) return false;
+  const wc = tab.view.webContents;
+  if (await hasUnsavedInput(wc)) return false;
+  let entries = [], index = 0;
+  try { const nav = wc.navigationHistory; entries = nav.getAllEntries(); index = nav.getActiveIndex(); } catch (_) {}
+  const data = await Promise.race([snapshotSessionStorage(wc), new Promise((r) => setTimeout(() => r(null), SESSION_SNAPSHOT_MS))]);
+  // time has passed (the checks above are asynchronous): it must still be a tab nobody is using
+  if (!state.tabs.includes(tab) || !discardableNow(tab, Date.now(), afterMs) || wc.isDestroyed()) return false;
+  const oldView = tab.view;
+  tab.discarded = { entries, index, session: packSessionStorage(tab.url, data), wcId: wc.id, at: Date.now() };
+  tab.view = { webContents: DEAD_WC, setBounds() {}, setBackgroundColor() {} };   // (the real view is gone below; the rest of the code only asks "is it destroyed?")
+  tab.capture = null;
+  try { if (state.mainWindow && !state.mainWindow.isDestroyed()) require("../viewHost").detach(state.mainWindow, oldView); } catch (_) {}
+  try { wc.destroy(); } catch (_) {}
+  notifyTabs();
+  return true;
+}
+
+// Discards every tab that has been idle long enough. opts.afterMs / opts.force: tests.
+async function discardIdleTabs(opts = {}) {
+  if (settings.get("memorySaver") === false && !opts.force) return 0;
+  let n = 0;
+  for (const tab of state.tabs.slice()) { try { if (await discardTab(tab, opts)) n++; } catch (_) {} }
+  return n;
+}
+
+// The tab was clicked: load its page again from what was kept, in a NEW view (called from switchTab before the view is attached).
+function reviveTab(tab) {
+  const d = tab.discarded;
+  if (!d) return;
+  tab.discarded = null;
+  const view = newPageView(!!d.session);
+  view.setBackgroundColor("#ffffff");
+  tab.view = view;
+  if (d.session) state.pendingSessionRestore.set(view.webContents.id, { origin: d.session.origin, data: d.session.data, at: Date.now() });
+  wireTabEvents(tab);
+  const wc = view.webContents;
+  if (d.entries && d.entries.length) {
+    Promise.resolve(wc.navigationHistory.restore({ entries: d.entries, index: d.index })).catch(() => load(wc, tab.url));
+  } else {
+    load(wc, tab.url);
+  }
+}
+
 // Chrome's "Duplicate tab": a copy of the tab INCLUDING its navigation history AND its
 // sessionStorage, opened immediately to the right of the original — so a logged-in page stays
 // logged in, which is the whole point of duplicating it. Works in Restricted Mode too (the copy
@@ -1320,7 +1447,7 @@ function tabContextMenu(id) {
   Menu.buildFromTemplate([
     { label: "New tab to the right", click: () => newTabAfter(tab) },
     { type: "separator" },
-    { label: "Reload", click: () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.reload(); } },
+    { label: "Reload", click: () => { if (tab.discarded) switchTab(tab.id); else if (!tab.view.webContents.isDestroyed()) tab.view.webContents.reload(); } },
     { label: "Duplicate", enabled: !!tab.url && !tab.errorPage && !isNewTabUrl(tab.url), click: () => duplicateTab(tab.id) },
     { type: "separator" },
     { label: "Close", click: () => closeTab(tab.id) },
@@ -1386,6 +1513,9 @@ module.exports = {
   openDownloadsPage,
   duplicateTab,
   setSearchSuggestions,
+  setMemorySaver,
+  discardIdleTabs,
+  discardTab,
   openManager,
   settingsSnapshot,
   broadcastSettings,

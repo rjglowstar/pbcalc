@@ -97,6 +97,8 @@ const { registerIpcHandlers } = require("./ipc/registerIpcHandlers");
 registerIpcHandlers();
 
 app.whenReady().then(async () => {
+  // the support report (electron/diagnostics.js): from now on the last 10 minutes are recorded in memory; a page that crashes or stops answering makes PBCalc ask the user to send a report
+  try { const dg = require("./diagnostics"); dg.mark("appReady"); dg.start({ onProblem: (kind) => { try { require("./reportDialog").promptAfterProblem(kind); } catch (_) {} } }); } catch (_) {}
   // Present as plain Chrome, with NO "Electron" token — WAFs (Akamai on Meesho) 403 the Electron UA.
   // Use the REAL Chromium version so navigator.userAgent, the Sec-Ch-Ua client hints and the sent
   // header all agree (spoofing a lower version is itself detectable). Tabs run in the TAB_PARTITION

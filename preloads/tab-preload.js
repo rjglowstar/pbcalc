@@ -195,6 +195,7 @@ if (location.protocol === "file:" && /\/renderer\/settings\/settings\.html$/.tes
   contextBridge.exposeInMainWorld("settingsAPI", {
     chooseDownloadDir: () => ipcRenderer.invoke("settings:choose-download-dir"),
     checkUpdate: () => ipcRenderer.invoke("settings:check-update"),
+    sendReport: () => ipcRenderer.invoke("settings:send-report"),
     get: () => ipcRenderer.invoke("settings:get"),
     onChanged: (cb) => { ipcRenderer.on("settings:changed", (_e, snap) => cb(snap)); },
     set: (key, value) => ipcRenderer.send("settings:set", key, value),

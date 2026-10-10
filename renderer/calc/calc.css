@@ -38,8 +38,6 @@ body.calc-mode #calc-root { display: block; }
 .c-stage.dark .c-update { background: #e8ecf4; color: #0b0f19; }
 .c-update:hover { filter: brightness(1.18); }
 .c-update .c-icon { font-size: 1.35em; }
-.c-update.spin .c-icon { animation: c-spin 0.7s linear; }
-@keyframes c-spin { to { transform: rotate(360deg); } }
 @media (max-width: 980px) { .c-tab .c-tab-label, .c-upd-meta { display: none; } .c-tab { padding: 0 0.8em; } }
 
 /* ---- views ---- */
@@ -179,12 +177,11 @@ body.calc-mode #calc-root { display: block; }
 .c-dlgbtn.danger { color: #e0352b; }
 
 /* ======================================================================================================================================
-   MODERN SKIN (the owner asked for a more attractive screen with animation). VISUAL ONLY: sizes, structure, class names and behaviour above are unchanged
-   (the tests and the 5-press code rely on them). RULES kept from the traps found before:
-   - every animation is DECORATIVE: the final look is the plain CSS; a keyframe 'from' state is always still readable (opacity >= .9), because
-     animations do not run while the window is covered and the element would stay in its first frame there;
-   - no transition on anything that carries meaning (the part-weight label); the wheels' selected item is toggled by script, not animated;
-   - prefers-reduced-motion switches every animation off (last block).
+   MODERN SKIN. VISUAL ONLY: sizes, structure, class names and behaviour above are unchanged (the tests and the 5-press code rely on them).
+   ANIMATIONS: the only one left is the shine across the logo in the header (c-shine). Every page animation (the drifting background glows, the footer line, the
+   entrance / view / dialog / number / dot / tab / spin / float effects) was removed on the owner's request - they kept the graphics process busy all the time
+   (measured: 4 infinite animations on the calculator screen). Rules kept: no transition on anything that carries meaning (the part-weight label); the wheels'
+   selected item is toggled by script, not animated; prefers-reduced-motion switches the remaining shine off (last block).
    ====================================================================================================================================== */
 .c-stage { --glass: rgba(255, 255, 255, 0.74); --glass-strong: rgba(255, 255, 255, 0.9); --glass-line: rgba(255, 255, 255, 0.7); --edge: rgba(16, 24, 40, 0.08);
   --glow: rgba(10, 132, 255, 0.38); --g1: #0a84ff; --g2: #7c5cff; --g3: #12c2b0; --aurora: 0.5; --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -195,10 +192,8 @@ body.calc-mode #calc-root { display: block; }
 
 /* soft moving colour behind everything */
 .c-stage::before, .c-stage::after { content: ""; position: absolute; z-index: 0; pointer-events: none; border-radius: 50%; filter: blur(72px); opacity: var(--aurora); }
-.c-stage::before { width: 52vw; height: 52vw; left: -14vw; top: -24vw; background: radial-gradient(circle, var(--g1), transparent 66%); animation: c-drift1 28s ease-in-out infinite alternate; }
-.c-stage::after { width: 46vw; height: 46vw; right: -12vw; bottom: -22vw; background: radial-gradient(circle, var(--g2), transparent 66%); animation: c-drift2 34s ease-in-out infinite alternate; }
-@keyframes c-drift1 { to { transform: translate3d(9vw, 7vw, 0) scale(1.14); } }
-@keyframes c-drift2 { to { transform: translate3d(-8vw, -6vw, 0) scale(1.18); } }
+.c-stage::before { width: 52vw; height: 52vw; left: -14vw; top: -24vw; background: radial-gradient(circle, var(--g1), transparent 66%); }
+.c-stage::after { width: 46vw; height: 46vw; right: -12vw; bottom: -22vw; background: radial-gradient(circle, var(--g2), transparent 66%); }
 .c-stage > :not(.c-modal) { position: relative; z-index: 1; }
 
 /* ---- header ---- */
@@ -212,8 +207,7 @@ body.calc-mode #calc-root { display: block; }
 .c-tab { transition: background 0.2s var(--ease), color 0.2s var(--ease), box-shadow 0.25s var(--ease), transform 0.15s var(--ease); }
 .c-tab:hover:not(.on) { transform: translateY(-1px); }
 .c-tab:active { transform: scale(0.97); }
-.c-tab.on { background: var(--glass-strong); color: var(--accent); box-shadow: 0 8px 18px -8px var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.8); animation: c-pop 0.4s cubic-bezier(0.2, 1.4, 0.4, 1); }
-@keyframes c-pop { from { transform: scale(0.95); } }
+.c-tab.on { background: var(--glass-strong); color: var(--accent); box-shadow: 0 8px 18px -8px var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.8); }
 .c-update { position: relative; overflow: hidden; background: linear-gradient(135deg, #0f172a, #1d2f5a 62%, #2a4a8f); box-shadow: 0 10px 22px -10px rgba(29, 47, 90, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.2);
   transition: transform 0.16s var(--ease), box-shadow 0.25s var(--ease); }
 .c-stage.dark .c-update { background: linear-gradient(135deg, #f2f5fb, #c7d7ff); box-shadow: 0 10px 22px -10px rgba(138, 180, 255, 0.6), inset 0 1px 0 #fff; }
@@ -238,8 +232,6 @@ body.calc-mode #calc-root { display: block; }
 .c-sum > div:nth-child(2) b { background-image: linear-gradient(90deg, var(--pink), #ff7a45); }
 .c-sum > div:nth-child(2) b.pos { background-image: linear-gradient(90deg, var(--green), var(--g3)); }
 .c-sum > div:nth-child(3) b { background-image: linear-gradient(90deg, var(--g2), var(--g1)); }
-.c-sum b.bump { animation: c-bump 0.55s cubic-bezier(0.2, 1.3, 0.4, 1); }
-@keyframes c-bump { 0% { transform: scale(1); filter: brightness(1.5); } 35% { transform: scale(1.07); } 100% { transform: scale(1); filter: none; } }
 .c-labs div { background: var(--glass); border-color: var(--glass-line); border-radius: 1em; }
 
 /* ---- part cards ---- */
@@ -248,11 +240,6 @@ body.calc-mode #calc-root { display: block; }
   box-shadow: 0 24px 50px -26px rgba(16, 24, 40, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.7); }
 .c-card::before { content: ""; position: absolute; left: 0; top: 1.3em; bottom: 1.3em; width: 4px; border-radius: 0 6px 6px 0; background: linear-gradient(var(--g1), var(--g2)); }
 .c-stage.dark .c-card { box-shadow: 0 24px 50px -26px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
-.c-card.enter, .c-stage.intro .c-card, .c-stage.intro .c-stone, .c-stage.intro .c-sum > div { animation: c-rise 0.55s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
-.c-stage.intro .c-sum > div:nth-child(1) { animation-delay: 0.04s; } .c-stage.intro .c-sum > div:nth-child(2) { animation-delay: 0.1s; }
-.c-stage.intro .c-sum > div:nth-child(3) { animation-delay: 0.16s; } .c-stage.intro .c-sum > div:nth-child(4) { animation-delay: 0.22s; }
-.c-stage.intro .c-card { animation-delay: 0.18s; }
-@keyframes c-rise { from { opacity: 0.9; transform: translateY(16px) scale(0.985); } }
 .c-partbadge { background: linear-gradient(145deg, var(--g1), var(--g2)); color: #fff; box-shadow: 0 8px 16px -8px var(--glow); }
 .c-pw { border-radius: 1em; transition: border-color 0.2s, box-shadow 0.3s var(--ease); }
 .c-pw.focus { box-shadow: 0 0 0 4px var(--band), 0 14px 28px -16px var(--glow); }
@@ -270,8 +257,6 @@ body.calc-mode #calc-root { display: block; }
 .c-chip:active { transform: scale(0.96); }
 .c-chip.on { background: linear-gradient(135deg, #bcf8dc, #8de8c2); border-color: transparent; box-shadow: 0 10px 20px -10px rgba(23, 164, 91, 0.7); }
 .c-stage.dark .c-chip.on { background: linear-gradient(135deg, #36836a, #2c6b53); box-shadow: 0 10px 20px -10px rgba(76, 214, 138, 0.4); }
-.c-chip.on .c-radio::after { animation: c-dot 0.3s cubic-bezier(0.2, 1.6, 0.4, 1); }
-@keyframes c-dot { from { transform: scale(0.2); } }
 .c-line { background: linear-gradient(90deg, var(--soft), transparent 85%); border: 1px solid var(--edge); border-radius: 1em; }
 
 /* ---- bottom ---- */
@@ -283,22 +268,17 @@ body.calc-mode #calc-root { display: block; }
 .c-btn:hover { filter: brightness(1.05); transform: translateY(-2px); }
 .c-btn:active { filter: brightness(0.92); transform: scale(0.95); }
 .c-foot { position: relative; background: linear-gradient(180deg, #0f1626, #070a12); border-top: 1px solid rgba(255, 255, 255, 0.06); }
-.c-foot::before { content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 1px; background: linear-gradient(90deg, transparent, var(--g1), var(--g2), var(--g3), transparent); background-size: 200% 100%; opacity: 0.8; animation: c-line 7s linear infinite; }
-@keyframes c-line { to { background-position: -200% 0; } }
+.c-foot::before { content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 1px; background: linear-gradient(90deg, transparent, var(--g1), var(--g2), var(--g3), transparent); background-size: 200% 100%; opacity: 0.8; }
 .c-pill { background: linear-gradient(145deg, #ffffff, #e6edfb); box-shadow: 0 8px 20px -8px rgba(138, 180, 255, 0.85), inset 0 1px 0 #fff; }
 .c-pill .c-icon { color: var(--g1); }
 .c-gear { transition: background 0.2s, transform 0.4s var(--ease); }
 .c-gear:hover { transform: rotate(90deg); }
 
 /* ---- the two "coming soon" views, view changes, settings dialog ---- */
-.c-view:not([hidden]) { animation: c-view 0.34s var(--ease); }
-@keyframes c-view { from { opacity: 0.92; transform: translateY(10px); } }
-.c-soon .c-ring { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.8), transparent 55%), var(--band); box-shadow: 0 0 0 12px rgba(10, 132, 255, 0.07), 0 22px 44px -18px var(--glow); animation: c-float 4.5s ease-in-out infinite; }
-@keyframes c-float { 50% { transform: translateY(-8px); } }
+.c-soon .c-ring { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.8), transparent 55%), var(--band); box-shadow: 0 0 0 12px rgba(10, 132, 255, 0.07), 0 22px 44px -18px var(--glow); }
 .c-soon .c-pillsoon { background: linear-gradient(135deg, var(--g1), var(--g2)); color: #fff; box-shadow: 0 10px 20px -10px var(--glow); }
 .c-modal { backdrop-filter: blur(8px); }
-.c-dialog { background: var(--glass-strong); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border: 1px solid var(--glass-line); border-radius: 1.5em; animation: c-dlg 0.32s cubic-bezier(0.2, 1.1, 0.3, 1); }
-@keyframes c-dlg { from { opacity: 0.92; transform: translateY(14px) scale(0.97); } }
+.c-dialog { background: var(--glass-strong); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border: 1px solid var(--glass-line); border-radius: 1.5em; }
 .c-switch.on { background: linear-gradient(90deg, var(--g1), var(--g2)); }
 .c-switch, .c-switch::after { transition: background 0.2s var(--ease), transform 0.2s var(--ease); }
 .c-dlgbtn { transition: background 0.15s, transform 0.12s; }

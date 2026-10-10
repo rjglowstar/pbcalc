@@ -139,11 +139,18 @@ function registerIpcHandlers() {
     if (!fromSettingsPage(e)) return false;
     try { return await require("../updater").checkNow(); } catch (_) { return false; }
   });
+  // Settings > Support > "Send report...": opens the report box (reportDialog.js); nothing is collected or sent until the user presses Send there.
+  ipcMain.handle("settings:send-report", (e) => {
+    if (!fromSettingsPage(e)) return false;
+    require("../reportDialog").ask({ trigger: "manual" }).catch(() => {});
+    return true;
+  });
   ipcMain.on("settings:set", (e, key, value) => {
     if (!fromSettingsPage(e)) return;
     if (key === "themeMode") tabManager.applyThemeMode(value);
     else if (key === "showBookmarksBar" && typeof value === "boolean") tabManager.setBookmarksBarVisible(value);
     else if (key === "searchSuggestions" && typeof value === "boolean") tabManager.setSearchSuggestions(value);
+    else if (key === "memorySaver" && typeof value === "boolean") tabManager.setMemorySaver(value);
     else if (key === "downloadsAsk" && typeof value === "boolean") { downloads.setAsk(value); tabManager.broadcastSettings(); }
   });
   // Settings → Downloads → "Change": the native folder picker (never in Restricted Mode).

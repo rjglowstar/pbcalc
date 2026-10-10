@@ -59,12 +59,20 @@ function createMainWindow() {
     const win = state.mainWindow;
     calcReady = new Promise((resolve) => {
       const timer = setTimeout(done, CALC_READY_MAX_MS);
-      const onReady = (e) => { if (e.sender === win.webContents) done(); };
+      const onReady = (e) => { if (e.sender === win.webContents) { try { require("../diagnostics").mark("calcReady"); } catch (_) {} done(); } };
       function done() { clearTimeout(timer); ipcMain.removeListener("calc:ready", onReady); resolve(); }
       ipcMain.on("calc:ready", onReady);       // registered before the page exists: its "ready" can never arrive unheard
       win.once("closed", done);
     });
   }
+  // where the start-up time goes (the report's startupMs): a PC whose window took 46 s showed only "ready-to-show" late, nothing between launch and it
+  { const mk = (n) => { try { require("../diagnostics").mark(n); } catch (_) {} };
+    mk("windowCreated");
+    const wc0 = state.mainWindow.webContents;
+    wc0.once("did-start-loading", () => mk("shellStartLoading"));
+    wc0.once("dom-ready", () => mk("shellDomReady"));
+    wc0.once("did-finish-load", () => mk("shellFinishLoad"));
+    wc0.once("did-fail-load", () => mk("shellFailLoad")); }
   state.mainWindow.loadFile(
     path.join(__dirname, "..", "..", "renderer", "shell", "shell.html"),
     startOnCalc ? { query: { calc: "1" } } : undefined,
@@ -72,6 +80,7 @@ function createMainWindow() {
 
   state.mainWindow.once("ready-to-show", async () => {
     if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
+    try { require("../diagnostics").mark("windowReadyToShow"); } catch (_) {}
     const win = state.mainWindow;
     // Open maximized (the width/height above are what the window restores to). Maximizing BEFORE
     // show avoids the small window appearing for a frame and then jumping.
@@ -95,6 +104,7 @@ function createMainWindow() {
       } catch (_) { /* reveal anyway */ }
       if (!win.isDestroyed()) { try { win.setOpacity(1); } catch (_) {} }
     }
+    try { require("../diagnostics").mark("windowVisible"); } catch (_) {}
     // "Start on the calculator screen" (the installer's answer): the calculator first, the browser only when its "+" is pressed 5 times.
     if (!startOnCalc) createTab(undefined, { allowRestricted: true }); // opens on the new-tab page (or the Restricted home); the calculator mode was switched on above
     // The "maximize" event fires before this first tab exists, and the content size is still

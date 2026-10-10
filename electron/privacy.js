@@ -15,7 +15,7 @@ const path = require("path");
 //   - Local State          holds the os_crypt key that Electron's safeStorage encrypts with. If it
 //                          is deleted, a new key is generated and the vault above can no longer be
 //                          decrypted. Never remove it.
-const KEEP = new Set(["password-vault.json", "vault-lock.json", "bookmarks.json", "bookmarks-dummy.json", "settings.json", "calc-data.json", "Local State"]);
+const KEEP = new Set(["password-vault.json", "vault-lock.json", "bookmarks.json", "bookmarks-dummy.json", "settings.json", "calc-data.json", "diag-session.json", "diag-previous.json", "Local State"]);
 
 // Startup sweep: removes leftovers from a crash / forced kill, and anything Chromium wrote during
 // the previous run's shutdown after we could clear it. Runs before app "ready", when nothing

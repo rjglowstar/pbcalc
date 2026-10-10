@@ -531,3 +531,6 @@ html.fullscreen .toolbar,
 html.fullscreen #bookmark-bar {
   display: none !important;
 }
+
+/* memory saver: a tab whose page was freed is shown dimmed (like Chrome); it loads again when it is clicked */
+.tab.discarded .tab-title, .tab.discarded .tab-icon { opacity: 0.55; }

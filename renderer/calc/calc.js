@@ -9,9 +9,7 @@
   const api = window.calcAPI;
   const root = document.getElementById("calc-root");
   if (!root || !P || !api) return;
-  // main loaded this page with ?calc=1 when PBCalc starts on the calculator: hide the browser's own chrome from the first moment (the calculator itself is
-  // built a few milliseconds later, when its data has arrived), so the tab strip / address bar are never seen
-  if (/[?&]calc=1(&|$)/.test(location.search)) document.body.classList.add("calc-mode");
+  // (shell.js loads this file only for a start on the calculator, ?calc=1, and has already set body.calc-mode: the browser's tab strip / address bar are never seen)
 
   const NS = "http://www.w3.org/2000/svg";
   const WHEEL_H = 36;                                   // = .c-wheel-item height in calc.css
@@ -136,7 +134,6 @@
   function addPart() {
     if (!st || st.parts.length >= 6) return;
     st.parts.push(newPart()); st.active = st.parts.length - 1; renderParts();
-    if (ui.body.lastElementChild) ui.body.lastElementChild.classList.add("enter");
     ui.body.scrollTo({ top: ui.body.scrollHeight, behavior: "smooth" });
   }
   function removeLastPart() {
@@ -166,7 +163,6 @@
     upd.addEventListener("click", () => {
       st.drift = Math.round((1 + (Math.random() - 0.5) * 0.04) * 100) / 100;   // the list moves by up to 2 %
       st.updated = clockText(); ui.upd.textContent = "Prices updated " + st.updated;
-      upd.classList.remove("spin"); void upd.offsetWidth; upd.classList.add("spin");
       refresh();
     });
     head.appendChild(upd);
@@ -356,8 +352,7 @@
   function refresh() {
     if (!built || !st) return;
     const s = P.summary(st.parts, st.stone, st.drift);
-    // a number that CHANGED pulses once (decorative: the text is set at once, the class only adds a short flourish)
-    const put = (node, text) => { if (node.textContent === text) return; node.textContent = text; if (ui.stage.classList.contains("intro")) return; node.classList.remove("bump"); void node.offsetWidth; node.classList.add("bump"); };
+    const put = (node, text) => { if (node.textContent !== text) node.textContent = text; };
     put(ui.sum.polish, s.polish.toFixed(2) + " Ct.");
     put(ui.sum.result, s.result.toFixed(2) + "%");
     ui.sum.result.classList.toggle("pos", s.result > 0);
@@ -460,9 +455,7 @@
     st = fresh(); st.parts = [newPart()];
     document.body.classList.add("calc-mode");      // FIRST: a hidden (display:none) wheel cannot scroll, so its start item would not stick
     buildFrame(); applyTheme(); showTab("calc"); ui.upd.textContent = "Prices updated " + st.updated;
-    ui.stage.classList.add("intro");               // the entrance animation (decorative; removed again so later changes do not replay it)
     renderParts();
-    setTimeout(() => { if (ui && ui.stage) ui.stage.classList.remove("intro"); }, 1500);
     syncChrome(); setTimeout(syncChrome, 200);
   }
   function hide() {

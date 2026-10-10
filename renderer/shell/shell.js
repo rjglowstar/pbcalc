@@ -1,3 +1,12 @@
+// The calculator screen (renderer/calc) belongs only to a PBCalc that STARTS on it: main loads this page with ?calc=1 then. In every other start (the default browser,
+// Restricted Mode...) none of its stylesheet or scripts is even loaded, so nothing of the calculator exists in the page. In the calculator start body.calc-mode is set
+// from the very first line (the browser's own tab strip / address bar must never be seen), and the pieces load in order.
+if (/[?&]calc=1(&|$)/.test(location.search)) {
+  document.body.classList.add("calc-mode");
+  const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "../calc/calc.css"; document.head.appendChild(css);
+  for (const src of ["../calc/pricing.js", "../calc/calc.js"]) { const sc = document.createElement("script"); sc.src = src; sc.async = false; document.body.appendChild(sc); }
+}
+
 (function () {
   const api = window.browserAPI;
   const I = window.PBIcons;
@@ -206,6 +215,7 @@
   // <img> is never re-created while it is already showing the right icon.
   function patchTabEl(el, tab, index) {
     el.classList.toggle("active", tab.id === tabState.activeTabId);
+    el.classList.toggle("discarded", !!tab.discarded);   // memory saver: its page was freed; it loads again when clicked
     el.draggable = true;   // reordering tabs reveals no address and changes no bookmark: same in every mode
     if (el.style.order !== String(index)) el.style.order = String(index); // reorder without moving nodes
     const title = tab.title || "New Tab";
