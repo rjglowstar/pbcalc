@@ -97,7 +97,68 @@ function sample() {
   });
   lagMax = 0;
   if (ring.length > RING_MAX) ring.shift();
+  const last = ring[ring.length - 1];
+  notePeaks(last);
+  noteUsage(last);
+  noteBusy(last);
 }
+
+// ── peaks since PBCalc started (what a 10-minute window cannot show) ──
+const peaks = { maxTabs: 0, maxPbcalcMB: 0, maxLagMs: 0, maxLagAt: null, lagOver250: 0, lagOver1000: 0, maxSysCpu: 0, minFreeMB: null, maxPageMB: 0, maxPageHost: "" };
+function notePeaks(s) {
+  if (!s) return;
+  const pb = Object.values(s.procs || {}).reduce((a, p) => a + (p.privMB || 0), 0);
+  peaks.maxTabs = Math.max(peaks.maxTabs, s.tabs || 0);
+  peaks.maxPbcalcMB = Math.max(peaks.maxPbcalcMB, Math.round(pb));
+  if (s.lagMs > peaks.maxLagMs) { peaks.maxLagMs = s.lagMs; peaks.maxLagAt = s.at; }
+  if (s.lagMs >= 250) peaks.lagOver250++;
+  if (s.lagMs >= 1000) peaks.lagOver1000++;
+  if (s.sysCpu != null) peaks.maxSysCpu = Math.max(peaks.maxSysCpu, s.sysCpu);
+  if (peaks.minFreeMB == null || s.freeMB < peaks.minFreeMB) peaks.minFreeMB = s.freeMB;
+  for (const pg of s.pages || []) if (pg.mb > peaks.maxPageMB) { peaks.maxPageMB = pg.mb; peaks.maxPageHost = pg.host || ""; }
+}
+
+// ── the last 24 hours in 10-minute buckets (numbers only, ~15 KB, kept in diag-usage.json across restarts): "it was slow yesterday morning" is otherwise invisible ──
+const USAGE_BUCKET_MS = 10 * 60 * 1000, USAGE_MAX = 144, USAGE_SAVE_MS = 5 * 60 * 1000;
+let usage = [], usageDirty = false;
+const usageFile = () => path.join(app.getPath("userData"), "diag-usage.json");
+function noteUsage(s) {
+  if (!s) return;
+  const key = Math.floor(Date.now() / USAGE_BUCKET_MS) * USAGE_BUCKET_MS;
+  let b = usage[usage.length - 1];
+  if (!b || b.k !== key) { b = { k: key, at: new Date(key).toISOString(), n: 0, cpuSum: 0, cpuMax: 0, freeMin: null, lagMax: 0, tabsMax: 0, pbMBMax: 0, pbCpuSum: 0 }; usage.push(b); if (usage.length > USAGE_MAX) usage.shift(); }
+  const pb = Object.values(s.procs || {}).reduce((a, p) => ({ mb: a.mb + (p.privMB || 0), cpu: a.cpu + (p.cpu || 0) }), { mb: 0, cpu: 0 });
+  b.n++; b.cpuSum += s.sysCpu || 0; b.cpuMax = Math.max(b.cpuMax, s.sysCpu || 0); b.freeMin = b.freeMin == null ? s.freeMB : Math.min(b.freeMin, s.freeMB);
+  b.lagMax = Math.max(b.lagMax, s.lagMs || 0); b.tabsMax = Math.max(b.tabsMax, s.tabs || 0); b.pbMBMax = Math.max(b.pbMBMax, Math.round(pb.mb)); b.pbCpuSum += pb.cpu;
+  usageDirty = true;
+}
+const usageOut = () => usage.map((b) => ({ at: b.at, samples: b.n, cpuAvg: b.n ? Math.round(b.cpuSum / b.n * 10) / 10 : null, cpuMax: Math.round(b.cpuMax * 10) / 10, freeMinMB: b.freeMin, lagMaxMs: b.lagMax, tabsMax: b.tabsMax, pbcalcMBMax: b.pbMBMax, pbcalcCpuAvg: b.n ? Math.round(b.pbCpuSum / b.n * 100) / 100 : null }));
+function saveUsage() {
+  if (!usageDirty) return;
+  try { require("./atomicWrite").writeFileAtomic(usageFile(), JSON.stringify(usage), "utf8"); usageDirty = false; } catch (_) {}
+}
+function loadUsage() {
+  try {
+    const j = JSON.parse(fs.readFileSync(usageFile(), "utf8"));
+    const cut = Date.now() - USAGE_MAX * USAGE_BUCKET_MS;
+    if (Array.isArray(j)) usage = j.filter((b) => b && typeof b.k === "number" && b.k >= cut && typeof b.n === "number").slice(-USAGE_MAX);
+  } catch (_) { usage = []; }
+}
+
+// WHO was using the processor while the whole PC was busy: the snapshot taken when the report is sent is usually quiet (a PC that averaged 31 % for ten minutes showed 6 % at send time).
+// While the whole-PC CPU stays at or above BUSY_CPU for two samples in a row, the 5 busiest programs (names only) are read - at most once per BUSY_GAP_MS, the last BUSY_KEEP kept, in memory.
+const BUSY_CPU = 25, BUSY_GAP_MS = 120000, BUSY_KEEP = 6;
+const busyMoments = [];
+let busyRunning = false, lastBusyAt = 0, busyStreak = 0;
+function noteBusy(s) {
+  busyStreak = s && s.sysCpu >= BUSY_CPU ? busyStreak + 1 : 0;
+  if (busyStreak < 2 || busyRunning || Date.now() - lastBusyAt < BUSY_GAP_MS) return;
+  busyRunning = true; lastBusyAt = Date.now();
+  windowsFactsTopCpu().then((top) => {
+    if (top && top.length) { busyMoments.push({ at: new Date().toISOString(), sysCpu: s.sysCpu, top: top.slice(0, 5).map((p) => ({ name: p.name, cpuOfOneCore: p.cpuOfOneCore })) }); if (busyMoments.length > BUSY_KEEP) busyMoments.shift(); }
+  }).catch(() => {}).finally(() => { busyRunning = false; });
+}
+const windowsFactsTopCpu = () => require("./winFacts").topCpuNow();
 
 // ── the copy kept for the NEXT start (see the header) ──
 const sessionFile = () => path.join(app.getPath("userData"), "diag-session.json");
@@ -131,13 +192,15 @@ function start(opts = {}) {
   onProblem = opts.onProblem || null;
   mark("diagnosticsStarted");
   adoptPrevious();
+  loadUsage();
   prevCpu = os.cpus().map((c) => ({ ...c.times }));
   lastTick = Date.now();
   lagTimer = setInterval(() => { const now = Date.now(); const late = now - lastTick - LAG_MS; if (late > lagMax) lagMax = late; lastTick = now; }, LAG_MS);
   timer = setInterval(() => { try { sample(); } catch (_) {} }, SAMPLE_MS);
   saveTimer = setInterval(persistSession, SESSION_SAVE_MS);
-  for (const t of [lagTimer, timer, saveTimer]) if (t.unref) t.unref();
-  app.on("before-quit", () => { quitRequested = true; persistSession(); });
+  const usageTimer = setInterval(saveUsage, USAGE_SAVE_MS);
+  for (const t of [lagTimer, timer, saveTimer, usageTimer]) if (t.unref) t.unref();
+  app.on("before-quit", () => { quitRequested = true; persistSession(); saveUsage(); });
   app.on("will-quit", cleanExit);
   process.on("uncaughtExceptionMonitor", (err, origin) => addException(origin, err));   // a MONITOR: it records, and changes nothing about how the error is handled
   app.on("render-process-gone", (_e, _wc, d) => {
@@ -236,7 +299,7 @@ async function folderSizeMB(dir, maxEntries = 20000, maxMs = 2500) {
 // What goes into the report. opts: { note, trigger: "manual" | "crash" | "hang" }
 async function collect(opts = {}) {
   const [gpu, win, dataSize, network] = await Promise.all([
-    app.getGPUInfo("complete").catch(() => null), windowsFacts(), folderSizeMB(app.getPath("userData")), networkFacts().catch(() => null),
+    app.getGPUInfo("complete").catch(() => null), windowsFacts({ pids: app.getAppMetrics().map((p) => p.pid) }), folderSizeMB(app.getPath("userData")), networkFacts().catch(() => null),
   ]);
   const cpus = os.cpus() || [];
   let freeGB = null;
@@ -268,8 +331,16 @@ async function collect(opts = {}) {
     load: win.load || null,
     otherPrograms: { openApps: win.openApps || null, topCpu: win.topCpu || null, startupPrograms: win.startupPrograms || null },
     network,
-    storage: { dataFolderFreeGB: freeGB, dataFolderSizeMB: dataSize.mb, dataFolderSizeComplete: dataSize.complete, disks: win.disks || null },
-    windowsFacts: { antivirus: win.antivirus || null, powerPlan: win.powerPlan || null, defender: win.defender || null, pbcalcEvents: win.pbcalcEvents || [], unavailable: !!win.unavailable, errors: win.errors || null },
+    busyMoments: busyMoments.slice(),
+    machine: { ...(win.machine || {}), cpuClock: win.cpuClock || null },
+    resources: win.resources || null,
+    systemLog: win.systemLog || null,
+    lowMemoryDetail: win.lowMemoryDetail || null,
+    appFailures14d: win.appFailures || null,
+    peaks: { ...peaks, since: startedAt.toISOString() },
+    usage24h: usageOut(),
+    storage: { installDrive: (process.execPath || "").slice(0, 1).toUpperCase(), dataDrive: (app.getPath("userData") || "").slice(0, 1).toUpperCase(), driveMedia: win.driveMedia || null, volumes: win.volumes || null, interactiveSessions: win.interactiveSessions == null ? null : win.interactiveSessions, dataFolderFreeGB: freeGB, dataFolderSizeMB: dataSize.mb, dataFolderSizeComplete: dataSize.complete, disks: win.disks || null },
+    windowsFacts: { antivirus: win.antivirus || null, powerPlan: win.powerPlan || null, defender: win.defender || null, pbcalcEvents: win.pbcalcEvents || [], unavailable: !!win.unavailable, errors: win.errors || null, topCpuFrom: win.topCpuFrom || null },
     openTabs: state.tabs.map((t, i) => ({ p: i + 1, host: hostOf(t.url || (t.view && t.view.webContents && !t.view.webContents.isDestroyed() ? t.view.webContents.getURL() : "")), active: t.id === state.activeTabId, discarded: !!t.discarded })),
     appState: {
       tabs: state.tabs.length, discarded: state.tabs.filter((t) => t.discarded).length, restricted: !!state.restricted, calculatorMode: !!state.calcMode,
@@ -372,6 +443,7 @@ async function saveToFile(report, file) {
 }
 
 module.exports = {
+  _usage: () => usageOut(), _peaks: () => peaks, _noteSample: (s) => { notePeaks(s); noteUsage(s); }, _saveUsage: saveUsage, _loadUsage: loadUsage,
   start, mark, collect, send, saveToFile, reportShare, reportFileName, fitSize, installId, redact, previousSession, acknowledgePrevious, cleanExit, persistSession, scrub,
   _ring: () => ring, _events: () => events, _pageLoads: () => pageLoads, _exceptions: () => exceptions, NOTE_MAX, DEFAULT_SHARE, MAX_REPORT_BYTES,
 };

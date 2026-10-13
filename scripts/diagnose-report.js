@@ -16,6 +16,7 @@ const CODES = {
   80000003: "breakpoint",
   e0434352: ".NET exception",
 };
+const AX_HINT = " Measured cause on a test PC (not proven on this one): with big web pages (ERP-style grids) open, Chromium builds an accessibility tree of every page on the browser's UI thread whenever Windows accessibility support is active (a screen reader, magnifier, remote-control or automation tool running) - 6.9 s of freeze for 6 pages of 32000 cells, gone with the --disable-renderer-accessibility switch. Ask the owner (it removes screen-reader support for pages).";
 const median = (a) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
 const pct = (a, p) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
 
@@ -89,7 +90,7 @@ function analyse(r) {
 
   // ── the main program blocked ──
   const lag = recent.reduce((m, s) => Math.max(m, s.lagMs || 0), 0);
-  if (lag >= 1000) find("HIGH", "PBCalc's main program froze", "Its timer ran " + lag + " ms late: the window could not react for that long.");
+  if (lag >= 1000) find("HIGH", "PBCalc's main program froze", "Its timer ran " + lag + " ms late: the window could not react for that long." + ((r.openTabs || []).length >= 3 ? AX_HINT : ""));
   else if (lag >= 200) find("MEDIUM", "PBCalc's main program was blocked briefly", "Timer " + lag + " ms late at worst.");
 
   // ── CPU: PBCalc against the rest of the computer ──
@@ -102,7 +103,14 @@ function analyse(r) {
     F("PBCalc's average CPU over the last " + Math.round(recent.length * 5 / 60 * 10) / 10 + " min: " + all.toFixed(1) + "% of the computer = " + busy.toFixed(2) + " cores busy (pages " + avg("Tab").toFixed(1) + "%, graphics " + avg("GPU").toFixed(1) + "%)" + (sysAvg != null ? "; the WHOLE computer averaged " + sysAvg.toFixed(0) + " %" : ""));
     if (busy >= 1.5 || all >= 40) find("HIGH", "PBCalc keeps the processor busy", busy.toFixed(1) + " cores busy on average (pages " + avg("Tab").toFixed(1) + "%, graphics " + avg("GPU").toFixed(1) + "%). A page that keeps working in the background, or a video.");
     else if (busy >= 0.6) find("MEDIUM", "PBCalc uses a noticeable part of the processor", busy.toFixed(2) + " cores busy on average.");
-    if (sysAvg != null && sysAvg >= 70 && all < sysAvg * 0.3) find("HIGH", "Something ELSE is using the processor", "The whole computer averaged " + sysAvg.toFixed(0) + " % but PBCalc only " + all.toFixed(1) + " %." + (others.topCpu && others.topCpu.length ? " Busiest now: " + others.topCpu.slice(0, 4).map((p) => p.name + " " + p.cpuOfOneCore + "%").join(", ") + "." : ""));
+    if (sysAvg != null && sysAvg >= 25 && all < sysAvg * 0.3) {
+      // who was busy WHILE it was busy: the recorder's busy moments (taken when the whole PC was >= 25 %), else the snapshot at send time
+      const names = {}; (r.busyMoments || []).forEach((m) => (m.top || []).forEach((p) => { names[p.name] = (names[p.name] || 0) + (p.cpuOfOneCore || 0); }));
+      const ranked = Object.entries(names).sort((x, y) => y[1] - x[1]).slice(0, 5).map(([n, v]) => n + " (" + Math.round(v / Math.max(1, (r.busyMoments || []).length)) + "% of one core on average)");
+      const who = ranked.length ? " Busy while it happened (" + r.busyMoments.length + " moments caught): " + ranked.join(", ") + "." : (others.topCpu && others.topCpu.length ? " Busiest at send time: " + others.topCpu.slice(0, 4).map((p) => p.name + " " + p.cpuOfOneCore + "%").join(", ") + " (this report has no 'busy moments': an older PBCalc)." : "");
+      const cores = hw.cpuThreads ? " = about " + (sysAvg * hw.cpuThreads / 100).toFixed(1) + " of " + hw.cpuThreads + " threads" : "";
+      find(sysAvg >= 70 ? "HIGH" : "MEDIUM", "Something ELSE is using the processor", "The whole computer averaged " + sysAvg.toFixed(0) + " %" + cores + " but PBCalc only " + all.toFixed(1) + " %." + who + (ranked.length ? "" : " Ask the user to open Task Manager > Processes and sort by CPU while it is slow."));
+    }
     if (threads <= 2 && busy >= 0.4) find("MEDIUM", "A very small processor (" + threads + " threads)", hw.cpuModel + ": even light pages take a large share.");
   }
   if (load && load.cpuPct >= 85) find("MEDIUM", "The processor was nearly full when the report was made", load.cpuPct + " %.");
@@ -139,6 +147,62 @@ function analyse(r) {
   }
   if (Array.isArray(st.disks) && st.disks.some((d) => /HDD/i.test(d))) find("MEDIUM", "A hard disk (HDD)", "Disks: " + st.disks.join(", ") + ". Starting and loading is slow on a hard disk compared with an SSD.");
   if (typeof st.dataFolderFreeGB === "number" && st.dataFolderFreeGB < 2) find("HIGH", "The disk is almost full", st.dataFolderFreeGB + " GB free.");
+  // ── machine, resources, Windows logs, peaks, the last 24 hours, room for tabs ──
+  { const mc = r.machine || {};
+    if (mc.manufacturer || mc.model) F("Machine: " + [mc.manufacturer, mc.model].filter(Boolean).join(" ") + (mc.hypervisor ? "  (a hypervisor is active: a virtual machine, or Windows with Hyper-V / WSL / memory integrity)" : "") + (mc.cpuClock ? "  -  processor clock now " + mc.cpuClock.currentMHz + " of max " + mc.cpuClock.maxMHz + " MHz" : ""));
+    if (mc.cpuClock && mc.cpuClock.maxMHz && mc.cpuClock.currentMHz < mc.cpuClock.maxMHz * 0.5 && load && load.cpuPct >= 50) find("MEDIUM", "The processor runs far below its speed while busy", "Clock " + mc.cpuClock.currentMHz + " MHz of " + mc.cpuClock.maxMHz + " MHz with the PC at " + load.cpuPct + " % - held back by the power plan, heat or a laptop on battery."); }
+  if (/saver|economiser|energiesparen|ahorro/i.test(wf.powerPlan || "")) find("LOW", "Power plan: " + wf.powerPlan, "A power-saving plan slows the processor. Use Balanced or High performance.");
+  { const vols = r.storage && r.storage.volumes;
+    if (Array.isArray(vols) && vols.length) {
+      F("Free space: " + vols.map((v) => v.drive + ": " + v.freeGB + " of " + v.sizeGB + " GB").join(", "));
+      const sysV = vols.find((v) => v.drive === "C") || vols[0];
+      if (sysV && (sysV.freeGB < 10 || sysV.freeGB < sysV.sizeGB * 0.1)) find("MEDIUM", "The system drive is almost full", sysV.drive + ": has " + sysV.freeGB + " GB free of " + sysV.sizeGB + " GB: Windows (paging, updates, temp files) and the browser's cache slow down when it is full.");
+    } }
+  { const rs = r.resources;
+    if (rs) {
+      F("PBCalc's Windows resources: " + rs.pbcalcProcesses + " processes, " + rs.pbcalcHandles + " handles, " + rs.pbcalcThreads + " threads, GDI objects " + rs.gdiObjects + " (worst process " + rs.worstProcessGdi + "), USER objects " + rs.userObjects + " (worst " + rs.worstProcessUser + "); the whole PC: " + rs.systemHandles + " handles in " + rs.systemProcesses + " processes");
+      if (rs.worstProcessGdi >= 7000 || rs.worstProcessUser >= 7000) find("HIGH", "A PBCalc process is near Windows' per-process window-object limit", "GDI " + rs.worstProcessGdi + " / USER " + rs.worstProcessUser + " of a default limit of 10000: past it windows stop drawing and the program seems to hang. Close tabs.");
+      if (rs.systemHandles >= 250000) find("MEDIUM", "Unusually many Windows handles open", rs.systemHandles + " handles in " + rs.systemProcesses + " processes: some program leaks handles (the PC slows down until it is restarted).");
+    } }
+  { const sl = r.systemLog;
+    if (sl) {
+      F("Windows logs (14 days): unexpected shutdowns " + sl.unexpectedShutdowns + ", disk errors " + sl.diskErrors + ", low-memory warnings " + sl.lowMemoryWarnings + ", hardware errors " + sl.hardwareErrors);
+      if (sl.diskErrors > 0) find("HIGH", "Windows logged " + sl.diskErrors + " disk error(s) in 14 days", "A failing or badly connected disk makes everything slow and can hang programs. Check the disk's health (SMART) and back up.");
+      if (sl.lowMemoryWarnings > 0) find("HIGH", "Windows ran out of memory " + sl.lowMemoryWarnings + " time(s) in 14 days", "Windows warned that virtual memory was low" + (r.lowMemoryDetail && (r.lowMemoryDetail.top || []).length ? " (newest, " + r.lowMemoryDetail.at + "): the biggest users were " + r.lowMemoryDetail.top.map((p) => p.name + " " + p.mb + " MB").join(", ") : "") + ".");
+      if (sl.unexpectedShutdowns > 0) find("MEDIUM", sl.unexpectedShutdowns + " unexpected shutdown(s) / reset(s) in 14 days", "Windows restarted without a clean shutdown (power cut, reset button, a hang that was forced off, or a crash).");
+      if (sl.hardwareErrors > 0) find("MEDIUM", "Windows logged " + sl.hardwareErrors + " hardware error(s)", "WHEA hardware errors (processor, memory or bus) - a faulty part or overheating.");
+    } }
+  { const af = (r.appFailures14d || []).filter((x) => !/^(electron|pbcalc)(\.exe)?$/i.test(x.app || ""));
+    const total = af.reduce((a2, x) => a2 + x.crashes + x.hangs, 0);
+    if (total >= 5) find("MEDIUM", "Other programs crash or hang on this PC", total + " crashes / hangs in 14 days: " + af.slice(0, 5).map((x) => (x.app || "unknown") + " (" + x.crashes + " crash, " + x.hangs + " hang)").join(", ") + ". A PC where many programs fail points at memory, disk or driver trouble, not at one program."); }
+  { const pk = r.peaks;
+    if (pk) {
+      F("Since PBCalc started (" + pk.since + "): most tabs " + pk.maxTabs + ", PBCalc's memory peak " + pk.maxPbcalcMB + " MB, whole-PC CPU peak " + pk.maxSysCpu + " %, lowest free RAM " + pk.minFreeMB + " MB, main-program lag peak " + pk.maxLagMs + " ms" + (pk.maxLagAt ? " at " + pk.maxLagAt : "") + ", lags over 250 ms: " + pk.lagOver250 + ", over 1 s: " + pk.lagOver1000 + (pk.maxPageMB ? ", biggest page " + pk.maxPageMB + " MB" + (pk.maxPageHost ? " (" + pk.maxPageHost + ")" : "") : ""));
+      if (pk.lagOver1000 > 0) find("MEDIUM", "PBCalc's main program froze " + pk.lagOver1000 + " time(s) for over a second since it started", "Worst " + (pk.maxLagMs / 1000).toFixed(1) + " s at " + pk.maxLagAt + ". The shell (tab strip, address bar) did not react meanwhile." + ((r.openTabs || []).length >= 3 ? AX_HINT : ""));
+    } }
+  { const hs = r.usage24h;
+    if (Array.isArray(hs) && hs.length) {
+      F("Last 24 h in 10-minute steps: " + hs.length + " steps from " + hs[0].at + " to " + hs[hs.length - 1].at);
+      const odd = hs.filter((b) => b.lagMaxMs >= 1000 || b.cpuAvg >= 70 || (b.freeMinMB != null && hw.ramTotalMB && b.freeMinMB < Math.max(500, hw.ramTotalMB * 0.05))).slice(-4);
+      odd.forEach((b) => find("LOW", "Earlier trouble at " + b.at + " (before this report's 10 minutes)", "PC CPU avg " + b.cpuAvg + " % (max " + b.cpuMax + "), lowest free RAM " + b.freeMinMB + " MB, PBCalc main lag up to " + b.lagMaxMs + " ms, " + b.tabsMax + " tabs, PBCalc " + b.pbcalcMBMax + " MB."));
+    } }
+  { // how many more tabs fit - from THIS PC's own numbers (the page sizes in the last sample and the memory Windows could still give), not from a rule of thumb
+    const lastS = recent[recent.length - 1] || {}, pgs = (lastS.pages || []).filter((x) => x.mb > 0);
+    const availMB = (r.memory && r.memory.available && r.memory.available.availableMB) || hw.ramFreeMB;
+    if (pgs.length >= 2 && availMB) {
+      const avg = pgs.reduce((a2, x) => a2 + x.mb, 0) / pgs.length, room = Math.floor(availMB / avg);
+      F("Room for tabs: " + (r.openTabs || []).length + " tabs open, about " + Math.round(avg) + " MB each; Windows could still give " + gb(availMB) + " = about " + room + " more tabs of this kind");
+      if (room < 6) find("MEDIUM", "Little room for more tabs", "About " + Math.round(avg) + " MB per tab and only " + gb(availMB) + " of memory left = " + room + " more tabs before Windows starts swapping (everything then slows down). Close tabs you do not need, or add RAM.");
+    } }
+  if (w.build && Number(w.build) < 19041) find("LOW", "An old Windows 10 version (" + w.build + ")", "Windows 10 versions before 2004 (build 19041) no longer receive updates from Microsoft: security and driver fixes are missing.");
+  if (w.uptimeHours >= 336) find("LOW", "Windows has not been restarted for " + Math.round(w.uptimeHours / 24) + " days", "Memory leaks of programs and drivers add up; a restart often cures a slow PC.");
+  { const dm = (st.driveMedia || []).find((d) => d.drive === st.installDrive), dd = (st.driveMedia || []).find((d) => d.drive === st.dataDrive);
+    if (st.driveMedia) F("Drives: " + st.driveMedia.map((d) => d.drive + ": " + (d.media || "?") + (d.bus ? "/" + d.bus : "")).join(", ") + "  -  PBCalc is installed on " + (st.installDrive || "?") + ":, its data on " + (st.dataDrive || "?") + ":");
+    if ((dm && /HDD/i.test(dm.media)) || (dd && /HDD/i.test(dd.media))) find("MEDIUM", "PBCalc runs from a hard disk", "PBCalc's program files (" + (st.installDrive || "?") + ":) or its data (" + (st.dataDrive || "?") + ":) are on a hard disk (HDD): every start and every page cache read is slow. An SSD drive would help most."); }
+  { const sm2 = r.startupMs || {}; if (sm2.shellStartLoading != null && sm2.shellDomReady != null && sm2.shellDomReady - sm2.shellStartLoading >= 5000) find("MEDIUM", "PBCalc's own window page loaded slowly", "Reading PBCalc's own files took " + ((sm2.shellDomReady - sm2.shellStartLoading) / 1000).toFixed(1) + " s. That is disk or antivirus time (the page is a local file, no network involved)" + (Array.isArray(wf.antivirus) && wf.antivirus.some((a) => !/defender/i.test(a)) ? ": the third-party antivirus (" + wf.antivirus.filter((a) => !/defender/i.test(a)).join(", ") + ") is the first suspect - ask IT to exclude the PBCalc install folder and %LOCALAPPDATA%\\PBCalc from scanning." : ".")); }
+  if (st.interactiveSessions != null) F("Windows users signed in on this PC: " + st.interactiveSessions);
+  if (st.interactiveSessions >= 2) find("LOW", "More than one Windows user is signed in", st.interactiveSessions + " sessions: the other users' programs keep running (memory, processor) even when nobody looks at them. Sign the others out.");
+  if (Array.isArray(wf.antivirus) && wf.antivirus.length >= 2 && wf.antivirus.some((a) => !/defender/i.test(a)) && wf.antivirus.some((a) => /defender/i.test(a)) && wf.defender && wf.defender.realTime === false) F("Two antivirus products are installed; Windows Defender's live protection is OFF (normal: the other one took over).");
   if (Array.isArray(wf.antivirus) && wf.antivirus.some((a) => !/defender/i.test(a))) find("LOW", "A third-party antivirus is running", wf.antivirus.join(", ") + ": it may scan every file PBCalc reads or writes. Try adding the PBCalc folder to its exceptions.");
   if (hw.onBattery) find("LOW", "On battery power", "Windows may slow the processor down" + (wf.powerPlan ? " (power plan: " + wf.powerPlan + ")" : "") + ".");
 
