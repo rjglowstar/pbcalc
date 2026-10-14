@@ -179,8 +179,13 @@ function adoptPrevious() {
 function previousSession() {
   try {
     const j = JSON.parse(fs.readFileSync(previousFile(), "utf8"));
-    return { endedUncleanly: true, quitWasRequested: !!j.quitRequested, startedAt: j.startedAt, lastSeen: j.lastAt, ranSec: j.upSec, version: j.version, tabs: j.tabs, recent: j.recent || [], events: j.events || [], pageLoads: j.pageLoads || [], exceptions: j.exceptions || [] };
+    return { endedUncleanly: true, quitWasRequested: !!j.quitRequested, startedAt: j.startedAt, lastSeen: j.lastAt, ranSec: j.upSec, version: j.version, tabs: j.tabs, recent: j.recent || [], events: j.events || [], pageLoads: j.pageLoads || [], exceptions: j.exceptions || [], askedAtStart: !!j.askedAtStart };
   } catch (_) { return null; }
+}
+// the "PBCalc closed unexpectedly last time" box (reportDialog.askAfterUncleanEnd) has been shown for THIS previous run: never ask again for it. The data stays
+// (it still goes with the next report the user sends) until a report is delivered or saved.
+function markPreviousAsked() {
+  try { const f = previousFile(); const j = JSON.parse(fs.readFileSync(f, "utf8")); j.askedAtStart = true; require("./atomicWrite").writeFileAtomic(f, JSON.stringify(j), "utf8"); } catch (_) {}
 }
 // the report that carried it has been delivered: it need not be carried again
 function acknowledgePrevious() { try { fs.unlinkSync(previousFile()); } catch (_) {} }
@@ -198,6 +203,7 @@ function start(opts = {}) {
   lagTimer = setInterval(() => { const now = Date.now(); const late = now - lastTick - LAG_MS; if (late > lagMax) lagMax = late; lastTick = now; }, LAG_MS);
   timer = setInterval(() => { try { sample(); } catch (_) {} }, SAMPLE_MS);
   saveTimer = setInterval(persistSession, SESSION_SAVE_MS);
+  setTimeout(persistSession, 5000).unref();   // the first copy soon after the start: a PBCalc killed in its first 30 s left no trace (nothing was asked at the next start)
   const usageTimer = setInterval(saveUsage, USAGE_SAVE_MS);
   for (const t of [lagTimer, timer, saveTimer, usageTimer]) if (t.unref) t.unref();
   app.on("before-quit", () => { quitRequested = true; persistSession(); saveUsage(); });
@@ -444,6 +450,6 @@ async function saveToFile(report, file) {
 
 module.exports = {
   _usage: () => usageOut(), _peaks: () => peaks, _noteSample: (s) => { notePeaks(s); noteUsage(s); }, _saveUsage: saveUsage, _loadUsage: loadUsage,
-  start, mark, collect, send, saveToFile, reportShare, reportFileName, fitSize, installId, redact, previousSession, acknowledgePrevious, cleanExit, persistSession, scrub,
+  start, mark, collect, send, saveToFile, reportShare, reportFileName, fitSize, installId, redact, previousSession, acknowledgePrevious, markPreviousAsked, cleanExit, persistSession, scrub,
   _ring: () => ring, _events: () => events, _pageLoads: () => pageLoads, _exceptions: () => exceptions, NOTE_MAX, DEFAULT_SHARE, MAX_REPORT_BYTES,
 };

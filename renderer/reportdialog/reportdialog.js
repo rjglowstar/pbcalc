@@ -7,6 +7,7 @@
   const REASONS = {
     crash: "A page stopped working and had to be closed. A report helps us fix it.",
     hang: "A page stopped responding. A report helps us find out why.",
+    unclean: "PBCalc closed unexpectedly the last time it was used. A report helps us find out why.",
   };
 
   function setStatus(text, kind) {

@@ -47,6 +47,7 @@ function leave() {
   tm.createTab(undefined, { allowRestricted: true, fromCalc: true });
   setImmediate(tm.resizeActiveView);
   setTimeout(tm.resizeActiveView, 150);
+  try { require("./reportDialog").askAfterUncleanEnd(); } catch (_) {}   // the previous run ended abnormally: ask now that the browser shows
 }
 
 // the gray "+" was pressed

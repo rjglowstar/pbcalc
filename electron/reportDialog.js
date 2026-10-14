@@ -54,7 +54,7 @@ function register() {
 function ask(opts = {}) {
   register();
   if (win && !win.isDestroyed()) { try { win.focus(); } catch (_) {} return current.promise; }
-  const trigger = ["crash", "hang"].includes(opts.trigger) ? opts.trigger : "manual";
+  const trigger = ["crash", "hang", "unclean"].includes(opts.trigger) ? opts.trigger : "manual";
   const parent = state.mainWindow && !state.mainWindow.isDestroyed() ? state.mainWindow : undefined;
   current = { trigger, sent: false, saved: false, promise: null };
   current.promise = new Promise((resolve) => {
@@ -96,4 +96,27 @@ function promptAfterProblem(kind) {
   return true;
 }
 
-module.exports = { ask, promptAfterProblem, _win: () => win, _resetGap: () => { lastAutoAt = 0; } };
+// The PREVIOUS run of PBCalc ended abnormally (killed - e.g. by a security product -, crashed, power cut, PC reset): nothing of PBCalc was left to ask then, so
+// the box is offered at THIS start (owner 2026-10-14: a user's PBCalc vanished while downloading an Excel file and no report came by itself). Rules: once per
+// abnormal end (diagnostics.markPreviousAsked - Cancel = not asked again for it; its data still goes with the next report the user sends); a few seconds after the
+// window is up; Restricted Mode too; never while the calculator screen shows (calcMode.leave asks again when the browser opens); never while quitting; the
+// installed program only (a development run killed from the terminal would ask every time) unless PBCALC_TEST_UNCLEAN=1 (tests).
+const UNCLEAN_DELAY_MS = 4000;
+function askAfterUncleanEnd(delayMs = UNCLEAN_DELAY_MS) {
+  if (!app.isPackaged && process.env.PBCALC_TEST_UNCLEAN !== "1") return;
+  setTimeout(() => {
+    try {
+      const dg = require("./diagnostics");
+      const prev = dg.previousSession();
+      if (!prev || prev.askedAtStart) return;
+      if (state.calcMode || state.quitting) return;
+      if (!state.mainWindow || state.mainWindow.isDestroyed() || !state.mainWindow.isVisible() || state.mainWindow.isMinimized()) return;
+      if (win && !win.isDestroyed()) return;
+      dg.markPreviousAsked();
+      lastAutoAt = Date.now();
+      ask({ trigger: "unclean" }).catch(() => {});
+    } catch (_) {}
+  }, delayMs).unref();
+}
+
+module.exports = { ask, promptAfterProblem, askAfterUncleanEnd, _win: () => win, _resetGap: () => { lastAutoAt = 0; } };

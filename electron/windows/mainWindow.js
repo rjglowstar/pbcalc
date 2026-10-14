@@ -112,6 +112,8 @@ function createMainWindow() {
     // bottom of a maximized window. Re-apply once the window has settled.
     setImmediate(resizeActiveView);
     setTimeout(resizeActiveView, 150);
+    // the previous run ended abnormally: offer the report box (not on the calculator screen - calcMode.leave asks when the browser opens)
+    if (!startOnCalc) { try { require("../reportDialog").askAfterUncleanEnd(); } catch (_) {} }
   });
 
   // The hover card is hidden a tick later, not inside the resize emit (see popup.reposition()).

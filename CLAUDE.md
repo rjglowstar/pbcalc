@@ -1215,6 +1215,12 @@ receiver `report-server.js` that had been written for it was DELETED).
 - **The box** (`reportDialog.js`, modal window like the update dialog): opened by Settings > Support > "Send report..." (`settings:send-report`, settings page only) or by itself after a crash (`render-process-gone`, reason not
   clean-exit / killed) or a page that stays "unresponsive" for 8 s - **at most once per 30 minutes, never while the calculator screen shows, in Restricted Mode, while quitting, or while a box is open**. Nothing is collected or sent until Send is
   pressed; Cancel / Esc send nothing. A page the memory saver destroys is NOT a crash (measured: `webContents.destroy()` raises no `render-process-gone`).
+- **"PBCalc closed unexpectedly last time" - the box at the NEXT start** (owner 2026-10-14; `reportDialog.askAfterUncleanEnd`, test `scripts/verify-unclean-report.js` 12). Chetan's PBCalc VANISHED while an Excel report was downloading (previous
+  session: `quitWasRequested:false`, no page crash / hang / exception, and NO Windows crash entry 1000/1002 = killed from outside, most likely Seqrite's behaviour engine - ARWSRVC 96-135 % CPU; the same export on a PC without
+  antivirus downloads in ~100 ms and PBCalc lives). A killed PBCalc cannot ask for a report, so the box only comes from the NEXT start: if `diag-previous.json` exists and was not asked yet, the box opens by itself ~4 s after the window shows
+  (trigger `unclean`, text "PBCalc closed unexpectedly the last time it was used..."; nothing is sent until Send). Asked ONCE per abnormal end (`diagnostics.markPreviousAsked` -> `askedAtStart`; Cancel = not again; the data still goes with the next
+  report until one is delivered / saved). Restricted Mode too; never on the calculator screen (`calcMode.leave` asks when the browser opens); never while quitting; installed program only (`app.isPackaged`) unless `PBCALC_TEST_UNCLEAN=1`.
+  The session copy is now also written 5 s after the start (it was only every 30 s, so a PBCalc killed in its first 30 s left no trace).
 - **Reading reports:** `node scripts/diagnose-report.js <report.json>` prints the facts and FINDINGS (short of memory, drawing by the processor, main program frozen, busy CPU, slow start / HDD / full disk / other antivirus, crashes, hangs, Windows Event Log entries).
   A snapshot cannot catch a hang that comes and goes: ask the user to press Send WHILE it is slow (the last 10 minutes are in the report). There is no `index.csv` any more (many PCs appending to one file on a share would collide); browse the day folders.
 
