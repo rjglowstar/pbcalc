@@ -114,6 +114,8 @@ function createMainWindow() {
     setTimeout(resizeActiveView, 150);
     // the previous run ended abnormally: offer the report box (not on the calculator screen - calcMode.leave asks when the browser opens)
     if (!startOnCalc) { try { require("../reportDialog").askAfterUncleanEnd(); } catch (_) {} }
+    // bookmark icons still kept as web addresses are downloaded once and stored (bookmarks/iconCache.js), after the start has settled
+    if (!startOnCalc) { try { require("../bookmarks/iconCache").embedSoon(4000); } catch (_) {} }
   });
 
   // The hover card is hidden a tick later, not inside the resize emit (see popup.reposition()).

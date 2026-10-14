@@ -24,8 +24,7 @@
       document.getElementById("dl-dir").textContent = s.downloads.dir;
       dlAsk.setAttribute("aria-checked", String(!!s.downloads.ask));
     }
-    // choosing a folder opens a native dialog: not in Restricted Mode
-    document.getElementById("dl-change").hidden = !!s.restricted;
+    // the download folder can be changed in Restricted Mode too (owner 2026-10-13: same as the default mode)
     if (s.version) document.getElementById("app-version").textContent = s.version;
   }
 

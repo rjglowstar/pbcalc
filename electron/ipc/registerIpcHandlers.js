@@ -153,9 +153,9 @@ function registerIpcHandlers() {
     else if (key === "memorySaver" && typeof value === "boolean") tabManager.setMemorySaver(value);
     else if (key === "downloadsAsk" && typeof value === "boolean") { downloads.setAsk(value); tabManager.broadcastSettings(); }
   });
-  // Settings → Downloads → "Change": the native folder picker (never in Restricted Mode).
+  // Settings → Downloads → "Change": the native folder picker - in Restricted Mode too (owner 2026-10-13; it was refused there). Settings page only.
   ipcMain.handle("settings:choose-download-dir", async (e) => {
-    if (!fromSettingsPage(e) || state.restricted) return null;
+    if (!fromSettingsPage(e)) return null;
     await downloads.chooseDir();
     tabManager.broadcastSettings();
     return tabManager.settingsSnapshot();

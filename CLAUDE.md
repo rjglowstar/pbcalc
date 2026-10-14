@@ -336,6 +336,11 @@ Two things define this browser against every mainstream one:
     icon, only for a bookmarked address, never in Restricted Mode) - so reopen/reload such a page once. Nothing is
     recorded for pages that are not bookmarks. The bar shows the TITLE the page had when it was bookmarked (as in
     Chrome), which can differ from the tab's current title.
+  - **Bookmark icons are downloaded ONCE and stored in the bookmark** (`electron/bookmarks/iconCache.js`; owner 2026-10-13: "every start the icons load again"). An icon kept as a web address was downloaded at every start (privacy.js wipes the
+    browser cache at quit), so the bar showed a globe / nothing for a moment each time. Now a few seconds after the start (`embedSoon(4000)` in mainWindow) and soon after any bookmark change (`broadcastBookmarks` -> `embedSoon`), every icon in BOTH lists that is
+    still a web address is fetched once (TAB_PARTITION session, no cookies, 8 s / 256 KB limits), made a 32 px PNG (`.ico` via a temp file - Windows reads ICO from a file; SVG kept as SVG) and stored as `data:image/...` (<= 32 KB, the store's limit)
+    via `bookmarkStore.embedIcon` (only if the bookmark still has THAT address as icon). A failed / 404 / oversize icon keeps its address and is tried at the next start. Both modes (no visible change but speed). Test: `scripts/verify-bookmark-icon-cache.js`
+    (13: png / ico / svg stored, 404 and 400 KB kept, one fetch per address, dummy list too, a bookmark added later; then with the icon server GONE the bar draws every stored icon with no download).
   - **Drag to reorder on the bookmarks bar** (Chrome): HTML5 drag like the tab strip (`bmDragId`, `renderBookmarks`
     in `shell.js`): the dragged one dims, a 2px accent line shows the landing spot (before/after the hovered
     bookmark), dropping on the empty part of the bar puts it last, dropping on itself does nothing. Main side:
@@ -381,6 +386,8 @@ Two things define this browser against every mainstream one:
   filename link, "From <origin>", copy link / show in folder / remove, strike-through "Deleted" when
   the file is gone. `window.downloadsAPI` exists only on that file; `downloads:page-*` IPC re-checks the
   sender URL. In Restricted Mode the "From" address is withheld (`publicList`).
+  **Settings > Downloads > "Change" (the download folder) works in Restricted Mode too** (owner 2026-10-13: "same as default mode"). It was refused in THREE places - the button hidden by `settings.js`, the `settings:choose-download-dir` IPC and `downloadManager.chooseDir()` - all three
+  had to go; the IPC still answers our Settings page only (`fromSettingsPage`). Test: `scripts/verify-download-dir.js` (16 checks, both modes: button shown, folder dialog asked once, saved, shown, a real download lands in the new folder, a web page has no bridge to it).
   **The download process copies Chrome's** (`verify-download-flow.js`): files go straight to the OS
   Downloads folder with **no Save As dialog** (Settings → Downloads has Chrome's "Ask where to save
   each file", off by default, plus the folder + Change); an existing name gets " (1)" (`uniquePath`,

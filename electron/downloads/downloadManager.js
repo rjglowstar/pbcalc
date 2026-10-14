@@ -358,7 +358,7 @@ function setAsk(on) {
 }
 
 async function chooseDir() {
-  if (state.restricted || !state.mainWindow || state.mainWindow.isDestroyed()) return config();
+  if (!state.mainWindow || state.mainWindow.isDestroyed()) return config();   // Restricted Mode too (owner 2026-10-13)
   const r = await dialog.showOpenDialog(state.mainWindow, { properties: ["openDirectory", "createDirectory"], defaultPath: downloadDir() });
   if (!r.canceled && r.filePaths[0]) settings.set("downloads", { ...(settings.get("downloads") || {}), dir: r.filePaths[0] });
   return config();

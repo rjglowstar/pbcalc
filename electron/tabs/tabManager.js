@@ -1162,6 +1162,8 @@ function broadcastBookmarks() {
     }
   }
   sendToShell("bookmarks:changed", bookmarks.list());
+  // a bookmark whose icon is still a web address gets it stored once (bookmarks/iconCache.js): no download at every start
+  try { require("../bookmarks/iconCache").embedSoon(); } catch (_) {}
 }
 
 // The hidden admin shortcut (Ctrl+Shift, then type "pbsecure"). Restricted Mode is only ever LEFT

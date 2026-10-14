@@ -239,4 +239,24 @@ function moveTo(id, index) {
   return list();
 }
 
-module.exports = { list, toggle, remove, add, update, move, moveTo, isBookmarkable, learnIcon, getMode, setMode };
+// Icon cache (iconCache.js): bookmarks - in BOTH lists - whose icon is still a web address. Such an icon was downloaded again at every start (the
+// browser cache is wiped when PBCalc closes), so the bar showed a globe / nothing for a moment each time.
+function webIconBookmarks() {
+  const out = [];
+  for (const kind of ["real", "dummy"]) for (const b of load(kind)) if (/^https?:\/\//i.test(String(b.favicon || ""))) out.push({ kind, id: b.id, favicon: b.favicon });
+  return out;
+}
+
+// Replaces a bookmark's web-address icon by the same picture embedded (data:image/...). Only if the bookmark still has THAT address as its icon
+// (the user may have changed it meanwhile) and the picture is small enough. Returns true when it changed.
+function embedIcon(kind, id, fromUrl, dataUrl) {
+  if (kind !== "real" && kind !== "dummy") return false;
+  if (!/^data:image\//i.test(String(dataUrl || "")) || String(dataUrl).length > MAX_DATA_ICON) return false;
+  const b = load(kind).find((x) => x.id === id);
+  if (!b || b.favicon !== fromUrl) return false;
+  b.favicon = String(dataUrl);
+  persist(kind);
+  return true;
+}
+
+module.exports = { list, toggle, remove, add, update, move, moveTo, isBookmarkable, learnIcon, getMode, setMode, webIconBookmarks, embedIcon };
