@@ -105,7 +105,8 @@ function handleInput(event, input) {
       tabManager.focusAddressBar();
     });
   }
-  if (k === "w") return claim("close-tab", () => tabManager.closeTab(state.activeTabId));
+  // a PINNED tab needs a second Ctrl+W, like Chrome (the first shows "Press Ctrl+W again to close the pinned tab": pinToast.js)
+  if (k === "w") return claim("close-tab", () => { if (require("./pinToast").confirmClose(tabManager.getActiveTab())) tabManager.closeTab(state.activeTabId); });
   if (k === "l") return claim("address-bar", tabManager.focusAddressBar);
   if (k === "r") return shift ? claim("reload-hard", () => tabManager.reload("hard")) : claim("reload", tabManager.reload);
   if (k === "f") return claim("find", tabManager.openFind);

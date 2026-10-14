@@ -637,6 +637,19 @@ Two things define this browser against every mainstream one:
      basis. That pin must be dropped the instant anything else changes the strip
      (`clearWidthFlip()`), or tabs opened during those 240ms keep stale widths — it showed up as tab
      pitches lagging one step behind in `verify-ui`.
+- **Pinned tabs, like Chrome** (owner 2026-10-14; `pinTab` / `keepPinnedFirst` in tabManager, `.pinned` in shell.js / shell.css, test `scripts/verify-pinned-tabs.js` 18): right-click a tab > **Pin / Unpin** (normal AND Restricted Mode). Pinned tabs sit at the LEFT in pin order
+  (pin -> end of the pinned group, unpin -> first after it), icon only at a FIXED 48px slot (no title, no close button, also when active; the 48 is an estimate, NOT measured from Chrome), budgeted apart from the 238px slots (`--np`).
+  New tabs never land inside the group (`keepPinnedFirst` after every insert; a link from a pinned tab opens right after the group); dragging stays inside each group (`moveTab` clamps, the strip refuses the drop); "Close other tabs" /
+  "Close tabs to the right" skip pinned tabs; a middle click does not close a pinned tab, Ctrl+W / Close do; Duplicate and Ctrl+Shift+T keep it pinned (`entry.pinned`). **Not saved:** PBCalc reopens no tabs, so pinned tabs are gone when it closes
+  (owner's choice: no-history rule) - nothing about them is written to disk. Not built: Chrome's "pin by dragging into the pinned area" (here dragging only reorders inside a group).
+  **Two strip bugs found by the owner, fixed in shell.js (test `scripts/verify-pinned-ui.js` 14, negative control: the old shell.js fails 2):** (1) the strip FREEZES tab widths as an inline flex-basis while the pointer is over it, and an inline
+  width beats `.pinned` - a tab pinned during a freeze stayed 238px (measured with the old code), an unpinned one stayed 48px, until the pointer left (after the native right-click menu it often never "leaves"). Now a pin change drops that tab's inline
+  width and ends the freeze, and pinned tabs are never frozen or FLIP-animated (fixed width). (2) the hover card: after a close / open / pin change the card is hidden (`hideCardNow` in `renderTabs`) - the strip used to believe a card was still up and
+  showed one at once for whatever tab slid under the pointer - and a delayed (500 ms) show only fires for a tab that is still in the strip.
+  **Ctrl+W on a pinned tab = TWO presses, like Chrome** (`electron/pinToast.js`, `renderer/pintoast/`, test `scripts/verify-pinned-close.js` 17, measured from the owner's Chrome screenshots): the first Ctrl+W keeps the tab and shows
+  "Press Ctrl+W again to close the pinned tab" - a 50px pill (~304px, ours 314 because of font widths), pin icon, #062E6F / #F2F2F2 light, #ECF3FE / #1F1F1F dark, centred across the window and on the line where the page starts (`chromeHeight()`);
+  a second Ctrl+W while it shows closes the tab. It goes after 8 s (`SHOW_MS` - an estimate, Chrome's own time NOT measured), on choosing another tab (`switchTab`) or on any close; the next Ctrl+W then asks again. The menu's Close closes at
+  once, an ordinary tab closes on the first Ctrl+W (unchanged), Restricted Mode too. A transparent BrowserView made on demand and destroyed when it goes.
 - **Duplicate tab** (`duplicateTab`, async) copies three things, like Chrome, and the copy opens
   immediately to the right of the original:
   1. the address;

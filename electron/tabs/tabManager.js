@@ -131,6 +131,7 @@ function getTabState() {
         capture: captureKind(t),
         favicon: t.favicon || "",
         discarded: !!t.discarded,
+        pinned: !!t.pinned,
         canGoBack: alive && wc.navigationHistory.canGoBack(),
         canGoForward: alive && wc.navigationHistory.canGoForward(),
         loading: alive && wc.isLoading(),
@@ -218,6 +219,7 @@ function createTab(url, opts = {}) {
     // tab turns out to have been opened just to start a download (closeTabOpenedForDownload).
     openerId: opts.openerId || null,
     isHome: !!(state.restricted && !url),
+    pinned: !!opts.pinned,   // Chrome's "Pin": kept at the left, icon only (see pinTab). In memory only - gone when PBCalc closes (owner 2026-10-14)
     newTabPage: !url && !opts.webContents && !(opts.restore && opts.restore.entries && opts.restore.entries.length),   // see onNewTabPage
     // Memory saver (see the section below): when this tab was last looked at, and - once its page has been freed - what is needed to bring it back.
     lastActiveAt: Date.now(),
@@ -238,6 +240,7 @@ function createTab(url, opts = {}) {
   } else {
     state.tabs.push(tab);
   }
+  keepPinnedFirst();
   wireTabEvents(tab);
   startMemorySaver();
 
@@ -646,6 +649,7 @@ async function hoverInfo(id) {
 }
 
 function switchTab(id) {
+  try { if (state.activeTabId !== Number(id)) require("../pinToast").hide(); } catch (_) {}   // choosing another tab ends the "Press Ctrl+W again" notice
   const next = state.tabs.find((t) => t.id === Number(id));
   if (!next || !state.mainWindow || state.mainWindow.isDestroyed()) return getTabState();
 
@@ -718,6 +722,7 @@ function closePageEndedTab(tab) {
 function closeTab(id, opts = {}) {
   const idx = state.tabs.findIndex((t) => t.id === Number(id));
   if (idx === -1) return getTabState();
+  try { require("../pinToast").hide(); } catch (_) {}   // the "Press Ctrl+W again" notice goes with any close
 
   require("../hovercard").hide();
   const [removed] = state.tabs.splice(idx, 1);
@@ -728,7 +733,7 @@ function closeTab(id, opts = {}) {
     if (opts.pageGone) throw new Error("page ended itself: not offered by Ctrl+Shift+T");
     const url = removed.url || removed.view.webContents.getURL();
     if (url && url !== "about:blank" && !url.startsWith("pbcalc:") && !url.startsWith("chrome:") && !url.startsWith("file:") && !url.startsWith("data:")) {
-      entry = { url, index: idx, session: null, pending: null };
+      entry = { url, index: idx, session: null, pending: null, pinned: !!removed.pinned };
       closedTabsHistory.push(entry);
       if (closedTabsHistory.length > 20) closedTabsHistory.shift();
     }
@@ -837,7 +842,7 @@ function reopenClosedTab() {
     try { if (entry.pending) await entry.pending; } catch (_) {}
     // Chrome's reopen-closed-tab brings the tab's sessionStorage back with it, so a site that keeps
     // its login there (the PB ERP) is still logged in; the same mechanism Duplicate uses.
-    const opts = { index: entry.index, sessionRestore: entry.session || null };
+    const opts = { index: entry.index, sessionRestore: entry.session || null, pinned: !!entry.pinned };   // a closed pinned tab comes back pinned (Chrome)
     if (state.restricted) opts.allowRestricted = true;
     // (createTab -> switchTab hands the restored page keyboard focus, so the NEXT Ctrl+Shift+T still
     // reaches a handler; see the note in switchTab.)
@@ -1287,8 +1292,33 @@ function moveTab(id, index) {
   const from = state.tabs.findIndex((t) => t.id === Number(id));
   if (from === -1) return;
   const [t] = state.tabs.splice(from, 1);
-  state.tabs.splice(Math.max(0, Math.min(index, state.tabs.length)), 0, t);
+  // a pinned tab moves only among the pinned ones, any other tab only after them
+  const pinnedCount = state.tabs.filter((x) => x.pinned).length;
+  let at = Math.max(0, Math.min(Number(index) || 0, state.tabs.length));
+  at = t.pinned ? Math.min(at, pinnedCount) : Math.max(at, pinnedCount);
+  state.tabs.splice(at, 0, t);
   notifyTabs();
+}
+
+// ── Pinned tabs, like Chrome ──
+// Right-click a tab > "Pin" / "Unpin". A pinned tab sits at the LEFT of the strip, in the order it was pinned, shows only its icon at a fixed width (no title,
+// no close button - shell.css .tab.pinned), and is left alone by "Close other tabs" / "Close tabs to the right"; Ctrl+W still closes it. Its copy (Duplicate)
+// and its reopen (Ctrl+Shift+T) are pinned too. Normal and Restricted Mode alike (it changes only the strip). In MEMORY only: PBCalc reopens no tabs, so
+// pinned tabs are gone when it closes (the owner's choice 2026-10-14, the no-history rule) - nothing about them is written to disk.
+function keepPinnedFirst() {
+  if (!state.tabs.some((t) => t.pinned)) return;
+  const pinned = state.tabs.filter((t) => t.pinned), rest = state.tabs.filter((t) => !t.pinned);
+  state.tabs.splice(0, state.tabs.length, ...pinned, ...rest);   // stable: each group keeps its own order
+}
+function pinTab(id, on) {
+  const tab = state.tabs.find((t) => t.id === Number(id));
+  if (!tab || !!tab.pinned === !!on) return getTabState();
+  state.tabs.splice(state.tabs.indexOf(tab), 1);
+  const pinnedCount = state.tabs.filter((t) => t.pinned).length;
+  tab.pinned = !!on;
+  state.tabs.splice(pinnedCount, 0, tab);   // pinned: at the end of the pinned group; unpinned: first after it (Chrome)
+  notifyTabs();
+  return getTabState();
 }
 
 // Everything the page kept in sessionStorage. Cookies and localStorage are shared by every tab
@@ -1437,9 +1467,11 @@ async function duplicateTab(id) {
     site: tab.site,
     bookmarkId: tab.bookmarkId,
     allowRestricted: true, // a copy of an allowed tab is allowed; it keeps the same `site` guard
+    pinned: !!tab.pinned,  // the copy of a pinned tab is pinned too (Chrome)
   });
   const created = state.tabs.pop(); // createTab appends; Chrome puts the copy next to the original
   if (created) state.tabs.splice(state.tabs.indexOf(tab) + 1, 0, created);
+  keepPinnedFirst();
   notifyTabs();
   return getTabState();
 }
@@ -1448,6 +1480,7 @@ function newTabAfter(tab) {
   createTab();
   const created = state.tabs.pop(); // createTab appends; move it right after `tab`
   if (created) state.tabs.splice(state.tabs.indexOf(tab) + 1, 0, created);
+  keepPinnedFirst();   // "New tab to the right" of a pinned tab lands right after the pinned group
   notifyTabs();
   focusAddressBar();
 }
@@ -1459,6 +1492,7 @@ function tabContextMenu(id) {
   if (state.restricted) {
     Menu.buildFromTemplate([
       { label: "Duplicate", enabled: !!tab.url && !tab.errorPage && !tab.isHome, click: () => duplicateTab(tab.id) },
+      { label: tab.pinned ? "Unpin" : "Pin", click: () => pinTab(tab.id, !tab.pinned) },
       { label: "Close", click: () => closeTab(tab.id) },
     ]).popup({ window: state.mainWindow });
     return;
@@ -1468,10 +1502,12 @@ function tabContextMenu(id) {
     { type: "separator" },
     { label: "Reload", click: () => { if (tab.discarded) switchTab(tab.id); else if (!tab.view.webContents.isDestroyed()) tab.view.webContents.reload(); } },
     { label: "Duplicate", enabled: !!tab.url && !tab.errorPage && !isNewTabUrl(tab.url), click: () => duplicateTab(tab.id) },
+    { label: tab.pinned ? "Unpin" : "Pin", click: () => pinTab(tab.id, !tab.pinned) },
     { type: "separator" },
     { label: "Close", click: () => closeTab(tab.id) },
-    { label: "Close other tabs", enabled: state.tabs.length > 1, click: () => state.tabs.filter((t) => t.id !== tab.id).forEach((t) => closeTab(t.id)) },
-    { label: "Close tabs to the right", enabled: idx < state.tabs.length - 1, click: () => state.tabs.slice(idx + 1).forEach((t) => closeTab(t.id)) },
+    // pinned tabs are left alone by these two (Chrome)
+    { label: "Close other tabs", enabled: state.tabs.some((t) => t.id !== tab.id && !t.pinned), click: () => state.tabs.filter((t) => t.id !== tab.id && !t.pinned).forEach((t) => closeTab(t.id)) },
+    { label: "Close tabs to the right", enabled: state.tabs.slice(idx + 1).some((t) => !t.pinned), click: () => state.tabs.slice(idx + 1).filter((t) => !t.pinned).forEach((t) => closeTab(t.id)) },
   ]).popup({ window: state.mainWindow });
 }
 
@@ -1546,6 +1582,7 @@ module.exports = {
   applyThemeMode,
   stop,
   moveTab,
+  pinTab,
   tabContextMenu,
   bookmarkContextMenu,
   openBookmarkEdit,

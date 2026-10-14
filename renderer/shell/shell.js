@@ -151,7 +151,8 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
     el.addEventListener("mouseenter", () => {
       clearTimeout(cardHideTimer);
       clearTimeout(cardShowTimer);
-      const show = () => { cardVisible = true; api.showHoverCard(id, rectOf(el)); };
+      // only for a tab that is still in the strip (a delayed show used to fire for a tab that had just been closed / pinned away)
+      const show = () => { if (tabEls.get(id) !== el || el.classList.contains("closing") || !el.isConnected) return; cardVisible = true; api.showHoverCard(id, rectOf(el)); };
       if (cardVisible) show();
       else cardShowTimer = setTimeout(show, 500);
     });
@@ -166,7 +167,14 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
       hideCardNow();
       if (e.button === 0 && !e.target.closest(".tab-close") && id !== tabState.activeTabId) api.switchTab(id);
     });
-    el.addEventListener("auxclick", (e) => { if (e.button === 1) { e.preventDefault(); api.closeTab(id); } });
+    el.addEventListener("auxclick", (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      // a PINNED tab is not closed by a middle click (it is meant to stay; Ctrl+W / the menu's Close still close it)
+      const t = tabState.tabs.find((x) => x.id === id);
+      if (t && t.pinned) return;
+      api.closeTab(id);
+    });
     el.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       hideCardNow();   // the card must not hang around behind the menu
@@ -185,6 +193,9 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
     el.addEventListener("dragend", () => { dragId = null; el.classList.remove("dragging"); renderTabs(); });
     el.addEventListener("dragover", (e) => {
       if (dragId == null || dragId === id) return;
+      // a pinned tab can only land among the pinned ones, any other tab only among the others (main clamps it too: moveTab)
+      const pinnedOf = (x) => !!(tabState.tabs.find((t) => t.id === x) || {}).pinned;
+      if (pinnedOf(dragId) !== pinnedOf(id)) return;
       e.preventDefault();
       const r = el.getBoundingClientRect();
       const before = e.clientX < r.left + r.width / 2;
@@ -215,7 +226,14 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
   // <img> is never re-created while it is already showing the right icon.
   function patchTabEl(el, tab, index) {
     el.classList.toggle("active", tab.id === tabState.activeTabId);
-    el.classList.toggle("discarded", !!tab.discarded);   // memory saver: its page was freed; it loads again when clicked
+    el.classList.toggle("discarded", !!tab.discarded);
+    if (el.classList.contains("pinned") !== !!tab.pinned) {
+      el.classList.toggle("pinned", !!tab.pinned);   // icon only, fixed width, no close button (shell.css)
+      // A width the strip had FROZEN on this tab (lockTabWidths / the FLIP expansion write an inline flex-basis, which beats .pinned) must go, or a tab pinned
+      // while the pointer was in the strip kept its wide size - and an unpinned one the 48px - until the pointer left (after a native menu it often never "leaves").
+      el.style.flexBasis = ""; el.style.flexShrink = ""; el.style.minWidth = ""; el.style.transition = "";
+      pinChanged = true;
+    }   // memory saver: its page was freed; it loads again when clicked
     el.draggable = true;   // reordering tabs reveals no address and changes no bookmark: same in every mode
     if (el.style.order !== String(index)) el.style.order = String(index); // reorder without moving nodes
     const title = tab.title || "New Tab";
@@ -255,7 +273,7 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
     // read see the previous tab's new style, and the row ends up with a staircase of widths
     // (measured: 113, 81, 59, 39...). Read all, then apply.
     const measured = [];
-    tabEls.forEach((el) => measured.push([el, Math.round(el.getBoundingClientRect().width)]));
+    tabEls.forEach((el) => { if (!el.classList.contains("pinned")) measured.push([el, Math.round(el.getBoundingClientRect().width)]); });   // pinned tabs: fixed width, nothing to freeze
     // Freezing must be INSTANT. Writing flex-basis would otherwise animate it from the CSS value
     // (238px) down to the real width, so every tab visibly jumped to full width and slid back.
     measured.forEach(([el, w]) => {
@@ -278,7 +296,7 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
     // not from its basis, so there is nothing for the transition to animate. Measure where the
     // tabs end up, put them back where they were, and animate between the two (FLIP) — that is the
     // 330ms-later expansion Chrome was measured doing over 200ms.
-    const els = [...tabEls.values()];
+    const els = [...tabEls.values()].filter((el) => !el.classList.contains("pinned"));   // pinned tabs keep their fixed width: not part of the expansion
     if (!els.length) return;
     const from = els.map((el) => Math.round(el.getBoundingClientRect().width));
     els.forEach((el) => { el.style.transition = "none"; el.style.flexBasis = ""; el.style.flexShrink = ""; });
@@ -328,14 +346,19 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
   // only as the closing tab gives up its space.
   function sizeStrip() {
     const ghosts = tabsEl.querySelectorAll(".tab.closing").length;
-    tabsEl.style.setProperty("--n", String(tabEls.size + ghosts));
+    // pinned tabs have a FIXED width (shell.css .tab.pinned): they are budgeted on their own (--np), only the others share the 238px slots
+    const pinned = tabState.tabs.filter((t) => t.pinned && tabEls.has(t.id)).length;
+    tabsEl.style.setProperty("--n", String(tabEls.size - pinned + ghosts));
+    tabsEl.style.setProperty("--np", String(pinned));
   }
 
+  let pinChanged = false;
   function renderTabs() {
     const live = new Set(tabState.tabs.map((t) => t.id));
     const gone = [...tabEls.keys()].filter((id) => !live.has(id));
     // freeze the widths FIRST, while the closed tab's slot is still part of the layout
     if (gone.length && pointerInStrip) lockTabWidths();
+    let added = false;
     gone.forEach((id) => {
       const el = tabEls.get(id);
       tabEls.delete(id);
@@ -345,6 +368,7 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
     tabState.tabs.forEach((tab, i) => {
       let el = tabEls.get(tab.id);
       if (!el) {
+        added = true;
         clearWidthFlip();  // a tab appearing mid-expansion must not leave the others pinned
         unlockTabWidths(); // a new tab always re-lays the strip out, frozen or not
         el = createTabEl(tab.id);
@@ -355,6 +379,10 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
       patchTabEl(el, tab, i);
     });
 
+    // tabs closed / opened / pinned / unpinned: the hover card belonged to a strip that no longer looks like that - hide it (the browser already hides it on a
+    // close; the strip still believed a card was showing and showed the next one at once for whatever tab slid under the pointer)
+    if (gone.length || added || pinChanged) hideCardNow();
+    if (pinChanged) { pinChanged = false; if (widthsLocked) { widthsLocked = false; clearWidthFlip(); tabEls.forEach((x) => { x.style.flexBasis = ""; x.style.flexShrink = ""; }); } }
     sizeStrip();
     firstTabRender = false;
     // With many tabs the strip scrolls; keep the active one visible.

@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self';">
+<title>pinned tab</title>
+<link rel="stylesheet" href="pintoast.css">
+</head>
+<body>
+<!-- Chrome's notice after the FIRST Ctrl+W on a pinned tab (electron/pinToast.js). Copied from the owner's Chrome screenshots: 304 x 50 pill, pin icon,
+     the text below; #062E6F / #F2F2F2 in light, #ECF3FE / #1F1F1F in dark. -->
+<div id="t" role="status">
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6zM12 14v7"/>
+  </svg>
+  <span>Press Ctrl+W again to close the pinned tab</span>
+</div>
+</body>
+</html>

@@ -1,0 +1,11 @@
+/* Measured from the owner's Chrome screenshots (2026-10-14): 50px tall pill, 20px before the icon, 18px after the text, colours below. */
+html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+#t {
+  display: inline-flex; align-items: center; gap: 12px;
+  height: 50px; box-sizing: border-box; padding: 0 18px 0 20px;
+  border-radius: 25px; white-space: nowrap;
+  font: 13px "Segoe UI", system-ui, sans-serif;
+  background: #062e6f; color: #f2f2f2;
+  user-select: none; cursor: default;
+}
+@media (prefers-color-scheme: dark) { #t { background: #ecf3fe; color: #1f1f1f; } }
