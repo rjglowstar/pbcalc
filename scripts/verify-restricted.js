@@ -185,8 +185,10 @@ app.whenReady().then(async () => {
   const pageTop = () => { const t = state.tabs.find((x) => x.id === state.activeTabId); return t ? t.view.getBounds().y : -1; };
   key(hwc, "B", ["control", "shift"]);
   await sleep(600);
-  check("Ctrl+Shift+B hides the bookmarks bar", state.bookmarksBarVisible === false && (await barShown()) === false);
-  check("...and the page takes the freed space", pageTop() === 80);
+  // (2026-10-14: the bar ALWAYS shows on the new-tab page - here the 'Your sites' page - like Chrome's New Tab page; on a site tab the setting hides it,
+  // checked in verify-ntp-bookmarks.js)
+  check("Ctrl+Shift+B turns the bookmarks bar setting off", state.bookmarksBarVisible === false);
+  check("...but on the 'Your sites' page (the new-tab page here) the bar stays, the page still at 112", (await barShown()) === true && pageTop() === 112);
   key(hwc, "B", ["control", "shift"]);
   await sleep(600);
   check("...and brings it back", state.bookmarksBarVisible === true && (await barShown()) === true && bookmarks.list().length === 3);

@@ -22,6 +22,9 @@ const EXTERNAL_SCHEMES = new Set(["mailto:", "tel:", "sms:"]);
 
 function notifyTabs() {
   if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
+  // the bar appears / goes with the New Tab page (barShown): move the page down / up when that changes (tab switch, navigation, new tab, setting)
+  const shownNow = barShown();
+  if (shownNow !== barWasShown) { barWasShown = shownNow; try { resizeActiveView(); } catch (_) {} }
   try {
     const s = getTabState();
     state.mainWindow.webContents.send("tabs:changed", s);
@@ -78,8 +81,22 @@ function siteKind(tab) {
 
 function chromeHeight() {
   if (state.mainWindow && !state.mainWindow.isDestroyed() && state.mainWindow.isFullScreen()) return 0;
-  return TAB_STRIP_HEIGHT + TOOLBAR_HEIGHT + (state.bookmarksBarVisible ? BOOKMARKS_BAR_HEIGHT : 0);
+  return TAB_STRIP_HEIGHT + TOOLBAR_HEIGHT + (barShown() ? BOOKMARKS_BAR_HEIGHT : 0);
 }
+
+// Is the bookmarks bar on screen right now? The "Show bookmarks bar" setting (state.bookmarksBarVisible, unchanged) - OR the tab you are looking at is a
+// New Tab page, like Chrome: with the bar hidden it still shows on the New Tab page, so a bookmark is one click away (owner 2026-10-14). It shows the ACTIVE
+// list (dummy or real), as the bar always does. Restricted Mode too: there the new-tab page is the "Your sites" page. A brand-new plain tab counts from its
+// first moment (`newTabPage`), before its address is known, so the bar does not appear a moment late.
+function onNewTabPage(tab) {
+  if (!tab) return false;
+  if (tab.url) return isNewTabUrl(tab.url) || isHomeUrl(tab.url);
+  return !!tab.newTabPage;
+}
+function barShown() {
+  return !!state.bookmarksBarVisible || onNewTabPage(getActiveTab());
+}
+let barWasShown = null;
 
 // "Microphone in use" / "Camera in use" in the address bar, like Chrome: the page's own preload reports how many live camera /
 // microphone tracks it holds (page:capture). It lives on the tab only, is dropped when the page is left, and nothing is stored.
@@ -100,7 +117,7 @@ function setCapture(wc, audio, video) {
 function getTabState() {
   return {
     activeTabId: state.activeTabId,
-    bookmarksBarVisible: state.bookmarksBarVisible,
+    bookmarksBarVisible: barShown(),   // what the toolbar page shows (the setting, or a New Tab page)
     restricted: !!state.restricted,
     tabs: state.tabs.map((t) => {
       const wc = t.view.webContents;
@@ -201,6 +218,7 @@ function createTab(url, opts = {}) {
     // tab turns out to have been opened just to start a download (closeTabOpenedForDownload).
     openerId: opts.openerId || null,
     isHome: !!(state.restricted && !url),
+    newTabPage: !url && !opts.webContents && !(opts.restore && opts.restore.entries && opts.restore.entries.length),   // see onNewTabPage
     // Memory saver (see the section below): when this tab was last looked at, and - once its page has been freed - what is needed to bring it back.
     lastActiveAt: Date.now(),
     discarded: null,
@@ -1113,7 +1131,8 @@ function isManagerSender(wc) {
 // the zoom value in the menu - in Restricted Mode too (the owner's decision), and only while the bookmarks bar is shown
 // - and it leaves no sign except the bookmarks themselves changing. Returns whether the list changed.
 function toggleBookmarkMode() {
-  // Only while the bookmarks bar is SHOWN (the owner's condition): with the bar hidden the clicks only reset the zoom.
+  // Only while the bookmarks bar is SHOWN (the owner's condition): with the bar hidden the clicks only reset the zoom. This follows the "Show bookmarks bar"
+  // SETTING, unchanged - not the New Tab page rule (barShown), which only shows the bar there (owner 2026-10-14: "other hide/show functionality nothing change").
   if (!state.bookmarksBarVisible) return false;
   if (!bookmarks.setMode(bookmarks.getMode() === "real" ? "dummy" : "real")) return false;
   // whatever still shows the other list: an open edit box, a bookmark manager tab, and in Restricted Mode the "Your sites"

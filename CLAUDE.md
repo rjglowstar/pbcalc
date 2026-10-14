@@ -484,6 +484,10 @@ Two things define this browser against every mainstream one:
   `scripts/chrome-reference/capture-keys.ps1` drives a real Chrome to find out, but it refuses to send
   keys unless the machine is idle (it must never fire Ctrl+W into a user's own windows), so run it
   when nobody is using the PC.
+  **The bookmarks bar ALWAYS shows on a New Tab page, like Chrome** (owner 2026-10-14; `barShown()` / `onNewTabPage()` in tabManager, test `scripts/verify-ntp-bookmarks.js` 14): with "Show bookmarks bar" OFF it still appears while the tab you look at is a
+  New Tab page (Restricted Mode: the "Your sites" page), with the ACTIVE list (dummy / real); on every other page the setting decides as before. `chromeHeight()` and `getTabState().bookmarksBarVisible` use `barShown()`; `notifyTabs()` re-lays the page out
+  when it changes (tab switch / navigation / new tab); a brand-new plain tab counts from its first moment (`tab.newTabPage`). UNCHANGED on purpose (owner: "other hide/show functionality nothing change"): the setting itself, the ⋮ menu / right-click
+  checkbox, Ctrl+Shift+B, and the hidden 3-click list switch, which still needs the SETTING on (not merely the bar on a New Tab page). `verify-restricted.js` now expects the bar to stay on "Your sites" after Ctrl+Shift+B (setting off).
   Bookmarks bar toggle (Ctrl+Shift+B) persists in
   `settings.json`. Closing the last tab closes the window and quits (Chrome behaviour). Zoom chip
   in the omnibox when zoom is not 100%.
