@@ -145,6 +145,60 @@ try {
 } catch (_) {}
 ipcRenderer.on("perm:states", (_e, s) => { try { webFrame.executeJavaScript(PATCH_PERM(s), true); } catch (_) {} });
 
+// A page's own "Print" button, not just Ctrl+P / the menu / the context menu (owner 2026-10-15, a real repro: a site's own "Big Print"
+// button opened Electron's bare native dialog instead of PBCalc's preview). That site already has an `isElectron && window.electronPrint`
+// hook meant for exactly this - but PBCalc deliberately hides "Electron" from the UA (Akamai bypass, see CLAUDE.md), so it falls through
+// to its OWN fallback: a HIDDEN, never-navigated <iframe>, document.write()-ed with `<body onload="window.print()">`. MEASURED: that
+// iframe gets NO preload injection at all (even with nodeIntegrationInSubFrames:true) - document.write into an about:blank frame is not
+// a real navigation, so the hook Electron uses to inject preloads per frame never fires for it. Fixed from the TOP frame instead, which
+// IS reliably reachable: override window.print directly, AND patch every same-origin iframe's window.print the MOMENT its .contentWindow
+// is first read (always before such a trick can write content into it - reading .contentWindow is how a page gets at the iframe at all).
+// The `message` listener below bridges one frame we genuinely cannot reach this way: Chromium's own PDF viewer toolbar, a privileged
+// extension frame; electron/printPreview.js's watchPdfViewer() injects that frame's own click handler straight from the main process
+// and bridges out via postMessage (cross-origin postMessage is always allowed, unlike direct property access). That bridge is NOT
+// limited to http(s) - a locally opened/dropped PDF's top frame is file:, and it is the one path here that only ever carries a signal
+// WE put there (the extension frame's content is never page-controlled), so it is safe and needed on every protocol.
+try {
+  const tokP = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  // real browsers print the FRAME that called print(), not the top document - an iframe's own print() only prints that
+  // iframe's content, measured against this exact ERP pattern. Since Electron's printToPDF has no way to target a
+  // subframe, the EVENT CARRIES the iframe's own rendered HTML (document.write already put the final content there, so
+  // it is captured at the moment print() is called, inside the iframe's own closure - "this" is the iframe's window
+  // there, never the top's); main loads that HTML into a throwaway hidden window and prints THAT. The top frame's own
+  // print() passes no content (null): there is nothing to extract, it already IS what should be printed.
+  window.addEventListener("pbc:" + tokP + ":print", (e) => { try { ipcRenderer.send("page:print-request", typeof e.detail === "string" ? e.detail : null); } catch (_) {} });
+  const onHttp = /^https?:$/.test(location.protocol);
+  webFrame.executeJavaScript(`(function(T, HTTP){try{
+      function fire(html){ try { window.dispatchEvent(new CustomEvent('pbc:' + T + ':print', { detail: html || null })); } catch(e) {} }
+      if (HTTP) {
+      try {
+        Object.defineProperty(window, 'print', { configurable: true, writable: true, enumerable: false, value: function print(){ fire(null); } });
+      } catch(e) {}
+      try {
+        var d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+        if (d && d.get) {
+          var origGet = d.get;
+          Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', { configurable: true, enumerable: d.enumerable, get: function(){
+            var w = origGet.call(this);
+            try {
+              if (w && !w.__pbPrintDone) {
+                Object.defineProperty(w, '__pbPrintDone', { value: true, enumerable: false, configurable: true });
+                Object.defineProperty(w, 'print', { configurable: true, writable: true, enumerable: false, value: function print(){
+                  var html = null;
+                  try { html = '<!doctype html>\\n' + w.document.documentElement.outerHTML; } catch(e2) {}
+                  fire(html);
+                } });
+              }
+            } catch(e) {}
+            return w;
+          } });
+        }
+      } catch(e) {}
+      }
+      window.addEventListener('message', function(e){ try { if (e && e.data && e.data.__pbcPdfPrint === true) fire(null); } catch(err) {} });
+    }catch(e){}})(${JSON.stringify(tokP)}, ${JSON.stringify(onHttp)});`, true);
+} catch (_) {}
+
 // A DUPLICATED tab restores the original's sessionStorage before any page script runs, so a site
 // that keeps its login there (the PB ERP does) stays logged in in the copy — that is what Chrome's
 // Duplicate does. Only views main started with this flag ask, main answers once and only for the

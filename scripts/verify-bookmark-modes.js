@@ -137,6 +137,28 @@ app.whenReady().then(async () => {
     check("...and none of the dummy ones", !(await barText()).includes("GIA") && !(await barText()).includes("Gems"));
     check("the menu closes at the moment the list switches", !popup.isOpen("menu"));
 
+    // owner 2026-10-16 ("3 click for bookmark original toggle but not change... same issue facing second time"): each zoom-reset
+    // click made main push fresh data to this SAME open menu (the zoom itself changed), and the menu rebuilt its WHOLE panel on
+    // every push - tearing the "100%" span out from under a real human's 2nd/3rd click before it could land, no matter how the
+    // earlier timing-based checks above read. Root-caused with this exact check: tag the node, click, and confirm the SAME node
+    // answers the NEXT click too, instead of a freshly rebuilt one (`renderMenu()`'s menuLive guard in renderer/popup/popup.js).
+    await attempt(async () => {
+      await openMenu();
+      await win.getBrowserViews().pop().webContents.executeJavaScript('document.querySelector(".zval").__marker = "orig"');
+    });
+    let sameNode = true;
+    for (let i = 0; i < 3; i++) {
+      const r = await win.getBrowserViews().pop().webContents.executeJavaScript(`(() => {
+        const el = document.querySelector(".zval"); if (!el) return false;
+        const same = el.__marker === "orig"; el.click(); return same;
+      })()`);
+      if (!r) sameNode = false;
+      await sleep(100);
+    }
+    check("the '100%' element itself survives all three clicks (not rebuilt from under a real click)", sameNode);
+    popup.close(); await sleep(300);
+    bm.setMode("real");   // the 3 clicks above flipped it back to dummy - put it back for the rest of this test
+
     console.log("\n-- editing the REAL list never touches the dummy one");
     const dummyBytes = fs.readFileSync(path.join(ud, "bookmarks-dummy.json"), "utf8");
     popup.close(); await sleep(300);

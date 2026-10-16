@@ -283,7 +283,10 @@ app.whenReady().then(async () => {
   key(wc(), "P", ["control"]);
   await sleep(200);
   check("F12 and Ctrl+Shift+I open devtools", dt === 2);
-  check("Ctrl+P prints", pr === 1);
+  // Ctrl+P = PBCalc's print preview (electron/printPreview.js, tested in verify-print-preview.js), never a direct print
+  const pp = require("../electron/printPreview");
+  check("Ctrl+P opens the print preview (nothing printed yet)", pp.isOpen() && pr === 0);
+  pp.close();
 
   // ── bookmark shortcut ──
   key(wc(), "D", ["control"]);

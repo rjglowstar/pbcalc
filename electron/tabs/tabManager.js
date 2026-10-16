@@ -132,6 +132,10 @@ function getTabState() {
         favicon: t.favicon || "",
         discarded: !!t.discarded,
         pinned: !!t.pinned,
+        // a pending print preview sitting in the BACKGROUND, like Chrome's dot on the favicon (never on the active tab - the dialog is
+        // visible there instead); measured against real Chrome: the same dot shows for ANY pending per-tab dialog (window.print(), alert()),
+        // so this flag name is general even though print preview is the only such dialog PBCalc has today
+        pendingDialog: t.id !== state.activeTabId && require("../printPreview").hasPending(t.id),
         canGoBack: alive && wc.navigationHistory.canGoBack(),
         canGoForward: alive && wc.navigationHistory.canGoForward(),
         loading: alive && wc.isLoading(),
@@ -422,6 +426,7 @@ function wireTabEvents(tab) {
   // Lazy: shortcuts.js requires this module, so requiring it at the top would be circular.
   require("../shortcuts").attachShortcuts(wc);
   require("../contextMenu").attachContextMenu(wc, { openInNewTab: (u) => openInNewTab(u, true, tab) });
+  require("../printPreview").watchPdfViewer(wc);   // the Chromium PDF viewer's own print icon, see electron/printPreview.js
   // No developer tools in Restricted Mode, however they were opened.
   wc.on("devtools-opened", () => { if (state.restricted) wc.closeDevTools(); });
 
@@ -660,6 +665,7 @@ function switchTab(id) {
     if (popup().isOpen()) popup().close();
     require("../hovercard").hide();
     require("../omnibox").hide();
+    require("../printPreview").leaveTab(state.activeTabId);   // HIDE (not close) a pending preview of the tab being left - Chrome keeps it alive
   }
 
   next.lastActiveAt = Date.now();
@@ -676,6 +682,7 @@ function switchTab(id) {
   try {
     require("../viewHost").attach(state.mainWindow, next.view);
   } catch (_) {}
+  require("../printPreview").enterTab(next.id);   // show the NEW tab's pending preview again, exactly as it was left (measured against Chrome)
   if (leaving) {
     Promise.race([pictureTaken, new Promise((r) => setTimeout(r, 300))]).then(() => {
       if (state.activeTabId === leaving.id) return; // switched back in the meantime: keep it
@@ -691,6 +698,7 @@ function switchTab(id) {
   // until a mouse click gave focus back — "the shortcut stopped working, opening it manually did".
   focusActivePageUnlessShell();
   resizeActiveView();
+  require("../printPreview").reposition();   // the bar's visibility can change the page area between the two chromeHeight() reads above
   notifyTabs();
   return getTabState();
 }
@@ -725,6 +733,7 @@ function closeTab(id, opts = {}) {
   try { require("../pinToast").hide(); } catch (_) {}   // the "Press Ctrl+W again" notice goes with any close
 
   require("../hovercard").hide();
+  require("../printPreview").closeFor(Number(id));
   const [removed] = state.tabs.splice(idx, 1);
 
   // Push to history (skipping error pages or local pbcalc:/file: pages) before webContents is destroyed
@@ -1003,9 +1012,10 @@ function zoomWheel(wc, deltaY) {
   wheelAcc.set(wc, a);
 }
 
+// Ctrl+P / ⋮ > Print: Chrome's print preview (electron/printPreview.js), not the bare Windows dialog any more.
 function printActive() {
   const wc = activeWebContents();
-  if (wc) wc.print({ printBackground: true });
+  if (wc) require("../printPreview").open(wc);
 }
 
 function isInspectable(wc) {
@@ -1544,6 +1554,7 @@ module.exports = {
   getTabState,
   getActiveTab,
   resizeActiveView,
+  notifyTabs,   // printPreview.js pushes a fresh tab state when a BACKGROUND tab's own print() changes its pending-dialog dot
   createTab,
   switchTab,
   closeTab,

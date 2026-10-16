@@ -122,6 +122,13 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
     icon.className = "tab-icon";
     body.appendChild(icon);
 
+    // Chrome's small dot on a BACKGROUND tab's favicon while it has a pending print preview (or any such per-tab dialog): measured from
+    // real Chrome, colour = var(--omnibox-ring) in both modes (light #0B57D0 / dark #A8C7FA - that variable already carries Chrome's exact
+    // colour). Lives outside .tab-icon (which clips to a narrow tab) so it is never cut off.
+    const dot = document.createElement("span");
+    dot.className = "tab-pending-dot";
+    body.appendChild(dot);
+
     const title = document.createElement("span");
     title.className = "tab-title";
     body.appendChild(title);
@@ -219,6 +226,7 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
 
     el._icon = icon;
     el._title = title;
+    el._dot = dot;
     return el;
   }
 
@@ -243,6 +251,7 @@ if (/[?&]calc=1(&|$)/.test(location.search)) {
       el._iconKey = iconKey;
       fillTabIcon(el._icon, tab);
     }
+    el._dot.classList.toggle("show", !!tab.pendingDialog);
   }
 
   // Chrome does NOT re-widen the remaining tabs while the pointer is still in the strip — it keeps

@@ -93,25 +93,49 @@
     if (opts.check) row.appendChild(el("span", "check", "✓")); // sits in the left gutter, label stays aligned
     row.appendChild(el("span", "label", label));
     if (hint) row.appendChild(el("span", "hint", hint));
-    if (opts.disabled) { row.style.opacity = "0.4"; return row; }
+    // the listener is attached either way - a row built disabled can turn enabled later (menuLive updates its
+    // opacity/pointerEvents in place, see renderMenu()) without the menu having to rebuild to pick up a live click handler
     row.addEventListener("click", onClick);
+    if (opts.disabled) { row.style.opacity = "0.4"; row.style.pointerEvents = "none"; }
     return row;
   }
 
+  let menuLive = null;   // the bits of an already-built menu that can change later: set once, updated in place after that
   function renderMenu() {
+    // Main pushes fresh data on every tab/title/download/zoom change (popup.refresh) - including the very "zoom-reset" click
+    // this row's own "100%" triggers. Rebuilding the whole panel on EVERY push tore the "100%" span out from under a real,
+    // fast triple-click (the hidden bookmark-list switch) before the 2nd or 3rd click could land on it - same root cause,
+    // same fix, as the tab strip and downloads list elsewhere in this app ("rebuilding on every tick was why buttons needed
+    // two or three clicks"). Build the menu once per popup session (a fresh DOM every open/close, so nothing to reset) and
+    // only patch the handful of fields that can actually change afterward.
+    if (menuLive) {
+      menuLive.zoomVal.textContent = data.zoom + "%";
+      menuLive.barCheck.style.visibility = data.bookmarksBar ? "visible" : "hidden";
+      if (menuLive.bmItem) {
+        const dis = !data.canBookmark;
+        menuLive.bmItem.style.opacity = dis ? "0.4" : "";
+        menuLive.bmItem.style.pointerEvents = dis ? "none" : "";
+      }
+      return;
+    }
     panel.textContent = "";
     place(300, { alignRight: true });
     panel.appendChild(menuItem("New tab", "Ctrl+T", () => act("new-tab")));
     panel.appendChild(el("div", "sep"));
     panel.appendChild(menuItem("Downloads", "Ctrl+Shift+J", () => act("downloads")));
+    let bmItem = null;
     if (!data.restricted) {
       // Like the star: adds the page and opens the bubble, or on a bookmarked page opens it to edit/remove. It never
       // removes by itself, so the label must not promise that.
-      panel.appendChild(menuItem("Bookmark this tab…", "Ctrl+D",
-        () => act("bookmark-active"), { disabled: !data.canBookmark }));
+      bmItem = menuItem("Bookmark this tab…", "Ctrl+D", () => act("bookmark-active"), { disabled: !data.canBookmark });
+      panel.appendChild(bmItem);
     }
-    // Hiding/showing the bar is allowed in Restricted Mode; EDITING bookmarks is not.
-    panel.appendChild(menuItem("Show bookmarks bar", "Ctrl+Shift+B", () => act("toggle-bookmarks-bar"), { check: data.bookmarksBar }));
+    // Hiding/showing the bar is allowed in Restricted Mode; EDITING bookmarks is not. Always built with the check mark
+    // present (never conditionally appended) so later updates can just toggle its visibility, not add/remove a node.
+    const barRow = menuItem("Show bookmarks bar", "Ctrl+Shift+B", () => act("toggle-bookmarks-bar"), { check: true });
+    const barCheck = barRow.querySelector(".check");
+    barCheck.style.visibility = data.bookmarksBar ? "visible" : "hidden";
+    panel.appendChild(barRow);
     panel.appendChild(el("div", "sep"));
 
     const zoom = el("div", "item zoom-row");
@@ -141,6 +165,8 @@
     panel.appendChild(menuItem("Settings", "", () => act("settings")));
     panel.appendChild(el("div", "sep"));
     panel.appendChild(menuItem("Exit", "", () => act("exit")));
+
+    menuLive = { zoomVal: val, barCheck, bmItem };
   }
 
   // ── downloads ─────────────────────────────────────────────────────────

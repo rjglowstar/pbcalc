@@ -266,7 +266,7 @@ Two things define this browser against every mainstream one:
 - **Bookmarks** (`electron/bookmarks/`): user-curated, persisted in `bookmarks.json`; bar + star
   button in the shell. Stores only what was explicitly bookmarked (no visit data).
   **TWO bookmark lists (the owner's privacy requirement) - read this before touching bookmarks.** Whoever opens the
-  browser must see ordinary bookmarks, not the owner's real ones (`scripts/verify-bookmark-modes.js`, 46 checks):
+  browser must see ordinary bookmarks, not the owner's real ones (`scripts/verify-bookmark-modes.js`, 67 checks):
   - `bookmarkStore` holds a **dummy** list (`bookmarks-dummy.json`, seeded ONCE with the five diamond-trade sites the
     owner chose - GIA, GJEPC, Surat Diamond Bourse, BDB India, Surat Diamond Trade (`DUMMY_DEFAULTS`) - when the file is
     missing; a list the user emptied stays empty) and the **real** list
@@ -280,6 +280,21 @@ Two things define this browser against every mainstream one:
     (`countZoomClick` in popup.js, action `zoom-reset`), so the page cannot fake it; three more clicks switch back.
     The menu CLOSES at the moment the list switches (either way); where nothing switches (Restricted Mode) it stays open. `toggleBookmarkMode` also closes an open edit
     box and reloads an open bookmark-manager tab so nothing keeps showing the other list.
+  - **A real human's three clicks sometimes did not count, reported twice (owner 2026-10-16, "3 click for bookmark original toggle but not
+    change... same issue facing second time").** Root cause: main pushes fresh `popup:data` to an OPEN popup on every tab/title/zoom/download
+    change (`popup.refresh()`) - including the push each `zoom-reset` click itself causes (the zoom actually changes too) - and
+    `renderer/popup/popup.js`'s `render()` called `renderMenu()` UNCONDITIONALLY on every push, which cleared `panel.textContent` and rebuilt
+    the WHOLE menu from scratch, including the "100%" span the user was about to click again. A fast real click landing while that rebuild
+    was mid-flight (or just after) missed the brand-new node - exactly the "rebuilding on every tick was why buttons needed two or three
+    clicks" pattern this app already fixed for the tab strip and the downloads list, just never applied here. **Fixed**: `renderMenu()` now
+    builds the menu ONCE per popup session (a fresh DOM every open/close already, so nothing to reset) and on later pushes only PATCHES the
+    parts that can actually change - the zoom percentage text, the "Show bookmarks bar" check mark's visibility, and the "Bookmark this
+    tab…" item's enabled state - instead of tearing the whole panel down. `menuItem()`'s click listener is now attached even when a row
+    starts disabled (only `opacity`/`pointerEvents` are toggled), so a row that becomes enabled later while the SAME menu stays open keeps
+    working without needing a rebuild to pick up a handler it never got. Verified two ways: a node-identity check (tag the "100%" element,
+    click, confirm the exact SAME node answers the next click, not a replacement) and a 10-round stress test at 40ms between clicks (faster
+    than a real human usually manages) - 10/10 clean, where the unfixed code was timing-sensitive enough to intermittently fail at the
+    120ms gaps the existing test already used. Test: the "survives all three clicks" check in `verify-bookmark-modes.js`.
   - **Restricted Mode FOLLOWS the active list AND the switch works inside it** (the owner's choices): three clicks in
     Restricted Mode swap dummy <-> real exactly as in normal mode: **open tabs are never closed or touched** (an earlier
     version dropped them in Restricted Mode - a bug); only pages that DISPLAY the list are reloaded (a "Your sites" tab,
@@ -1131,6 +1146,245 @@ says everything is "disabled_software" - read it only after a window has loaded.
 Not added on purpose: `.mkv/.avi` (Chromium cannot play them), audio files, a Windows file icon / "default app"
 entry for video (`kindOf` stays null). Also fixed here: `permissions.check` ignored `details.mediaType` (singular), so after Allow the page got no
 device names (Meet: "Mic not found"); test in `verify-capture-indicator.js`.
+
+## Print preview like Chrome's (`electron/printPreview.js`, `renderer/printpreview/` incl. `rules.js`, `preloads/printpreview-preload.js` + `printholder-preload.js`; test `scripts/verify-print-preview.js`, 102 checks, run 3x clean)
+Owner 2026-10-15, from their Chrome screenshots. Electron has NO print preview: `webContents.print()` only opens the bare Windows dialog (what PBCalc did before). Ctrl+P, ⋮ > Print
+and the page's right-click > Print now open our own dialog, drawn like the screen-share picker: a BrowserView over the PAGE AREA (tab-modal: tab strip / toolbar stay usable; window
+resize repositions it), dimmed backdrop, preview left, settings right in Chrome's order (Destination with a printer / PDF icon,
+Pages, Copies + Collate, Layout, Color, "More settings": Paper size, Pages per sheet, Margins, Quality, Scale, Two-sided, Options; "Print using system dialog… (Ctrl+Shift+P)"; Print or Save /
+Cancel; "N sheets of paper" / "N pages"). **The preview is `printToPDF`** (Chromium's own print layout) shown in Chromium's PDF viewer in an iframe (`blob:` + `#toolbar=0&navpanes=0&view=Fit`).
+A tab showing a PDF FILE prints that file's own pages (measured: printToPDF of a PDF tab = the document's pages, not the viewer; detected by the PDF viewer frame
+`chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/`). **Print** = `webContents.print({silent:true, deviceName, pageSize:{width,height} in microns = the printer's OWN paper, ...})`;
+Odd / Even / Custom become page ranges counted on the job AS PRINTED. **Save as PDF** = the PDF written to a file the user picks (default name = page title, Downloads).
+- **WHICH settings show = Chrome's rules, MEASURED, not guessed** (`renderer/printpreview/rules.js`, one file used by the page AND by main): a throwaway Chrome (separate profile,
+  off-screen, CDP) printed a web page and a PDF to every printer here and its print-preview model (`print-preview-app`.model_.settings_, `.available`) and drawn sections were read
+  (probe in the session scratchpad; re-run it if Chrome changes). Results: Copies only when the printer makes > 1 copy (Windows MaximumCopies: TSC 32767 / OneNote 999 yes; XPS, Print to
+  PDF, Save as PDF = 1, no); Collate only with Copies AND a collating printer (DC_COLLATE; only the XPS Writer here, which has no Copies - so never shown on this PC); Color only when the
+  printer prints colour (TSC: no); Layout / Margins / Options only for web pages; Paper size = the printer's own list (duplicate sizes once: XPS 107 -> 65, exactly Chrome's 65 in Chrome's
+  order; TSC USER / 2 x 4 / 4 x 4 / Exe Barcode), its default chosen, not for a PDF file saved as PDF; Save as PDF's list = Legal Letter Tabloid A0-A5, A4; Scale not for a PDF saved as PDF;
+  Headers and footers not with Margins None and not on paper under 1 inch tall AS LAID OUT (TSC Exe Barcode is 1.57 x 0.79 in: none in portrait, allowed in landscape); Odd / Even only with
+  more than 1 page; "More settings" only with more than 6 sections (Chrome's MAX_SECTIONS_TO_SHOW - why Chrome shows it sometimes and sometimes not); Quality only with > 1 resolution,
+  Two-sided only when the printer can (none here: tested with faked abilities).
+- **Printer abilities come from Windows** (Electron gives names only): ONE async PowerShell run (System.Drawing.Printing + DeviceCapabilities DC_COLLATE through Add-Type), ~1.9 s,
+  cached 60 s; the Windows default printer from `HKCU\...\Windows NT\CurrentVersion\Windows -> Device` (async `reg.exe`). Never a sync child process in main.
+- **Remembered for the run, in MEMORY only, = Chrome's sticky settings:** destination, layout, colour, paper (kept if the next printer has it, else its default), margins, quality, scale,
+  collate, two-sided, headers, background, "More settings" open. NOT pages, copies, pages per sheet. A choice the printer cannot use is KEPT (the "Headers and footers" tick survives a
+  print to the label printer) and only switched off in what is printed (`clean()` returns the choices `s` and the effective `eff`).
+- Restricted Mode: works, but "Headers and footers" is hidden and never printed (it prints the page's address). The `print:*` IPC answers only the dialog's own view.
+- **A preview belongs to its TAB, not to the window, like Chrome (owner 2026-10-15: "chrome print preview still exists when we open other tab... PBCalc inside preview close"; measured
+  against real Chrome, a throwaway profile driven by CDP: `window.print()` on tab A, then switch to tab B).** Confirmed: Chrome's preview survives a tab switch untouched - same settings,
+  same rendered PDF, no reload, no flash - and reappears exactly as left when the tab is chosen again; several tabs can each have their own pending preview at once; a BACKGROUND tab's page
+  navigating away (even a timer-driven redirect, not just a click) still closes THAT preview; a small dot appears on a BACKGROUND tab's favicon while its preview is pending, gone the instant
+  that tab is active again - and the SAME dot shows for a pending `alert()` too (measured), so it is Chrome's generic "this tab has something waiting" mark, not specific to printing.
+  Measured dot colour (BGR pixel sample of a real Chrome window, both app modes): light `#0B57D0`, dark `#A8C7FA` - exactly this codebase's existing `--omnibox-ring` variable, used as is.
+  **Implementation:** previews are a `Map` keyed by TAB id (`electron/printPreview.js`), each entry its own BrowserView, printed webContents, document-is-PDF flag, `dests` list and
+  navigation/destroy listeners; at most one entry is ATTACHED (visible) at a time (`attachedTabId`). Leaving a tab (`tabManager.switchTab`) calls `leaveTab()`, which only DETACHES the
+  view (hidden, kept alive); entering a tab calls `enterTab()`, which re-ATTACHES the very same view - no reload. Only closing the TAB (`closeTab` -> `closeFor()`) destroys an entry; Esc /
+  Cancel / Print done / "system dialog" (`close()`) end whichever entry is currently attached, since only a visible one can receive those. `getTabState()` adds `pendingDialog` per tab
+  (true while an entry exists for a tab that is not the active one); `renderer/shell/shell.js`/`.css` draw the dot (`.tab-pending-dot`, a plain element next to `.tab-icon` rather than
+  inside it, because `.tab-icon` clips to a narrow tab). `sticky` (the remembered settings) stays GLOBAL, one browser-wide preference, same as Chrome - only the dialog's open/closed state
+  and its rendered content are per tab. Test: the "SURVIVES a tab switch" / "several tabs" / "BACKGROUND tab's page navigating" / "closing a BACKGROUND tab" blocks of
+  `verify-print-preview.js`, plus a REAL external site (`https://en.wikipedia.org/wiki/Main_Page`, skipped gracefully if this machine has no network at the time).
+- **Ctrl+Shift+P works only INSIDE the dialog** (its own `before-input-event`, registered before the shortcut handler): browser-wide it is impossible - pressing Ctrl+Shift arms the hidden
+  "pbsecure" sequence, which then swallows the `p`. The browser-wide Ctrl+P ignores Shift; without that, Ctrl+Shift+P in the dialog opened the system dialog AND reopened the preview.
+- **Traps:** `.row { display:flex }` beats the `hidden` attribute (`[hidden] { display:none !important }`; the test measures DRAWN height, not the attribute); an `<svg>` has no `.hidden`
+  property (use `toggleAttribute("hidden")` - the PDF icon never showed); a "pages per sheet" carried over silently halved Save as PDF's page count until the count ignored unavailable settings.
+- **Known differences from Chrome:** the preview shows single pages when Pages per sheet > 1 (the printout combines them; owner accepted); Pages per sheet is not offered for Save as PDF
+  (printToPDF cannot combine pages); a PDF file's Scale offers Default / Custom only (Chrome adds Fit to printable area / Fit to paper - Electron's print has no such option); no Custom margins
+  (Chrome drags guides on the preview); no "See more…" printer search (all printers are in the one list); "Selection only" not built (Chrome did not offer it in the probe either); the
+  light-mode preview background is the PDF viewer's dark grey. **Not verified with a real printer** - the test records the print options instead of printing.
+- **A page's OWN "Print" button opened the bare native dialog too (owner 2026-10-15, two real repros: PBCalc's own generated PDF printed from the Chromium
+  viewer's own toolbar icon; an ERP's "Big Print" button)** - only Ctrl+P / the menu / the context menu called `open()` before; a page calling `window.print()`
+  itself went straight to Electron's default (the system dialog), bypassing PBCalc entirely. Three different fixes for three different cases, each MEASURED,
+  not guessed (a throwaway BrowserWindow probing each path before any code was written):
+  - **An ordinary page's own `window.print()`** (e.g. `<button onclick="window.print()">`): `preloads/tab-preload.js` overrides `window.print` on the TOP
+    frame, main-world, http(s) only - dispatches `pbc:<token>:print`, the isolated world sends `page:print-request`, main re-derives the tab from `e.sender`
+    and calls `open()`.
+  - **The ERP's REAL pattern** (`Mfg.Web` `jangads.component.ts` `printJangadDetail`): a HIDDEN, never-navigated `<iframe>`, `document.write()`-ed with
+    `<body onload="window.print(); window.close();">`. That component already has an `isElectron && window.electronPrint` hook meant for exactly this case -
+    but PBCalc deliberately hides "Electron" from the UA (Akamai bypass), so it falls into this fallback instead, and **we cannot change that site's code**.
+    MEASURED: such an iframe gets NO preload injection at all, even with `webPreferences.nodeIntegrationInSubFrames: true` - `document.write()` into an
+    about:blank iframe is not a real navigation, so the hook Electron uses to inject preloads per frame never fires for it (confirmed with a bare marker
+    property: present on a genuinely-navigated iframe's `contentWindow`, absent on a document.write()'d one, with or without that flag). Fixed without
+    relying on per-frame preload injection at all: the TOP frame (reliably reachable) patches `HTMLIFrameElement.prototype.contentWindow`'s getter so that
+    the MOMENT any same-origin iframe's `.contentWindow` is first read - always BEFORE such a trick can write content into it, since reading `.contentWindow`
+    is how a page gets at the iframe in the first place - its `.print` is already overridden too (dispatches the same event, direct closure call, no
+    postMessage needed: the override function is defined in the TOP frame's scope, so the bare `window` identifier inside it always resolves there
+    regardless of which window's `.print` it was attached to and called from).
+  - **Real browsers print the FRAME that called print(), not the top document - Electron's printToPDF has no way to target a subframe, so printing the
+    IFRAME'S OWN content needed a second fix after the interception above (owner, from real screenshots: the ERP's "Big Print" opened OUR dialog but
+    showed "72 sheets of paper" of blank pages - PBCalc was printing the tab's whole visible page, not the iframe's actual challan content).** Fixed by
+    having the iframe's own override CAPTURE its rendered HTML the moment print() is called (`this.document.documentElement.outerHTML` - "this" is the
+    iframe's own window there; document.write already put the final content there, so nothing is missed), carried over the SAME `pbc:<token>:print`
+    event via `CustomEvent.detail` (confirmed by hand that a 5000-character string crosses the main-world/isolated-world boundary intact) and then
+    `page:print-request`'s second argument. `printPreview.js`'s `openForFrame(tab, html)` loads that HTML into a throwaway, never-shown `BrowserWindow`
+    (`TAB_PARTITION` session, `sandbox:true`) and prints THAT instead of the tab's own page - `open()` and `openForFrame()` now share one
+    `createEntry(tab, src, show)`, so the whole per-tab Map / dot / navigation-watch machinery works unchanged regardless of what `src` actually is.
+    **Trap, found by reproducing exactly: the captured HTML still carries the very `onload="window.print(); window.close();"` that triggered the
+    capture.** Loading it verbatim into the holder re-fires the SAME handler there: `window.print()` would open a SECOND bare native dialog, and
+    `window.close()` destroys the holder before it can be printed at all (measured: `net::ERR_ABORTED`, `did-fail-load` code -3). Fixed with a tiny
+    dedicated preload (`preloads/printholder-preload.js`) that makes `window.print`/`window.close` no-ops inside the holder, before any of its own
+    script runs. Verified end to end against the exact real repro (the ERP's 200-row grid behind a hidden iframe print): the printed PDF is the
+    iframe's own 1-page content, never the 7-page grid (measured both candidates with the same `printToPDF` call to get a reliable page-count signal -
+    a raw byte search for the printed TEXT is NOT reliable, PDF content streams are FlateDecode-compressed and can false-match compressed binary noise).
+  - **A third real repro, from the owner's own screenshots: the ERP's "Big Print" opened PBCalc's RIGHT content now, but with none of the ERP's own
+    print.css styling (no table borders/fonts), an awkward page break, and the printed FOOTER showed the holder's own giant base64 `data:` address
+    spanning the page - exactly as reported.** Root cause, confirmed by hand with a throwaway probe before writing any fix: a bare `data:` URL has no
+    meaningful base to resolve a RELATIVE resource against, and the ERP's own captured markup references its real print.css exactly that way
+    (`<link href="./../../../../assets/css/print.css">`, confirmed by reading `Mfg.Web/src/assets/css/print.css` - a real, substantial stylesheet with
+    the table border/font rules missing from the broken printout). Measured: loading the SAME captured HTML without a base threw an "Invalid URL"
+    console error and left the stylesheet unapplied; loading it with `loadURL(dataURL, { baseURLForDataURL: <directory of the REAL tab's own URL> })`
+    (`new URL(".", tab.view.webContents.getURL()).href`) resolved the relative stylesheet correctly - confirmed by rendering the saved PDF and finding
+    the stylesheet's own red-border pixels actually present. This is also presumably why the content broke across an extra page: without the real
+    print.css, Chromium's default styling doesn't match the layout the ERP actually designed for print. **Separately, the footer's ugly `data:` address
+    is Chromium's own DEFAULT header/footer template** (measured: an plain, unstyled `displayHeaderFooter:true` print shows a small grey strip - date +
+    title at top, address + page numbers at bottom - with the address pulled straight from `document.location.href`, i.e. the holder's own data: URL).
+    Fixed by supplying a CUSTOM `footerTemplate` (`pdfOptions()`'s new `tabId`/`isHolder` parameters, used only when `entry.holder` exists) with the REAL
+    tab's address (`realUrlOf(tabId)`) as plain static text, replicating the MEASURED default style (8px grey sans-serif, flex-justified) - confirmed
+    that supplying ONLY `footerTemplate` (leaving `headerTemplate` undefined) keeps Chromium's own default header (date + title, already correct)
+    untouched. The real-printer path (`print:go`'s `opts.footer`) had the identical bug (`target.getURL()` = the holder's data: URL) and got the same
+    `realUrlOf()` fix. Test: `scripts/verify-print-preview.js`'s "ERP's exact pattern" block now also enables Headers and footers, serves a real
+    `/assets/css/print.css` route and checks (a) no console "Invalid URL" error, (b) the saved PDF, rendered and screenshotted, actually contains the
+    stylesheet's red-border pixels - not a raw-byte text search, confirmed unreliable against compressed PDF streams.
+  - **The Chromium PDF viewer's own print toolbar icon** (`chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/`, a privileged extension frame our preload
+    cannot reach at all - confirmed: even a marker set on its `window` from the TOP frame is invisible there). MEASURED: overriding `window.print` INSIDE
+    that frame (injected via `WebFrameMain.executeJavaScript`, which main CAN reach even where preload cannot) does nothing - a synthetic click on its
+    button never called it, so the button does not use the standard DOM API at all internally. Found the real button instead (deep in shadow DOM:
+    `#viewer` -> shadowRoot -> `viewer-toolbar` -> shadowRoot -> `#print`) and intercepted its click in the CAPTURE phase (`stopImmediatePropagation` +
+    `preventDefault`, confirmed no native print follows), bridged out with `postMessage({__pbcPdfPrint:true}, '*')` - the one channel that crosses into a
+    privileged frame regardless of origin - to a `message` listener on the TOP frame (unconditional, not http(s)-gated: a locally opened/dropped PDF's top
+    frame is `file:`, and this bridge only ever carries a signal WE put there via main-process injection, never page-influenceable, so it is safe on every
+    protocol). `electron/printPreview.js`'s `watchPdfViewer(wc)` (called once per tab from `tabManager.wireTabEvents`) hooks `did-frame-finish-load` and
+    injects the click-interception script into any subframe whose URL starts with the viewer's own origin, with a short poll (the toolbar's shadow DOM is
+    not always ready the instant the frame "finishes load").
+  - **A background tab's OWN `window.print()` does not steal the view, measured against real Chrome** (a tab backgrounded, then made to call
+    `window.print()` itself via a timer - exactly what a real page could do): Chrome creates the preview but never switches to or shows it; the tab the
+    user is looking at stays exactly as it was, only a dot appears. `open()` therefore only ATTACHES (shows) when the target tab is the one currently
+    active; otherwise the entry is created pending, same as leaving any other tab (reuses the exact same tab-switch-persistence machinery above).
+  - **`page:print-request` IPC**: the main process re-derives the tab from `e.sender` itself (never trusts anything the page could forge) before calling
+    `open()`. All three paths work in Restricted Mode too (print already did; nothing new needed there beyond the existing "no Headers and footers" rule).
+  - **Trap that cost a debugging pass:** `tabManager.js` never exported `notifyTabs` - `printPreview.js`'s `tm().notifyTabs()` call (for the dot on a
+    background-opened preview) silently threw inside its own try/catch, so the dot simply never appeared and the failure gave no error anywhere. Found by
+    tracing: `getTabState()` already computed `pendingDialog: true` correctly, but the renderer never received a fresh push to act on it. Now exported.
+  - Test: the "a page's OWN 'Print' button" / "a BACKGROUND tab's OWN window.print()" blocks of `verify-print-preview.js` (88 checks total), using the
+    ERP's EXACT real code pattern (copied from `Mfg.Web`'s `jangads.component.ts`, not a simplified stand-in) as one of the cases, with a 200-row grid on
+    the visible page to prove the iframe's content prints and the grid never does. **Flaky-test trap found while stabilising this:** one Save-as-PDF
+    check right after the ERP test had no `dialog.showSaveDialog` mock, so it hit Electron's REAL native dialog, which waits forever for a human in a
+    headless run (confirmed with a 20s status poll: stuck at `goDisabled:true` the whole time, never an error) - every Save-as-PDF check needs its own
+    mock, consistently; a flaky "sometimes 10s is enough" result is worth suspecting as a hung, unmocked dialog before just raising the timeout.
+- **Fifth real repro, owner's own screenshot: a TINY label paper (TSC TE244, "Exe Barcode") printed "363 sheets of paper" of mostly-blank labels in
+  PBCalc, where the identical destination + paper in real Chrome prints "2 sheets" with the content fitting normally - "when we chrome inside printer
+  change then showing this type of print... same printer we change in our PBCalc then not view showing same as chrome wise".** Root cause, found by
+  elimination (orientation/landscape combinations were tried and measured FIRST and ruled out - they changed the count but never matched Chrome's), then
+  confirmed as MARGINS: Chromium's "Default" print margin is a generic ~1cm on every side, which on a label only 0.79 inch (≈20mm) tall consumes almost
+  the whole page, so nearly everything overflows onto extra pages; the real TSC/"Exe Barcode" hardware has ZERO printable margin (confirmed with Windows'
+  own `System.Drawing.Printing.PageSettings.PrintableArea` for that paper - 0 on every side - which matches Chrome's own reported
+  `imageable_area_*_microns` = 0 that Chrome's print-preview model actually uses for a printer destination's "Default" margins; Chrome's generic ~1cm
+  default is ONLY used for Save-as-PDF / non-printer destinations, never for a real printer with known hardware margins).
+  **Fix:** `CAPS_PS`'s PowerShell now also queries each paper's own `PrintableArea` (via a throwaway `PageSettings` built from the printer's
+  `PrinterSettings`, confirmed by hand this does NOT mutate the printer's shared `DefaultPageSettings`) and `printerCaps()` carries those as
+  `marginLeft/Top/Right/Bottom` per paper; `pdfOptions()` now uses them as the "Default" margins for a REAL PRINTER destination when present, falling
+  through to Chromium's generic default only when a paper has no measured margins (Save-as-PDF is unaffected - it never had printer margin data to
+  begin with). **Performance trade-off, measured and fixed:** querying `PrintableArea` for literally every paper on every installed printer made
+  `printerCaps()` take 9.2s instead of ~1.9s (the XPS Document Writer alone has 107 papers, 4.1s of that). Standard papers (Letter, A4, …) are all ≥3
+  inches in both dimensions on every printer measured here and never need this extra query (their margins are the generic default regardless), so the
+  PowerShell only queries `PrintableArea` for papers under 3 inches in EITHER dimension (`$_.Width -lt 300 -or $_.Height -lt 300`, i.e. the TSC's 2 small
+  papers and the Fax driver's label-sized ones) - bringing `printerCaps()` back to ~2.7s. **Trap:** the JS-side parsing originally coerced a missing
+  margin value to `0` via `(Number(v) || 0)`, which is wrong - a paper with NO measured margin data must stay `undefined` so `pdfOptions()`'s
+  `marginLeft !== undefined` check correctly falls through to Chromium's generic default instead of silently forcing a zero margin on an ordinary paper.
+  **Verified:** an isolated reproduction (`printToPDF` on the real TSC/Exe Barcode destination, before vs. after) went from the broken count down to
+  exactly Chrome's own measured "2 sheets" for the same content. Test: the `/label` test page content was extended from 4 short paragraphs to 24 (the
+  original content no longer produced more than 1 page once margins were correctly near-zero, which broke an existing odd/even-pages assertion that
+  needs `total > 1`); full suite re-run 3x clean (90/90) plus the broader regression suites (`verify-browser.js` 68/68, `verify-security.js` 49/0,
+  `verify-leaks.js` 11/11, `verify-tabs.js` 155/155) since this touches shared `printerCaps()`/`pdfOptions()` code.
+- **Sixth round, owner's own screenshots 2026-10-16, three reports at once: "More settings" hover colour didn't match Chrome, the last-picked
+  destination wasn't remembered, and Custom margins did not exist at all.** Each measured against real Chrome (CDP, throwaway profile) before
+  touching code, same standing rule as every round above.
+  - **"More settings" hover (CONFIRMED a mismatch, fixed):** a genuine CDP `Input.dispatchMouseEvent` mouse-move over Chrome's own "More settings"
+    row produced a PIXEL-IDENTICAL screenshot before and after - real Chrome shows NO background highlight there, only the pointer cursor. PBCalc's
+    `#more:hover { background: var(--pp-hover) }` tinted the whole row. Removed; `.link:hover` ("Print using system dialog…") keeps its own tint,
+    never reported as wrong. Test: a static check of `document.styleSheets` for the `#more:hover` rule (no simulated `:hover` - unreliable in this
+    codebase's own documented experience) confirms no background rule remains, and that `.link:hover` is untouched.
+  - **Destination not sticky (CONFIRMED a mismatch, fixed):** measured against real Chrome (a FRESH profile each time, so the default seen is
+    genuinely the Windows default printer, not old sticky data): open the dialog, manually pick a DIFFERENT destination (Save as PDF), Cancel
+    (Esc) with no Print/Save ever clicked, reopen the dialog - Chrome still shows the picked destination. PBCalc only wrote its `sticky` object
+    inside `print:go` (i.e. only after a completed Print/Save), so Cancel after merely picking lost it. Fixed: a new `print:sticky` IPC call
+    (`stickyFrom()`, factored out of the existing `print:go` logic so both stay in sync) fires on every settings change in the dialog
+    (`renderer/printpreview/printpreview.js`'s `changed()` and the "More settings" toggle), not only on a completed job. Test: pick an alternate
+    destination, Cancel, reopen - still selected, even though nothing was ever printed or saved.
+  - **Scale 50% "mismatch" - investigated, NOT reproduced, NOT changed.** The owner's screenshot showed Chrome's Custom-50% preview visibly
+    smaller than PBCalc's for the same content. Measured in three ways before concluding anything: (1) an isolated fixed-size test square through
+    raw `printToPDF` shrank to ~49% width at `scale:0.5` - the Electron option itself works; (2) a spy on the real `webContents.printToPDF` call
+    confirmed PBCalc's own code correctly computes and sends `scale: 0.5` for "Custom 50"; (3) the SAME production code path rendering REALISTIC
+    content (title + address + table, matching the real page's structure) at Save as PDF + A4 + Default vs. Custom 50% shrank the content by
+    roughly half, same as Chrome's documented behaviour - screenshots in the session scratchpad. Re-reading the owner's own screenshot: the two
+    compared windows (real Chrome vs. PBCalc) are very different physical sizes on screen, which makes the "Fit"-zoomed preview pane look bigger
+    in absolute pixels in the wider window even at an identical content-to-page ratio - the likely explanation, not a scale bug. Nothing was
+    changed here; flagged back to the owner to re-check with same-size windows or the actual saved PDF rather than guess at a fix for something
+    that did not reproduce (the owner's own standing rule: no random fixes).
+  - **Custom margins (CONFIRMED missing, built - owner's scoping choice, asked directly rather than guessed):** the `Margins` dropdown only ever
+    had Default / None / Minimum; Chrome's fourth option, Custom, did not exist. Chrome's own Custom margins work by dragging blue guide lines
+    drawn directly on Chrome's OWN internal PDF renderer, which it fully controls pixel-for-pixel. **PBCalc's `#pdf` preview is Chromium's STOCK
+    PDF viewer** (`#toolbar=0&view=Fit`) - PBCalc has no control over where that viewer draws the page or at what zoom, so there is no reliable way
+    to position drag handles exactly on the page edges without first redesigning the preview's zoom handling (a materially bigger change). Asked
+    the owner which to build; chosen: **four plain number inputs (Top / Left / Right / Bottom, inches), live preview, no drag guides** - same data
+    model Chrome uses internally (`customMargins: {marginTop, marginLeft, marginRight, marginBottom}`, confirmed by reading Chrome's own
+    `print-preview-model`'s `settings_.customMargins`), just not Chrome's drag interaction.
+    - `renderer/printpreview/printpreview.html`/`.css`: a `.margin-grid` (2x2) inside the existing Margins row, shown only when
+      `margins === "custom"` (`layout()`'s `show("margins-custom", s.margins === "custom")`, the same pattern as Scale's own conditional input).
+    - **Seeded, not left blank or zero, the FIRST time only:** switching to Custom for the first time in a run fills Top/Left/Right/Bottom with
+      `DEFAULT_MARGIN_IN` (0.39in, ~1cm - Chromium's own documented "Default" margin, the same constant named in the `PDF_MARGINS` comment already
+      in this file) rather than 0, which would look like "no margin" was chosen. `electron/printPreview.js`'s `clean()` only falls back to that
+      seed when the incoming raw value is `undefined` (`numF(s0.marginTop, 0, 5, DEFAULT_MARGIN_IN)`) - an explicit `0` the user typed is kept as
+      0, never re-seeded; switching away and back to Custom, or closing and reopening the dialog (now sticky - see above), keeps exactly what was
+      typed. `pdfOptions()` builds `o.margins = {left, top, right, bottom}` straight from the four stored inches - no unit conversion, since this
+      codebase already established printToPDF's `margins` takes inches (comment on `PDF_MARGINS`), confirmed again here by the page-count test.
+    - **Trap, found by the first version of the test: a `<input type=number min=0 max=5>` does NOT clamp a typed out-of-range value on its own**
+      (Chromium only clamps via the up/down spinner arrows or form `reportValidity()`, never on free typing) - typing `999` left the FIELD showing
+      `999` while the clamped `5` was what actually printed, a visible mismatch between what the user sees and what happens. Fixed by re-writing
+      the field's own `.value` back from the clamped `s.marginTop` etc. right after `read()` in `changed()` (`MARGIN_FIELD` id→field map).
+    - Test: `scripts/verify-print-preview.js` - hidden by default, seeded on first switch, a bigger margin visibly makes MORE pages (the one
+      reliable non-visual signal for "did the real value reach printToPDF", page count via `pdfOptions`' `pageSize`/`margins` math), the
+      out-of-range clamp re-displays correctly, switching away and back WITHIN one open dialog keeps the typed numbers, and closing + reopening
+      the dialog (sticky) still remembers Custom and the exact values. 100 checks total, run 3x clean; `verify-security.js` and `verify-leaks.js`
+      re-run clean too (shared `print:*` IPC and `clean()`/`pdfOptions()` code touched by this round).
+- **Seventh round, owner 2026-10-16: "Chrome preview so fast or our PBCalc take too much time preview... match out chrome style loader showing and
+  speed also smooth."** Two separate things measured and fixed, root cause found before changing anything (same rule as every round above).
+  - **Loader visuals: CONFIRMED a mismatch.** Measured Chrome's own "Loading preview" element directly (`getComputedStyle` on the real span inside
+    `print-preview-preview-area`, via CDP): `background: transparent`, `box-shadow: none`, `border-radius: 0`, `padding: 0` - it is PLAIN 13px
+    text sitting directly on the gray preview background, nothing else. PBCalc's `#loading` shared a rule with `.msg` (the error-message box) that
+    gave it a white rounded card with a drop shadow - a real visual difference, confirmed by screenshot. Fixed by splitting `#loading` out of that
+    shared rule (`renderer/printpreview/printpreview.css`) so it is plain text (13px, `var(--pp-text)`, matching the measured `rgb(31,31,31)`
+    exactly) with no box; `.msg` (the "preview could not be made" error) keeps its card look - not measured against Chrome and not reported wrong,
+    left alone.
+  - **Speed: found via direct timing, not assumption.** Three measurements in main, before guessing: (1) `printToPDF()` itself for a modest 5-page
+    document takes ~95-100ms - the base64 encode and the `countPages()` regex scan are both under 1ms, not the bottleneck; (2) restricting a
+    heavier (42-page) document to `pageRanges:"1"` only shaved the time from 363ms to ~200-290ms, not anywhere near proportional - Electron's
+    `printToPDF` still lays out and paginates the WHOLE document internally regardless of which pages are kept in the output, so a "render just
+    page 1 first, like Chrome's own incremental preview" trick would not give the dramatic win it sounds like, and Electron's public API has no
+    equivalent to Chrome's own internal page-by-page streaming preview (`mojom::PrintPreviewUI`) to build that properly - not attempted here, out
+    of scope for what the public API can do; (3) **the dominant cost, measured directly: `api.init()` (which calls `printerCaps()`, the
+    `System.Drawing.Printing` PowerShell enumeration) took ~2970ms COLD vs. ~20ms WARM (cached 60s, `CAPS_TTL_MS`)** - on a fresh session, the
+    user's FIRST Ctrl+P paid this full ~3s cost in front of them before the dialog could even start its first render, dwarfing every other
+    number measured here.
+  - **Fix: pre-warm `printerCaps()` in the background, same pattern already used in this codebase for exactly this shape of problem** (the
+    bookmark icon cache's `embedSoon(4000)`, right above this line in `electron/windows/mainWindow.js`'s `ready-to-show` handler) - a plain
+    `setTimeout(() => printPreview.printerCaps(), 3000)`, guarded by the same `!startOnCalc` check as its neighbours (never on the calculator
+    screen). Measured before/after: a dialog opened ~4s after the window appears went from ~2971ms to ~23ms for `api.init()`. Does not help the
+    very first few seconds of a session (nothing to warm yet) nor a print more than 60s after the last one (cache expired, same as before) -
+    deliberately left alone rather than adding a repeating timer, which would run PowerShell in the background on a timer even for someone who
+    never prints.
+  - **Trap found while testing the warm-up itself: `printerCaps()` had no in-flight de-duplication.** A call landing WHILE the warm-up's own
+    PowerShell run was still mid-flight started a SECOND, fully independent enumeration instead of waiting for the one already running - found
+    by a test that woke up right at the race window and still measured the full ~3s cost despite the warm-up having already been triggered.
+    Fixed with a `capsInFlight` promise alongside the existing `capsCache`: a call that arrives while one is already running now shares that
+    SAME promise rather than starting its own (`printerCaps()` in `electron/printPreview.js`). This also protects a real (if narrow) case beyond
+    the test: a user who opens the dialog at almost the same moment as the background warm-up.
+  - Test: `scripts/verify-print-preview.js` - a dialog opened well after the warm-up's delay AND its own run time (not just the 3s schedule)
+    measures `printerCaps()` as fast; a second check resets to a cold cache and fires two concurrent `printerCaps()` calls, asserting they
+    resolve to the IDENTICAL array (same promise shared, not two independent lists) in roughly one enumeration's worth of time, not two. 102
+    checks total, run 3x clean; `verify-security.js` (49/0), `verify-leaks.js` (11/11) and `verify-tabs.js` (155/155) re-run clean since this
+    touches `mainWindow.js`'s startup sequence and `printPreview.js`'s shared caching, not just the dialog itself.
 
 ## Screen sharing (`electron/screenShare.js`, `scripts/verify-screenshare.js`, 29 checks)
 Google Meet's "Present now" (any site's `getDisplayMedia()`) said "Can't share your screen" because Electron answers `getDisplayMedia` with

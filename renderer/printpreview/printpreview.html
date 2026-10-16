@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; frame-src blob:; img-src 'self' data:;">
+<title>Print</title>
+<link rel="stylesheet" href="../common/theme.css">
+<link rel="stylesheet" href="printpreview.css">
+</head>
+<body>
+<!-- Chrome's print preview (electron/printPreview.js). Sections in Chrome's order; which ones show follows rules.js (measured from Chrome). -->
+<div id="dlg" role="dialog" aria-label="Print">
+  <div id="preview">
+    <iframe id="pdf" title="Print preview"></iframe>
+    <div id="loading" class="show">Loading preview…</div>
+    <div id="bad" class="msg"></div>
+  </div>
+  <div id="side">
+    <div id="head"><h1>Print</h1><span id="sheets"></span></div>
+    <div id="rows" hidden>
+      <div class="row" id="dest-row"><label for="dest">Destination</label>
+        <div class="dest-wrap">
+          <svg id="ico-printer" class="dest-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor"/></svg>
+          <svg id="ico-pdf" class="dest-ico" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z" fill="currentColor"/></svg>
+          <select id="dest"></select>
+        </div>
+      </div>
+      <div class="row" id="pages-row"><label for="pages">Pages</label>
+        <div class="stack">
+          <select id="pages"></select>
+          <input id="custom" type="text" placeholder="e.g. 1-5, 8, 11-13" spellcheck="false" hidden>
+          <div id="custom-err" class="err" hidden>Invalid page range, use e.g. 1-5, 8, 11-13</div>
+        </div>
+      </div>
+      <div class="row" id="copies-row"><label for="copies">Copies</label>
+        <div class="stack"><input id="copies" type="number" min="1" max="999" value="1">
+          <label class="check" id="collate-row" hidden><input id="collate" type="checkbox" checked> Collate</label></div>
+      </div>
+      <div class="row" id="layout-row"><label for="layout">Layout</label><select id="layout"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></div>
+      <div class="row" id="color-row"><label for="color">Color</label><select id="color"><option value="bw">Black and white</option><option value="color">Color</option></select></div>
+      <button id="more" type="button" aria-expanded="false"><span>More settings</span><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
+      <div id="more-box">
+        <div class="row" id="paper-row"><label for="paper">Paper size</label><select id="paper"></select></div>
+        <div class="row" id="pps-row"><label for="pps">Pages per sheet</label><select id="pps"></select></div>
+        <div class="row" id="margins-row"><label for="margins">Margins</label>
+          <div class="stack">
+            <select id="margins"><option value="default">Default</option><option value="none">None</option><option value="minimum">Minimum</option><option value="custom">Custom</option></select>
+            <div id="margins-custom" class="margin-grid" hidden>
+              <label>Top<input id="margin-top" type="number" min="0" max="5" step="0.01"></label>
+              <label>Left<input id="margin-left" type="number" min="0" max="5" step="0.01"></label>
+              <label>Right<input id="margin-right" type="number" min="0" max="5" step="0.01"></label>
+              <label>Bottom<input id="margin-bottom" type="number" min="0" max="5" step="0.01"></label>
+            </div>
+          </div>
+        </div>
+        <div class="row" id="dpi-row"><label for="dpi">Quality</label><select id="dpi"></select></div>
+        <div class="row" id="scale-row"><label for="scale-mode">Scale</label>
+          <div class="stack"><select id="scale-mode"><option value="default">Default</option><option value="custom">Custom</option></select>
+            <input id="scale" type="number" min="10" max="200" value="100" hidden></div>
+        </div>
+        <div class="row top" id="duplex-row"><label>Two-sided</label>
+          <div class="stack"><label class="check"><input id="duplex" type="checkbox"> Print on both sides</label>
+            <select id="duplex-edge" hidden><option value="long">Flip on long edge</option><option value="short">Flip on short edge</option></select></div>
+        </div>
+        <div class="row top" id="options-row"><label>Options</label>
+          <div class="stack">
+            <label class="check" id="headers-row"><input id="headers" type="checkbox"> Headers and footers</label>
+            <label class="check" id="background-row"><input id="background" type="checkbox"> Background graphics</label>
+          </div>
+        </div>
+      </div>
+      <button id="system" type="button" class="link"><span>Print using system dialog… (Ctrl+Shift+P)</span>
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></button>
+    </div>
+    <div id="foot"><div id="status"></div><button id="go" type="button" class="primary" disabled>Print</button><button id="cancel" type="button">Cancel</button></div>
+  </div>
+</div>
+<script src="rules.js"></script>
+<script src="printpreview.js"></script>
+</body>
+</html>

@@ -116,10 +116,15 @@ function createMainWindow() {
     if (!startOnCalc) { try { require("../reportDialog").askAfterUncleanEnd(); } catch (_) {} }
     // bookmark icons still kept as web addresses are downloaded once and stored (bookmarks/iconCache.js), after the start has settled
     if (!startOnCalc) { try { require("../bookmarks/iconCache").embedSoon(4000); } catch (_) {} }
+    // Print preview's printer capabilities (owner 2026-10-16: "Chrome preview so fast or our PBCalc take too much time preview") - measured:
+    // the FIRST Ctrl+P in a session paid printerCaps()'s full ~2-3s PowerShell enumeration before the dialog could even start its first
+    // render (cached 60s after that, ~20ms). Warming it here, same pattern as the bookmark icon cache above, means a user's first real
+    // Ctrl+P almost always lands on an already-warm cache instead of paying that cost in front of them.
+    if (!startOnCalc) { setTimeout(() => { try { require("../printPreview").printerCaps(); } catch (_) {} }, 3000); }
   });
 
   // The hover card is hidden a tick later, not inside the resize emit (see popup.reposition()).
-  state.mainWindow.on("resize", () => { resizeActiveView(); popup.reposition(); setImmediate(() => { require("../hovercard").hide(); require("../omnibox").hide(); }); });
+  state.mainWindow.on("resize", () => { resizeActiveView(); popup.reposition(); require("../printPreview").reposition(); setImmediate(() => { require("../hovercard").hide(); require("../omnibox").hide(); }); });
   state.mainWindow.on("blur", () => { if (popup.isOpen() && !popup.isOpen("find")) popup.close(); });
   state.mainWindow.on("resized", resizeActiveView);
   state.mainWindow.on("maximize", resizeActiveView);

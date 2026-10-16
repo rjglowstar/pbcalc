@@ -52,7 +52,8 @@ function attachContextMenu(wc, { openInNewTab, isShell = false } = {}) {
       t.push({ label: "Forward", enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() });
       t.push({ label: "Reload", click: () => wc.reload() });
       sep();
-      t.push({ label: "Print…", click: () => wc.print({ printBackground: true }) });
+      // a tab's page gets Chrome's print preview (electron/printPreview.js), like Ctrl+P
+      t.push({ label: "Print…", click: () => { if (state.tabs.some((x) => x.view && x.view.webContents === wc)) require("./printPreview").open(wc); else wc.print({ printBackground: true }); } });
     }
 
     if (!isShell && !locked && isInspectable(wc)) {

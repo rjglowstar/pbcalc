@@ -28,6 +28,7 @@ function notifyBookmarks() {
 }
 
 function registerIpcHandlers() {
+  require("../printPreview").register();   // print preview dialog: print:* channels, accepted from that dialog only
   // The tab commands below drive the whole browser (close, switch, open, list every tab's address). They come from the toolbar page
   // only: every tab page ALSO runs a preload with ipcRenderer, and none of them may be steered by what a page does.
   const shellSender = (e) => !!state.mainWindow && !state.mainWindow.isDestroyed() && e.sender === state.mainWindow.webContents;

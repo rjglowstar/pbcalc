@@ -262,6 +262,21 @@ body:not(.no-hover) .tab:has(+ .tab:hover) .tab-sep { opacity: 0; }
 }
 .tab:not(.active) .tab-icon { width: 16px; }
 .tab-icon img, .tab-icon .icon { flex: 0 0 16px; width: 16px; height: 16px; }
+/* Chrome's dot on a background tab's pending dialog favicon - MEASURED pixel colour from a real Chrome window (BGR sample of a pending print
+   preview / alert()): light #0B57D0, dark #A8C7FA - this is exactly --omnibox-ring already. Sits at the favicon's bottom-right corner, same
+   8px/6px offsets as the icon itself; outside .tab-icon's overflow:hidden box so a narrow tab does not clip it off. Size/offset are an
+   approximation of Chrome's ~6px dot, not pixel-measured like the rest of the tab strip. */
+.tab-pending-dot {
+  position: absolute;
+  left: 18px;
+  top: 16px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--omnibox-ring);
+  display: none;
+}
+.tab-pending-dot.show { display: block; }
 .tab-icon .icon { color: var(--tab-icon); }
 .tab-icon .spinner {
   flex: 0 0 auto;

@@ -111,7 +111,7 @@ function handleInput(event, input) {
   if (k === "r") return shift ? claim("reload-hard", () => tabManager.reload("hard")) : claim("reload", tabManager.reload);
   if (k === "f") return claim("find", tabManager.openFind);
   if (k === "d") return claim("bookmark", tabManager.toggleBookmarkActive);
-  if (k === "p") return claim("print", tabManager.printActive);
+  if (k === "p" && !shift) return claim("print", tabManager.printActive);   // Ctrl+SHIFT+P is the system dialog, handled inside the print preview
   if (k === "i" && shift) return claim("devtools", tabManager.openDevTools);
   if (k === "a" && shift) return claim("tab-search", () => popup.open("tabsearch", null));
   if (k === "b" && shift) return claim("bookmarks-bar", tabManager.toggleBookmarksBar);
