@@ -175,7 +175,7 @@ const TSC = "TSC TE244", XPS = "Microsoft XPS Document Writer", ONENOTE = "OneNo
   } else console.log("  .. (skipped: no " + XPS + ")");
   pp.close(); await sleep(200);
   if (have(TSC)) {
-    await openTab(base + "label");
+    const labelTab = await openTab(base + "label");
     u = await openDialog(); u = await pick(TSC);
     check("TSC label printer: Destination, Pages, Copies, Layout, Paper size, Pages per sheet, Margins, Scale, Options - no Color (Chrome)", rowNames(u) === "Destination, Pages, Copies, Layout, Paper size, Pages per sheet, Margins, Scale, Options", rowNames(u));
     check("...its own paper list USER / 2 x 4 / 4 x 4 / Exe Barcode, 'Exe Barcode' chosen (Chrome; '4 x 6' has USER's size, shown once)", u.papers.join("|") === "USER|2 x 4|4 x 4|Exe Barcode" && u.paper === "Exe Barcode", u.papers.join("|") + " / " + u.paper);
@@ -194,8 +194,40 @@ const TSC = "TSC TE244", XPS = "Microsoft XPS Document Writer", ONENOTE = "OneNo
     check("...on its own paper: Exe Barcode = 39878 x 20066 microns", o.pageSize && o.pageSize.width === 39878 && o.pageSize.height === 20066, JSON.stringify(o.pageSize));
     const odd = Array.isArray(o.pageRanges) && o.pageRanges.length >= 1 && o.pageRanges.every((r, i) => r.from === 2 * i && r.to === 2 * i);
     check("...odd pages, 2 copies, 2 per sheet, landscape, background; colour untouched (the TSC has no Color choice)", odd && o.copies === 2 && o.pagesPerSheet === 2 && o.landscape === true && o.printBackground === true && o.color === true, JSON.stringify(o).slice(0, 300));
-    // Chrome's rule measures the height AS LAID OUT: in landscape the label is 1.57 in tall, so headers / footers are allowed (they are ticked by default)
-    check("...landscape: the label is 1.57 in tall, so the (ticked) header / footer is printed - Chrome's rule uses the laid-out height", o.header === "Label" && !!o.footer, JSON.stringify([o.header, o.footer]));
+    // Chrome's rule measures the height AS LAID OUT: in landscape the label is 1.57 in tall, so the header is allowed (ticked by default).
+    // No footer at all on the real-printer path (owner's request 2026-10-20: never print the page's address - see pdfOptions' comment).
+    check("...landscape: the label is 1.57 in tall, so the (ticked) header is printed - Chrome's rule uses the laid-out height; no address footer", o.header === "Label" && !o.footer, JSON.stringify([o.header, o.footer]));
+
+    console.log("-- BUG found 2026-10-20 (owner: a real print gave no physical output, no error anywhere) - Custom margins on a REAL PRINT --");
+    u = await openDialog(); u = await pick(TSC);
+    await set("margins", "custom"); await sleep(300);
+    await type("margin-top", "0.5"); await type("margin-bottom", "0.25"); await type("margin-left", "0.1"); await type("margin-right", "0.2"); await sleep(700);
+    await click("go");
+    await waitFor(() => printed.length === 2 && !dlgView());
+    const om = printed[1] || {};
+    // Electron's print() wants CUSTOM margins in MICRONS alongside marginType:"custom" (unlike printToPDF's margins, which are inches) -
+    // the bug sent `{ marginType: undefined }` (an EMPTY object once serialized: no type, no values at all), silently losing the user's
+    // own choice to whatever Chromium falls back to. 1 inch = 25400 microns: 0.5in -> 12700, 0.25in -> 6350, 0.1in -> 2540, 0.2in -> 5080.
+    check("Custom margins reach the real printer as marginType:custom + the actual values in microns (not an empty object)",
+      om.margins && om.margins.marginType === "custom" && om.margins.top === 12700 && om.margins.bottom === 6350 && om.margins.left === 2540 && om.margins.right === 5080,
+      JSON.stringify(om.margins));
+
+    console.log("-- BUG found 2026-10-20 - a FAILED real print used to go nowhere (dialog already destroyed before Windows answers) --");
+    u = await openDialog(); u = await pick(TSC);
+    let errorBoxCalls = [];
+    const origErrorBox = dialog.showErrorBox;
+    dialog.showErrorBox = (title, content) => errorBoxCalls.push({ title, content });
+    const origPrint = labelTab.view.webContents.print;
+    labelTab.view.webContents.print = (opts, cb) => { printed.push(opts); if (cb) setImmediate(() => cb(false, "test-forced-failure: printer not found")); };
+    await click("go");
+    await waitFor(() => !dlgView());
+    await sleep(400);
+    check("a failed real print now shows a native error box naming the printer and the reason (not silence)",
+      errorBoxCalls.length === 1 && /TSC TE244/.test(errorBoxCalls[0].content) && /test-forced-failure/.test(errorBoxCalls[0].content),
+      JSON.stringify(errorBoxCalls));
+    dialog.showErrorBox = origErrorBox;
+    labelTab.view.webContents.print = origPrint;
+
     tm.switchTab(tab.id); await sleep(300);
   } else console.log("  .. (skipped: no " + TSC + ")");
 
@@ -232,7 +264,9 @@ const TSC = "TSC TE244", XPS = "Microsoft XPS Document Writer", ONENOTE = "OneNo
     await click("go");
     await waitFor(() => !dlgView() && printed.length > n0);
     const o = printed[printed.length - 1] || {};
-    check("XPS: black and white, A4 (210058 x 296926 microns from Windows), headers + footers on by default (title + address, like Chrome), 1 copy", o.deviceName === XPS && o.color === false && o.pageSize && o.pageSize.width === 210058 && o.header === "Report Q3" && /127\.0\.0\.1/.test(o.footer || "") && o.copies === 1, JSON.stringify(o));
+    // Owner's request 2026-10-20: the page's own address is never printed, even with Headers and footers on (privacy - a printed page can
+    // be handed to someone else) - title stays, footer carries no address at all (opts.footer is not even set for the real-printer path).
+    check("XPS: black and white, A4 (210058 x 296926 microns from Windows), headers + footers on by default (title only, NO address), 1 copy", o.deviceName === XPS && o.color === false && o.pageSize && o.pageSize.width === 210058 && o.header === "Report Q3" && !o.footer && o.copies === 1, JSON.stringify(o));
     u = await openDialog(); await expand();
     const kept = await dj(`[document.getElementById("color").value, document.getElementById("paper").value, document.getElementById("pages").value].join()`);
     check("the next Print keeps the printer, colour and paper; pages, copies and pages per sheet start fresh (Chrome's sticky settings)", (await ui()).dest === XPS && kept === "bw,A4,all" && (await dj(`document.getElementById("pps").value`)) === "1", kept);

@@ -1147,7 +1147,7 @@ Not added on purpose: `.mkv/.avi` (Chromium cannot play them), audio files, a Wi
 entry for video (`kindOf` stays null). Also fixed here: `permissions.check` ignored `details.mediaType` (singular), so after Allow the page got no
 device names (Meet: "Mic not found"); test in `verify-capture-indicator.js`.
 
-## Print preview like Chrome's (`electron/printPreview.js`, `renderer/printpreview/` incl. `rules.js`, `preloads/printpreview-preload.js` + `printholder-preload.js`; test `scripts/verify-print-preview.js`, 102 checks, run 3x clean)
+## Print preview like Chrome's (`electron/printPreview.js`, `renderer/printpreview/` incl. `rules.js`, `preloads/printpreview-preload.js` + `printholder-preload.js`; test `scripts/verify-print-preview.js`, 104 checks)
 Owner 2026-10-15, from their Chrome screenshots. Electron has NO print preview: `webContents.print()` only opens the bare Windows dialog (what PBCalc did before). Ctrl+P, ⋮ > Print
 and the page's right-click > Print now open our own dialog, drawn like the screen-share picker: a BrowserView over the PAGE AREA (tab-modal: tab strip / toolbar stay usable; window
 resize repositions it), dimmed backdrop, preview left, settings right in Chrome's order (Destination with a printer / PDF icon,
@@ -1385,6 +1385,47 @@ Odd / Even / Custom become page ranges counted on the job AS PRINTED. **Save as 
     resolve to the IDENTICAL array (same promise shared, not two independent lists) in roughly one enumeration's worth of time, not two. 102
     checks total, run 3x clean; `verify-security.js` (49/0), `verify-leaks.js` (11/11) and `verify-tabs.js` (155/155) re-run clean since this
     touches `mainWindow.js`'s startup sequence and `printPreview.js`'s shared caching, not just the dialog itself.
+- **No address is ever printed, in any mode, even with Headers and footers on (owner's request 2026-10-20, from real screenshots: a
+  koffionline.in/shop print and an mfg.pb.diamonds/jangad/jangads print both showed the page's own address at the bottom - a privacy
+  concern, since a printed page can be handed to someone else).** Before this, only the HOLDER case (frame-captured content, see above)
+  had a custom `footerTemplate` to avoid showing the holder's own `data:` URL - an ORDINARY tab's print still fell through to Chromium's
+  BUILT-IN default footer, which carries that tab's REAL address. Now every print (preview/PDF/Save-as-PDF path, `pdfOptions()`) always
+  supplies a custom `footerTemplateNoAddress()` whenever Headers and footers is on - same measured 8px grey strip, page count only, no
+  address, for a holder OR an ordinary tab alike - and the REAL-PRINTER path (`print:go`, Electron's plain `print()` header/footer
+  strings, no page-count support there) simply never sets `opts.footer` at all any more. The header keeps the page's TITLE only (never
+  address-bearing, not a privacy concern). `pdfOptions()`'s now-unused `tabId`/`isHolder` parameters and the now-dead `realUrlOf()`/
+  `escHtml()` helpers were removed (checked every caller first). This does NOT change Restricted Mode's own, separate "Headers and
+  footers" suppression (the whole option stays hidden/refused there, unrelated reasoning, left untouched - not what was asked). Test:
+  `scripts/verify-print-preview.js`'s two header/footer checks updated to assert NO address (`!o.footer`) instead of asserting one was
+  present; 102/102 re-run clean.
+- **Two real bugs on the REAL-PRINTER path (owner 2026-10-20: "we make print but physical print not output receive"), found by code
+  review + a controlled repro since no physical printer was connected here at the time - BOTH confirmed with hard evidence before being
+  called bugs, not guessed, and NEITHER was reachable by the existing test suite because its `print()` mock always reported success.**
+  1. **Custom margins silently became an EMPTY object on a real print.** `PRINT_MARGINS` (the lookup used only by the real-printer branch
+     of `print:go`, separate from `pdfOptions()`'s own `PDF_MARGINS`) never had a `custom` key, so selecting Margins > Custom and pressing
+     Print sent `{ marginType: undefined }` - which JSON-serializes to `{}`, no type and no values at all - and Chromium silently fell back
+     to its own default margin instead of what the user actually typed. Confirmed by capturing the real `opts` object sent to a mocked
+     `target.print()`: `"margins": {}`. **Fixed:** Electron's `print()` needs CUSTOM margins in MICRONS alongside `marginType:"custom"`
+     (unlike `printToPDF`'s `margins`, which are inches) - `s.marginTop` etc. are stored in inches, so now converted (1in = 25400 microns)
+     only for the real-printer path; the non-custom branch also gained a `|| "default"` safety net so an unmapped key can never send
+     `undefined` again.
+  2. **A FAILED real print went nowhere - the actual match for "no output, no error."** `print:go`'s real-printer branch called
+     `destroyEntry(tabId)` (closing the dialog, Chrome does the same the moment Print is pressed) BEFORE `target.print()`'s async callback
+     could ever fire - confirmed by forcing an `ok:false` callback and finding the dialog's own BrowserView, and the renderer page that was
+     `await`ing the IPC call, ALREADY DESTROYED by the time it arrived. So a real failure (printer offline, wrong driver, out of paper, a
+     deviceName Windows doesn't recognise...) had no page left to tell; even if it had, the renderer's own result handler only ever checked
+     a field (`r.error`) this path never set (it set `{ok, reason}`), a second, independent reason nothing would have shown either way.
+     **Fixed:** the IPC call now resolves `{ok:true}` the instant the job is handed to Windows (same as Chrome: it never blocks the UI
+     waiting for a physical printer to answer) and `target.print()`'s callback, handled separately, shows a native `dialog.showErrorBox`
+     (works regardless of which page is on screen by then, naming the printer and Windows' own reason) only if `ok` comes back false.
+  - **`dialog.showErrorBox` is a genuinely BLOCKING native Windows dialog** (confirmed: a test that didn't stub it hung completely, the
+    whole process frozen until the box was dismissed by hand) - correct, expected behaviour for a real user seeing a real error, but any
+    test exercising this path MUST stub `dialog.showErrorBox` first or the test run itself will hang.
+  - Test: the "Custom margins on a REAL PRINT" / "a FAILED real print" blocks of `scripts/verify-print-preview.js`, both inside the
+    existing TSC block (reusing its already-open dialog), 104/104 total; `verify-leaks.js` (11/11) re-run clean since `print:go`'s flow
+    changed. **Not verified end to end against a real physical printer** - this machine has none connected; the owner is building the
+    installer to test on Chetan's system, which does. If "no physical output" still reproduces there, the native error box should now
+    show Windows' own stated reason - that is the next real diagnostic signal to get, not this project's guess.
 
 ## Screen sharing (`electron/screenShare.js`, `scripts/verify-screenshare.js`, 29 checks)
 Google Meet's "Present now" (any site's `getDisplayMedia()`) said "Can't share your screen" because Electron answers `getDisplayMedia` with

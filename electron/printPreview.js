@@ -404,25 +404,21 @@ function clean(entry, raw, total) {
 }
 
 // Chromium's own BUILT-IN header/footer template pulls title/url straight from the loaded document (measured: a small 8px grey sans-serif
-// strip, date + title at the top, address + page numbers at the bottom). For frame-captured content (openForFrame) the "document" is the
-// throwaway holder loaded from a data: URL, so its OWN title/url are NOT what a user should see there - the title is still right (the
-// iframe's own <title>, exactly what the captured document is), but the url would be the holder's giant base64 data: address (measured,
-// real repro: exactly that string printed across the footer, unreadable, pushing a short challan onto 2 pages). Fixed by supplying a
-// CUSTOM footerTemplate ONLY (headerTemplate is left undefined, so Chromium's own default header - date + title - is kept unchanged; tested
-// that supplying one without the other works exactly as Chromium's own UI would) with the REAL tab's address as plain text, replicating the
-// measured default style instead of Chromium's dynamic (wrong, for a holder) url-class binding.
+// strip, date + title at the top, address + page numbers at the bottom). Two reasons NEVER to use that default footer here: (1) for
+// frame-captured content (openForFrame) the "document" is the throwaway holder loaded from a data: URL, so its own address would be the
+// holder's giant base64 data: string (measured, real repro: exactly that string printed across the footer, unreadable, pushing a short
+// challan onto 2 pages); (2) owner's request 2026-10-20: the printed page's address is never wanted on paper at all, even for an ordinary
+// tab's own real address (real repro: koffionline.in/shop and mfg.pb.diamonds/jangad/jangads both showing up at the bottom of a print) -
+// a privacy concern, since printed pages can be handed to someone else. So a CUSTOM footerTemplate with NO address is used for every
+// print, holder or not (headerTemplate is left undefined, so Chromium's own default header - date + title, no address - is kept
+// unchanged; tested that supplying one without the other works exactly as Chromium's own UI would), keeping only the page count.
 const FOOTER_STYLE = "body { font-size: 8px; font-family: sans-serif; color: #333; margin: 0 24px; -webkit-text-size-adjust: none; width: 100%; } " +
-  ".flex { display: flex; justify-content: space-between; width: 100%; } .text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }";
-const escHtml = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-function footerTemplateFor(url) {
-  return `<style>${FOOTER_STYLE}</style><div class="flex"><span class="text">${escHtml(url)}</span><span class="text"><span class="pageNumber"></span>/<span class="totalPages"></span></span></div>`;
-}
-// the REAL tab's current address - never the holder's own (data: URL) location, which is only an implementation detail
-function realUrlOf(tabId) {
-  try { const t = state.tabs.find((x) => x.id === tabId); return (t && t.view && !t.view.webContents.isDestroyed()) ? t.view.webContents.getURL() : ""; } catch (_) { return ""; }
+  ".flex { display: flex; justify-content: flex-end; width: 100%; } .text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }";
+function footerTemplateNoAddress() {
+  return `<style>${FOOTER_STYLE}</style><div class="flex"><span class="text"><span class="pageNumber"></span>/<span class="totalPages"></span></span></div>`;
 }
 
-function pdfOptions(s, dest, ranges, tabId, isHolder) {
+function pdfOptions(s, dest, ranges) {
   const paper = rules.paperOf(dest, s);
   const o = { landscape: s.landscape, printBackground: s.background, scale: s.scaleMode === "custom" ? s.scale / 100 : 1, displayHeaderFooter: s.headers };
   if (paper) o.pageSize = { width: paper.w / 25400, height: paper.h / 25400 };   // inches
@@ -437,7 +433,7 @@ function pdfOptions(s, dest, ranges, tabId, isHolder) {
     o.margins = { left: s.marginLeft, top: s.marginTop, right: s.marginRight, bottom: s.marginBottom };
   } else if (PDF_MARGINS[s.margins]) o.margins = PDF_MARGINS[s.margins];
   if (ranges) o.pageRanges = ranges.map(([a, b]) => (a === b ? String(a) : a + "-" + b)).join(",");
-  if (s.headers && isHolder) o.footerTemplate = footerTemplateFor(realUrlOf(tabId));
+  if (s.headers) o.footerTemplate = footerTemplateNoAddress();
   return o;
 }
 
@@ -447,13 +443,13 @@ const countPages = (buf) => (buf.toString("latin1").match(/\/Type\s*\/Page(?![a-
 async function makePdf(tabId, entry, raw) {
   if (!entry.src || entry.src.isDestroyed()) throw new Error("gone");
   let { eff: s, dest } = clean(entry, raw, 2);
-  const all = await entry.src.printToPDF(pdfOptions(s, dest, null, tabId, !!entry.holder));
+  const all = await entry.src.printToPDF(pdfOptions(s, dest, null));
   const total = Math.max(1, countPages(all));
   ({ eff: s, dest } = clean(entry, raw, total));
   if (s.pages === "all") return { pdf: all, total, pages: total, s, dest };
   const ranges = chosenRanges(s, total);
   if (!ranges) return { invalid: true, total };
-  const part = await entry.src.printToPDF(pdfOptions(s, dest, ranges, tabId, !!entry.holder));
+  const part = await entry.src.printToPDF(pdfOptions(s, dest, ranges));
   return { pdf: part, total, pages: ranges.reduce((n, [a, b]) => n + b - a + 1, 0), s, dest };
 }
 
@@ -515,7 +511,7 @@ function register() {
     if (!target || target.isDestroyed()) { destroyEntry(tabId); return { ok: false }; }
     // count the pages of the job AS PRINTED (landscape / another paper changes it) so Odd / Even / Custom become real page ranges
     let total = 1;
-    try { const c0 = clean(entry, raw, 2); total = Math.max(1, countPages(await target.printToPDF(pdfOptions(c0.eff, c0.dest, null, tabId, !!entry.holder)))); } catch (_) {}
+    try { const c0 = clean(entry, raw, 2); total = Math.max(1, countPages(await target.printToPDF(pdfOptions(c0.eff, c0.dest, null)))); } catch (_) {}
     const { s: chosen, eff: s, dest } = clean(entry, raw, total);
     sticky = stickyFrom(chosen, moreOpen);
     const ranges = chosenRanges(s, total);
@@ -534,19 +530,51 @@ function register() {
     }
 
     const paper = rules.paperOf(dest, s);
+    // BUG found 2026-10-20 (owner: a real print produced no physical output, no error anywhere):
+    // PRINT_MARGINS has no "custom" key, so a Custom-margins real print sent `{ marginType: undefined }`
+    // - an EMPTY margins object once JSON-serialized, with NO margin type and NO values at all, so
+    // Chromium silently fell back to its own default instead of the margins the user actually chose.
+    // Electron's print() needs the four values IN MICRONS alongside marginType:"custom" (unlike
+    // printToPDF's margins, which pdfOptions() above already sends in inches); s.marginTop etc. are
+    // stored in inches (see the Custom margins note in CLAUDE.md), so convert here (1 inch = 25400 microns).
+    const margins = s.margins === "custom"
+      ? { marginType: "custom", top: Math.round(s.marginTop * 25400), bottom: Math.round(s.marginBottom * 25400), left: Math.round(s.marginLeft * 25400), right: Math.round(s.marginRight * 25400) }
+      : { marginType: PRINT_MARGINS[s.margins] || "default" };   // the `|| "default"` is a safety net against ever sending `undefined` again
     const opts = {
       silent: true, deviceName: s.dest, printBackground: s.background, color: s.color, landscape: s.landscape,
-      margins: { marginType: PRINT_MARGINS[s.margins] }, pagesPerSheet: s.pps, copies: s.copies, collate: s.collate,
+      margins, pagesPerSheet: s.pps, copies: s.copies, collate: s.collate,
     };
     if (paper) opts.pageSize = { width: Math.max(353, paper.w), height: Math.max(353, paper.h) };   // the printer's own paper, in microns
     if (s.scaleMode === "custom") opts.scaleFactor = s.scale;
     if (s.dpi) { const [h, v] = s.dpi.split("x").map(Number); if (h > 0 && v > 0) opts.dpi = { horizontal: h, vertical: v }; }
     if (s.duplex) opts.duplexMode = s.duplexEdge === "short" ? "shortEdge" : "longEdge";
     if (ranges) opts.pageRanges = ranges.map(([a, b]) => ({ from: a - 1, to: b - 1 }));
-    // the REAL tab's own address, never the holder's (a data: URL for frame-captured content - see the big comment above pdfOptions)
-    if (s.headers) { opts.header = title; opts.footer = realUrlOf(tabId); }
+    // Title only, never the page's address - owner's request 2026-10-20: a printed page's own
+    // address is a privacy concern (it can be handed to someone else) and is never wanted on paper,
+    // whether that address is real or (for frame-captured content) the holder's own data: URL - see
+    // the big comment above pdfOptions, which the preview/Save-as-PDF path already follows.
+    if (s.headers) { opts.header = title; }
+    const destName = s.dest;
     destroyEntry(tabId);   // Chrome closes the preview as soon as the job is handed over
-    return new Promise((resolve) => target.print(opts, (ok, reason) => resolve({ ok, reason })));
+    // BUG found 2026-10-20, the one that actually matches "physical print, no output, no error": the
+    // dialog (and the whole renderer page awaiting this IPC call) is ALREADY destroyed by the line
+    // above, BEFORE target.print()'s callback can ever fire - confirmed by forcing an ok:false callback
+    // here and finding the dialog already gone by then. So a real failure (printer offline, wrong
+    // driver, out of paper...) had NOWHERE to go: the old code resolved {ok, reason} back to a renderer
+    // page that no longer existed to read it, and even the renderer's own success-path code only ever
+    // checked a DIFFERENT field (`r.error`) that this path never set, so a visible dialog would not
+    // have helped either. A native error box works regardless of which page is on screen by the time
+    // the OS actually answers. The IPC call itself no longer waits for that answer (same as Chrome,
+    // which does not block its UI on the physical job either) - it resolves the moment the job is
+    // handed to Windows, like print:go's other paths already do as soon as their own work is done.
+    target.print(opts, (ok, reason) => {
+      if (!ok) {
+        try {
+          dialog.showErrorBox("Couldn't print", `Windows could not print this page${reason ? ":\n\n" + reason : "."}\n\nCheck that "${destName}" is connected, turned on and ready, then try printing again.`);
+        } catch (_) {}
+      }
+    });
+    return { ok: true };
   });
 
   ipcMain.handle("print:system", (e) => { const f = entryBySender(e); if (!f) return false; systemDialog(f.tabId); return true; });
