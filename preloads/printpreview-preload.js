@@ -12,4 +12,8 @@ contextBridge.exposeInMainWorld("printAPI", {
   // the real per-printer caps, pushed in once the ~2-3s PowerShell enumeration finishes - init() itself
   // never waits for this (see the BUG comment on print:init in electron/printPreview.js)
   onCapsUpdated: (cb) => ipcRenderer.on("print:caps-updated", (_e, data) => cb(data)),
+  // the current page while scrolling a multi-page preview, polled from the viewer's own internal state
+  // in main (see the big comment above startBadgePoll in electron/printPreview.js) - drives the dialog's
+  // own Chrome-style page-number badge, since Chromium's own never appears here (toolbar=0)
+  onPageScroll: (cb) => ipcRenderer.on("print:page-scroll", (_e, data) => cb(data)),
 });

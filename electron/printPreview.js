@@ -118,6 +118,7 @@ function bounds() {
 function detachCurrent() {
   if (attachedTabId == null) return;
   const entry = previews.get(attachedTabId);
+  stopBadgePoll();
   attachedTabId = null;
   if (!entry) return;
   try { if (state.mainWindow && !state.mainWindow.isDestroyed()) require("./viewHost").detach(state.mainWindow, entry.view); } catch (_) {}
@@ -132,6 +133,7 @@ function attachEntry(tabId) {
   entry.view.setBounds(bounds());
   require("./viewHost").attach(state.mainWindow, entry.view);
   try { entry.view.webContents.focus(); } catch (_) {}
+  startBadgePoll(tabId);
 }
 
 // Fully end a tab's preview (tab closed, Cancel/Esc/Print done/system dialog, or the page navigated/was destroyed). Detaches first if it was
@@ -148,7 +150,7 @@ function closeDialogKeepHolder(tabId) {
   if (!entry) return null;
   previews.delete(tabId);
   const wasAttached = attachedTabId === tabId;
-  if (wasAttached) { attachedTabId = null; try { if (state.mainWindow && !state.mainWindow.isDestroyed()) require("./viewHost").detach(state.mainWindow, entry.view); } catch (_) {} }
+  if (wasAttached) { stopBadgePoll(); attachedTabId = null; try { if (state.mainWindow && !state.mainWindow.isDestroyed()) require("./viewHost").detach(state.mainWindow, entry.view); } catch (_) {} }
   try { entry.unhook(); } catch (_) {}
   try { if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close(); } catch (_) {}
   if (wasAttached) { try { const a = tm().getActiveTab(); if (a && a.view && a.view.webContents && !a.view.webContents.isDestroyed()) a.view.webContents.focus(); } catch (_) {} }
@@ -169,6 +171,89 @@ function destroyEntry(tabId) {
 function close() { if (attachedTabId != null) destroyEntry(attachedTabId); }
 
 const isPdfTab = (wc) => { try { return wc.mainFrame.framesInSubtree.some((f) => String(f.url).startsWith(PDF_VIEWER)); } catch (_) { return false; } };
+function findPdfSubframe(wc) {
+  try { for (const f of wc.mainFrame.framesInSubtree) { if (String(f.url).indexOf(PDF_VIEWER) === 0) return f; } } catch (_) {}
+  return null;
+}
+
+// Chrome's scroll-time "page N" badge (owner 2026-10-21, measured from a real Chrome print preview: a
+// dark rgba(0,0,0,.5) rounded box with the current page number, appears while scrolling a multi-page
+// preview and fades ~2-2.5s after it stops). Electron's embedded PDF viewer (the SAME chrome-extension
+// pdf-viewer Chrome itself uses) never shows it here even with REAL OS mouse-wheel input - measured
+// directly, not guessed: toolbar=0 means the toolbar's own page-selector UI never renders, and whatever
+// fires its toast never fires either. But the viewer's internal `viewer-page-selector` custom element's
+// `pageNo` property DOES keep tracking the real page correctly as the user scrolls (confirmed with a live
+// poll against a REAL mouse scroll, not a synthetic one - a first attempt using Electron's synthetic
+// sendInputEvent wheel left it frozen at 1, which turned out to be a synthetic-input limitation, not
+// proof the property itself was stale: this codebase already has other documented cases where synthetic
+// input does not reach a privileged/cross-process frame the way real OS input does). So: poll that one
+// property from the main process (never trust the toolbar DOM, which does not even exist with
+// toolbar=0) and push the page number to the dialog whenever it changes; the dialog draws its own
+// badge from that - never Chromium's own (which, again, never appears here at all).
+// BUG found 2026-10-21 (owner: the badge's own vertical position did not move with the native
+// scrollbar thumb - two screenshots on the SAME page number showed the real thumb in two clearly
+// different spots while the badge stayed put): using page/total as a stand-in for scroll position
+// only moves the badge when the PAGE NUMBER changes, so scrolling further within the same page (very
+// possible - pages render at different heights) left the badge behind the thumb it is supposed to
+// sit next to. Fixed by reading the SAME continuous pixel position Chromium's own scrollbar is drawn
+// from - `pdf-viewer`'s `viewport_.position.y` (the live scrollTop, in content pixels) plus
+// `viewport_.documentDimensions.height` and `viewport_.size.height` (enumerated directly from the
+// live element's own properties, not guessed) - and sending a continuous fraction instead of relying
+// on the page number for anything but the TEXT shown.
+let badgePollTimer = null, badgePollTabId = null, badgePollLastFrac = null, badgePollPrimed = false;
+function stopBadgePoll() { clearInterval(badgePollTimer); badgePollTimer = null; badgePollTabId = null; badgePollLastFrac = null; badgePollPrimed = false; }
+// documentDimensions is a METHOD on viewport_ (getDocumentDimensions()), not a plain property -
+// unlike position/size, which ARE accessor properties. A first version read it as a property
+// (always undefined), so reading .height off it threw on every single poll tick and frac was always
+// null - the badge never showed at all (found 2026-10-21 from the owner's own report: "scroll in
+// print preview but not showing page count").
+const READ_PAGE_INFO = `(() => {
+  function dq(r, sel) { if (r.querySelector) { const d = r.querySelector(sel); if (d) return d; }
+    const a = r.querySelectorAll ? r.querySelectorAll('*') : []; for (const e of a) if (e.shadowRoot) { const x = dq(e.shadowRoot, sel); if (x) return x; } return null; }
+  const selEl = dq(document, 'viewer-page-selector');
+  const page = selEl ? selEl.pageNo : null;
+  const pv = dq(document, 'pdf-viewer');
+  const vp = pv && pv.viewport_;
+  let frac = null;
+  try {
+    const pos = vp.position, doc = vp.getDocumentDimensions(), size = vp.size;
+    const range = doc.height - size.height;
+    frac = range > 0 ? Math.max(0, Math.min(1, pos.y / range)) : 0;
+  } catch (e) { frac = null; }
+  return { page, frac };
+})()`;
+function startBadgePoll(tabId) {
+  stopBadgePoll();
+  badgePollTabId = tabId;
+  // Chrome's badge only appears once the user actually SCROLLS, never on open even though the real
+  // position is already known from the first instant - so the first reading primes badgePollLastFrac
+  // silently (no send) and only a CHANGE after that counts as a scroll.
+  badgePollTimer = setInterval(() => {
+    const entry = previews.get(tabId);
+    if (attachedTabId !== tabId || !entry || entry.view.webContents.isDestroyed()) { stopBadgePoll(); return; }
+    const frame = findPdfSubframe(entry.view.webContents);
+    if (!frame) return;
+    frame.executeJavaScript(READ_PAGE_INFO).then(({ page, frac }) => {
+      if (attachedTabId !== tabId || !previews.has(tabId) || previews.get(tabId) !== entry) return;   // closed/changed meanwhile
+      if (typeof page !== "number" || page < 1 || typeof frac !== "number") return;
+      if (!badgePollPrimed) { badgePollPrimed = true; badgePollLastFrac = frac; return; }
+      if (Math.abs(frac - badgePollLastFrac) < 0.002) return;   // no meaningful scroll since the last tick
+      badgePollLastFrac = frac;
+      try { entry.view.webContents.send("print:page-scroll", { page, frac }); } catch (_) {}
+    }).catch(() => {});
+  }, 100);
+}
+// Test-only: read the SAME {page, frac} the real poller reads, against the real live PDF viewer -
+// catches bugs in READ_PAGE_INFO itself (a wrong property/method name throws inside it and the whole
+// poller silently returns, with no error visible anywhere - exactly how the `vp.documentDimensions`
+// vs. `vp.getDocumentDimensions()` bug shipped and went unnoticed: the renderer-only test that already
+// existed fed the IPC push directly and never actually called this script against a real viewer).
+function readPageInfoForTest(tabId) {
+  const entry = previews.get(tabId);
+  const frame = entry && findPdfSubframe(entry.view.webContents);
+  if (!frame) return Promise.resolve(null);
+  return frame.executeJavaScript(READ_PAGE_INFO);
+}
 
 // Build and register a preview entry for `tab`, printing `src` (normally the tab's own page; for openForFrame it is a throwaway holder
 // window carrying an iframe's captured content instead - see there). The entry is keyed by TAB id regardless, so the dot/tab-switch
@@ -530,7 +615,11 @@ function register() {
     entry.dests = dests;
     const base = sticky || {};
     const destId = base.dest && entry.dests.some((d) => d.id === base.dest) ? base.dest : (first ? first.id : PDF_DEST);
-    const { s } = clean(entry, { headers: true, collate: true, ...base, dest: destId, pages: "all", custom: "", copies: 1, pps: 1 }, 2);
+    // "Background graphics" defaults to CHECKED (owner 2026-10-21, from the compressnow.com comparison above): PBCalc's sticky
+    // settings reset every restart (by design - see that comment), so the FIRST print of a session used to start unchecked,
+    // same as a brand-new Chrome profile would - but the owner wants it on by default here every time, not just once it is
+    // manually checked. `...base` still overrides it once a real choice has been made THIS session (sticky).
+    const { s } = clean(entry, { headers: true, collate: true, background: true, ...base, dest: destId, pages: "all", custom: "", copies: 1, pps: 1 }, 2);
     if (!capsNow.length) {
       printerCaps().then((caps) => {
         if (!previews.has(tabId) || previews.get(tabId) !== entry || entry.view.webContents.isDestroyed()) return;   // closed/replaced meanwhile
@@ -670,4 +759,4 @@ function register() {
 // tests only: replace the printers' abilities (no printer here can print two-sided or has two resolutions)
 function setCapsForTest(list) { capsCache = list ? { at: Infinity, list } : null; }
 
-module.exports = { register, open, close, isOpen, reposition, leaveTab, enterTab, closeFor, hasPending, watchPdfViewer, parseRanges, printerCaps, setCapsForTest, PDF_DEST };
+module.exports = { register, open, close, isOpen, reposition, leaveTab, enterTab, closeFor, hasPending, watchPdfViewer, parseRanges, printerCaps, setCapsForTest, PDF_DEST, readPageInfoForTest };

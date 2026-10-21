@@ -186,14 +186,34 @@ app.whenReady().then(async () => {
     const realFinal = titles(readJson("bookmarks.json"));
 
     console.log("\n-- the switch works only while the bookmarks bar is shown (normal mode)");
+    // The active tab right now is tab 1, the plain New Tab page PBCalc opened automatically at this
+    // process's own start (never closed since - every closeTab() above reverted focus back to it).
+    // barShown() treats a New Tab page as "the bar is shown" regardless of the setting (by design,
+    // and the exact scenario the owner's 2026-10-21 report is about) - a MEANINGFUL "truly hidden"
+    // test needs an ordinary site tab active instead, not this one.
+    tm.createTab(base + "/other-page"); await sleep(1200);
     tm.toggleBookmarksBar(); await sleep(600);
-    check("setup: bookmarks bar hidden", !state.bookmarksBarVisible);
+    check("setup: bookmarks bar hidden (on an ordinary site tab, not a New Tab page)", !state.bookmarksBarVisible);
     await triple(); await sleep(900);
     check("bar hidden: three clicks do NOT switch the list", bm.getMode() === "dummy");
     check("...the menu is left as it was (nothing happened)", popup.isOpen("menu"));
     popup.close(); await sleep(300);
     tm.toggleBookmarksBar(); await sleep(600);
     check("bar shown again", state.bookmarksBarVisible && (await barTitles()) === dummyFinal);
+    tm.closeTab(state.activeTabId); await sleep(300);   // back to the lone New Tab page for the next block
+
+    console.log("\n-- the switch ALSO works on a New Tab page with the SETTING off (owner 2026-10-21: 'default bookmark showing on screen in UI new tab but actual code side this is false' - a fresh launch/fresh New Tab shows the bar via barShown()'s New-Tab-page rule while the underlying setting stays off, and the switch used to only check that raw setting, silently doing nothing even with the bar plainly visible)");
+    tm.toggleBookmarksBar(); await sleep(600);   // the SETTING off
+    check("setup: setting OFF", !state.bookmarksBarVisible);
+    tm.createTab(); await sleep(800);   // a brand-new New Tab page
+    check("...but the bar is still SHOWN (the New Tab page rule)", await shell.executeJavaScript('getComputedStyle(document.getElementById("bookmark-bar")).display') !== "none");
+    await triple(); await sleep(900); popup.close(); await sleep(300);
+    check("the switch works here even though the setting is off", bm.getMode() === "real" && (await barTitles()) === realFinal);
+    await triple(); await sleep(900); popup.close(); await sleep(300);
+    check("...and back", bm.getMode() === "dummy" && (await barTitles()) === dummyFinal);
+    tm.closeTab(state.activeTabId); await sleep(300);   // close the New Tab page, back to the earlier tab
+    tm.toggleBookmarksBar(); await sleep(600);
+    check("(setting back ON for the rest of the suite)", state.bookmarksBarVisible);
 
     console.log("\n-- Restricted Mode follows the current list; the switch works there too and leaves the open tabs alone");
     const homeTab = () => state.tabs.find((t) => t.isHome);
@@ -223,6 +243,10 @@ app.whenReady().then(async () => {
     check("...both tabs still open, 'Your sites' shows the dummy sites again", state.tabs.length === 2 && !!siteTab() && siteTab().id === siteId && (await homeTiles()) === dummyNow);
     check("Restricted Mode itself is unchanged (still locked, no address bar)", state.restricted === true && (await shell.executeJavaScript('document.body.classList.contains("restricted")')));
 
+    // the "Your sites" home tab counts as a New-Tab-equivalent page too (onNewTabPage checks tab.isHome),
+    // so barShown() treats it as "the bar is shown" regardless of the setting, same as a normal-mode New
+    // Tab page - switch to the ordinary SITE tab first so this is a meaningful "truly hidden" test.
+    tm.switchTab(siteTab().id); await sleep(300);
     tm.toggleBookmarksBar(); await sleep(600);
     await triple(); await sleep(900);
     check("Restricted Mode, bar hidden: three clicks do NOT switch", bm.getMode() === "dummy" && state.tabs.length === 2);
@@ -240,6 +264,56 @@ app.whenReady().then(async () => {
     // go back to dummy for the restart check
     await triple(); await sleep(900); popup.close(); await sleep(300);
     check("(back on the dummy list before the restart check)", bm.getMode() === "dummy");
+
+    console.log("\n-- Ctrl+Shift+Alt+B: the same hidden switch, as a keyboard shortcut (owner 2026-10-21)");
+    const press = (mods) => { shell.sendInputEvent({ type: "keyDown", keyCode: "B", modifiers: mods }); shell.sendInputEvent({ type: "keyUp", keyCode: "B", modifiers: mods }); };
+    const ALL = ["control", "shift", "alt"];
+    check("setup: dummy mode, bar shown, not restricted", bm.getMode() === "dummy" && state.bookmarksBarVisible && !state.restricted);
+    press(ALL); await sleep(500);
+    check("Ctrl+Shift+Alt+B switches dummy -> real", bm.getMode() === "real" && (await barTitles()) === realFinal);
+    press(ALL); await sleep(500);
+    // dummyNow (not dummyFinal, which was captured before the "dropme" bookmark the Restricted Mode
+    // block above added to the dummy list) is the dummy list's current correct content from here on.
+    check("...and again real -> dummy", bm.getMode() === "dummy" && (await barTitles()) === dummyNow);
+
+    console.log("-- negative controls: neighbouring key combos must NOT trigger it, and the existing Ctrl+Shift+B must be unaffected");
+    press(["control", "shift"]); await sleep(400);   // plain Ctrl+Shift+B: toggles the BOOKMARKS BAR, not the list
+    check("plain Ctrl+Shift+B still just toggles the bookmarks bar (unaffected by the new shortcut)", bm.getMode() === "dummy" && !state.bookmarksBarVisible);
+    tm.toggleBookmarksBar(); await sleep(400);   // put the bar back
+    press(["control", "alt"]); await sleep(300);
+    check("Ctrl+Alt+B (no Shift) does nothing", bm.getMode() === "dummy");
+    press(["shift", "alt"]); await sleep(300);
+    check("Shift+Alt+B (no Ctrl) does nothing", bm.getMode() === "dummy");
+
+    console.log("-- it follows the same rules as the 3-click gesture: gated on the bookmarks bar, and auto-repeat is one action");
+    // same reason as the earlier "bar hidden" block: the active tab by now is the lingering New Tab
+    // page (never closed since this process started), which barShown() always treats as shown - an
+    // ordinary site tab is needed to test "the SETTING off, and not a New-Tab-page either" meaningfully.
+    tm.createTab(base + "/other-page2"); await sleep(1200);
+    tm.toggleBookmarksBar(); await sleep(400);
+    check("setup: bar hidden (on an ordinary site tab)", !state.bookmarksBarVisible);
+    press(ALL); await sleep(400);
+    check("bar hidden: the shortcut does NOT switch the list", bm.getMode() === "dummy");
+    tm.toggleBookmarksBar(); await sleep(400);
+    check("bar shown again", state.bookmarksBarVisible);
+    shell.sendInputEvent({ type: "keyDown", keyCode: "B", modifiers: ALL });   // the real first press (not a repeat)
+    shell.sendInputEvent({ type: "keyDown", keyCode: "B", modifiers: [...ALL, "isAutoRepeat"] });
+    shell.sendInputEvent({ type: "keyDown", keyCode: "B", modifiers: [...ALL, "isAutoRepeat"] });
+    shell.sendInputEvent({ type: "keyUp", keyCode: "B", modifiers: ALL });
+    await sleep(500);
+    check("a HELD key (auto-repeat) only toggles once, not per repeat", bm.getMode() === "real");
+    press(ALL); await sleep(400);   // back to dummy for the restart check below
+    tm.closeTab(state.activeTabId); await sleep(300);   // back to the lone New Tab page for the Restricted Mode block
+
+    console.log("-- works in Restricted Mode too, exactly like the 3-click gesture");
+    tm.secretToggle(); await sleep(2800);
+    check("setup: Restricted Mode on, dummy list", state.restricted === true && bm.getMode() === "dummy");
+    press(ALL); await sleep(1500);
+    check("Ctrl+Shift+Alt+B switches the list in Restricted Mode too", bm.getMode() === "real" && state.restricted === true);
+    press(ALL); await sleep(1500);
+    check("...and back to dummy", bm.getMode() === "dummy" && state.restricted === true);
+    tm.leaveRestricted(); await sleep(1000);
+    check("(back to normal mode, dummy list, for the restart check)", bm.getMode() === "dummy" && !state.restricted);
 
     check("no uncaught error in the main process", errors.length === 0);
     srv.close();

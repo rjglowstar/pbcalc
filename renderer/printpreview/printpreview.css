@@ -69,6 +69,30 @@ body {
 .msg { padding: 10px 16px; border-radius: 8px; background: var(--pp-panel); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3); }
 #loading.show, .msg.show { display: block; }
 
+/* Chrome's scroll-time page-number badge (owner 2026-10-21, measured from a real Chrome print preview:
+   rgba(0,0,0,.5) fill - sampled rgb(127,127,127) over a white page, matches exactly -, white bold text,
+   ~40px tall with small rounded corners, a short triangular tail pointing at the scrollbar, vertically
+   tracking the scroll position, visible while scrolling and for ~2-2.5s after it stops before fading).
+   `right` leaves room for the tail plus Chromium's own ~16px scrollbar gutter. */
+/* Re-measured directly against the owner's own side-by-side screenshot, 2026-10-21 ("only this
+   tooltip UI make same chrome UI wise"): Chrome's box sits almost flush against the scrollbar (the
+   gap the first version left, `right: 24px` with a tiny 7px tail, was visibly too wide and the tail
+   too small to read at all) - now closer to the edge with a bigger, clearly visible tail reaching
+   the rest of the way to the scrollbar. */
+#page-badge {
+  position: absolute; right: 14px; top: 0;
+  min-width: 20px; height: 38px; padding: 0 14px;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.5); color: #fff; font: 600 17px/1 Arial, sans-serif;
+  border-radius: 6px; pointer-events: none; white-space: nowrap; z-index: 2;
+  opacity: 0; transition: opacity 0.2s ease;
+}
+#page-badge.show { display: flex; opacity: 1; }
+#page-badge::after {
+  content: ""; position: absolute; left: 100%; top: 50%; transform: translateY(-50%);
+  border-style: solid; border-width: 8px 0 8px 9px; border-color: transparent transparent transparent rgba(0, 0, 0, 0.5);
+}
+
 /* ── the settings ──────────────────────────────────────────── */
 #side { width: 385px; flex: none; display: flex; flex-direction: column; }
 #head { display: flex; align-items: baseline; justify-content: space-between; padding: 26px 24px 18px; }

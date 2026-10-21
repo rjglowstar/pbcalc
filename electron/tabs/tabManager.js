@@ -1146,9 +1146,17 @@ function isManagerSender(wc) {
 // the zoom value in the menu - in Restricted Mode too (the owner's decision), and only while the bookmarks bar is shown
 // - and it leaves no sign except the bookmarks themselves changing. Returns whether the list changed.
 function toggleBookmarkMode() {
-  // Only while the bookmarks bar is SHOWN (the owner's condition): with the bar hidden the clicks only reset the zoom. This follows the "Show bookmarks bar"
-  // SETTING, unchanged - not the New Tab page rule (barShown), which only shows the bar there (owner 2026-10-14: "other hide/show functionality nothing change").
-  if (!state.bookmarksBarVisible) return false;
+  // Only while the bookmarks bar is actually SHOWN on screen (the owner's condition) - but "shown" now means
+  // the same thing `barShown()` already means everywhere else (chromeHeight, getTabState): the SETTING, OR a
+  // New Tab / home page forcing the bar on regardless of the setting. A 2026-10-14 decision had this check the
+  // setting alone ("other hide/show functionality nothing change"), but the owner reported 2026-10-21 that this
+  // was confusing in exactly the state a fresh launch starts in: a brand-new PBCalc / a fresh New Tab shows the
+  // bookmarks bar (via barShown's New-Tab-page rule) while the underlying SETTING is still off, so the toggle
+  // (the 3 clicks, or Ctrl+Shift+Alt+B) silently did nothing even though the bar was plainly visible - only
+  // pressing Ctrl+Shift+B first (turning the SETTING on, which the bar did not visibly need) made it start
+  // working. Root cause confirmed directly: the bar's own visibility already follows `barShown()`
+  // (chromeHeight/getTabState do), so the switch must gate on the exact same thing the user is looking at.
+  if (!barShown()) return false;
   if (!bookmarks.setMode(bookmarks.getMode() === "real" ? "dummy" : "real")) return false;
   // whatever still shows the other list: an open edit box, a bookmark manager tab, and in Restricted Mode the "Your sites"
   // page (its tiles are the active list). Open tabs are NOT touched: the switch changes the bookmarks, nothing else, in

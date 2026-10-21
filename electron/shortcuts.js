@@ -17,6 +17,9 @@ const RESTRICTED_OK = new Set([
   // Showing/hiding the bookmarks bar is just a view preference — it changes no bookmark and
   // reveals no address — so Ctrl+Shift+B works in Restricted Mode too (the user asked for it).
   "bookmarks-bar",
+  // The hidden dummy/real bookmark switch already works in Restricted Mode via the 3-click gesture
+  // (the owner's decision); the keyboard shortcut mirrors that exactly.
+  "bookmark-mode-toggle",
 ]);
 
 // ── Hidden admin shortcut: press Ctrl+Shift together, then type "pbsecure" ─────────────────────
@@ -64,7 +67,7 @@ function secretSequence(event, input) {
 const NO_AUTO_REPEAT = new Set([
   "new-tab", "close-tab", "reopen-tab", "duplicate-tab", "find", "downloads", "print", "devtools", "settings",
   "bookmark", "bookmarks-bar", "bookmark-manager", "tab-search", "fullscreen", "find-close",
-  "address-bar",
+  "address-bar", "bookmark-mode-toggle",
 ]);
 
 function handleInput(event, input) {
@@ -85,6 +88,14 @@ function handleInput(event, input) {
 
   if (alt && !ctrl && key === "ArrowLeft") return claim("back", tabManager.goBack);
   if (alt && !ctrl && key === "ArrowRight") return claim("forward", tabManager.goForward);
+  // Hidden bookmark-list switch (dummy <-> real), same toggle as the existing 3-clicks-on-"100%" gesture
+  // in the zoom menu (toggleBookmarkMode in tabManager.js - same function, same rules: only while the
+  // bookmarks bar is shown, works in Restricted Mode too, leaves no sign besides the bookmarks changing).
+  // Ctrl+Shift+Alt+B, owner's choice 2026-10-21: a second, keyboard-only way in besides the menu clicks.
+  // Checked here, BEFORE the plain `if (!ctrl || alt) return;` gate below, because that gate exists
+  // precisely to skip every Alt-held combination - the same reason "back"/"forward" above are also
+  // checked up here.
+  if (ctrl && shift && alt && key.length === 1 && key.toLowerCase() === "b") return claim("bookmark-mode-toggle", () => tabManager.toggleBookmarkMode());
   // Chrome: F5 / Ctrl+R reload; Ctrl+F5, Shift+F5 and Ctrl+Shift+R are the HARD reload (cache bypassed).
   if (key === "F5") return ctrl || shift ? claim("reload-hard", () => tabManager.reload("hard")) : claim("reload", tabManager.reload);
   if (key === "F12") return claim("devtools", tabManager.openDevTools);

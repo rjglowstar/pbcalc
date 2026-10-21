@@ -304,6 +304,31 @@ Two things define this browser against every mainstream one:
     starts Restricted on the DUMMY sites unless the real list is unlocked first.
   - Tests that exercise bookmarks call `store.setMode("real")` first (a fresh launch is on the dummy list); the
     Restricted restart case "no bookmarks" empties the dummy file too.
+  - **Ctrl+Shift+Alt+B is a second, keyboard-only way to trigger the same switch** (owner's choice 2026-10-21) - it calls the exact
+    same `tabManager.toggleBookmarkMode()` the 3-click gesture calls, so it inherits every rule above automatically (same
+    bar-shown gate, works in Restricted Mode, closes an open edit box, reloads any open "Your sites"/manager tab). Checked in
+    `electron/shortcuts.js` BEFORE the generic `if (!ctrl || alt) return;` gate (that gate exists specifically to skip every
+    Alt-held combination, so an Alt-involving shortcut has to be checked earlier, the same reason "back"/"forward" are too). In
+    `NO_AUTO_REPEAT` (one toggle per press, not per repeat) and `RESTRICTED_OK`. Test: the "Ctrl+Shift+Alt+B" block of
+    `verify-bookmark-modes.js` (toggles both ways, works in Restricted Mode, a held key only counts once, neighbouring combos -
+    Ctrl+Alt+B, Shift+Alt+B - do nothing, plain Ctrl+Shift+B is unaffected).
+  - **BUG found 2026-10-21 (owner: "default bookmark showing on screen in UI new tab but actual code side this is false" - a
+    fresh launch, or a fresh New Tab, visibly shows the bookmarks bar, yet neither the 3-click gesture nor Ctrl+Shift+Alt+B did
+    anything there until the owner first pressed Ctrl+Shift+B to turn the SETTING on).** Root cause: `toggleBookmarkMode()`
+    gated on the raw `state.bookmarksBarVisible` SETTING alone - a deliberate 2026-10-14 decision ("other hide/show
+    functionality nothing change") - but the bar being VISIBLE on screen follows `barShown()` instead (`state.bookmarksBarVisible`
+    OR a New Tab / home page forcing it on regardless of the setting - the same function `chromeHeight()`/`getTabState()`
+    already use), so a brand-new PBCalc or a fresh New Tab page shows the bar from the New-Tab-page rule while the setting
+    itself is still off, and the switch silently did nothing even though the bar was plainly there. **Fixed:** the gate is now
+    `barShown()`, matching what the user is actually looking at. **Test gotcha found while fixing this:** `verify-bookmark-modes.js`
+    opens with ONE tab - a New Tab page PBCalc creates automatically at start - that NEVER gets closed throughout the whole
+    suite (every `closeTab()` in it reverts focus back to this same lingering tab), so several "bar hidden -> should NOT switch"
+    checks had been unknowingly running against this New-Tab page the entire time; they happened to still pass under the OLD
+    code only because the old code ignored barShown() entirely. Fixed those checks to explicitly switch to an ordinary SITE tab
+    first, so they test what they are meant to: "the setting off, AND not a New Tab page either." `verify-ntp-bookmarks.js` had
+    one check literally named "the hidden 3-click switch is UNCHANGED" asserting the OLD behaviour - updated to assert the new,
+    correct one (switches on a New Tab page even with the setting off; still does nothing on an ordinary site with it off).
+    Tests: `verify-bookmark-modes.js` (86/86), `verify-ntp-bookmarks.js` (14/14), `verify-restricted.js` (103/103) all re-run clean.
   - **Dummy sites ship WITH their icons** (`ICONS` in bookmarkStore: each site's own icon rendered to a 32px PNG and
     EMBEDDED as a `data:` image, 1-4 KB each; no download, so they show offline and merely showing the bar contacts
     nobody). A globe on a decoy bookmark gives the decoy away, so **any site added to `DUMMY_DEFAULTS` must get its icon
@@ -1496,7 +1521,95 @@ Odd / Even / Custom become page ranges counted on the job AS PRINTED. **Save as 
   user's profile FOREVER the first time they ever check it - the owner's own Chrome had it on from some earlier session; a fresh PBCalc
   launch starts at the same factory default (unchecked) a brand-new Chrome profile would. Asked the owner whether to start persisting
   sticky print settings to disk (a small, deliberate exception to the in-memory-only design) - **declined; left as in-memory only.**
-
+  **Follow-up, same day: the owner instead wants "Background graphics" CHECKED by default every fresh session** (not persisted - just a
+  different starting value than Chrome's own unchecked factory default). `print:init`'s base defaults (the object `clean()` falls back to
+  before any `sticky` choice exists - already had `headers: true, collate: true`) now also has `background: true`; `...base` still wins
+  once the user (or a prior print this session) has made a real choice, so this only changes the very FIRST print of a session. Test:
+  the "'Background graphics' is CHECKED by default on a fresh session" check in `scripts/verify-print-preview.js` (108 total).
+- **Eleventh round, 2026-10-21 - Chrome's scroll-time "page N" badge (a dark rounded box beside the scrollbar, showing the current page
+  while scrolling a multi-page preview, gone a couple seconds after scrolling stops).** Owner's side-by-side screenshots of compressnow.com's
+  print preview in real Chrome vs PBCalc showed it present in Chrome, absent in PBCalc. Investigated and built carefully, in stages, because
+  the obvious approach (read it from Chromium's own PDF-viewer internals) kept giving false signals:
+  1. **First confirmed the badge really is missing in PBCalc** - not a regression, not a test artifact - with a real, driven Chrome window
+     (a throwaway profile, this project's established `scripts/chrome-reference/capture-*.ps1` pattern: 8s-idle safety check before sending
+     any input, cleanup scoped to the exact `--user-data-dir`/PID the script itself spawned, never a bare process-name match - a near-miss
+     during this work very nearly killed the owner's own open Chrome windows with an unscoped `Stop-Process`, caught before any harm, logged
+     as its own lesson). Pixel-sampled the real badge directly from the captured screenshots: fill `rgb(127,127,127)` - exactly
+     `rgba(0,0,0,.5)` composited over white, confirming the maths - white bold text, ~40px tall with a small corner radius and a short
+     triangular tail pointing at the scrollbar, vertically tracking the scroll position (not fixed), visible while scrolling and for
+     **2000-2500ms** after it stops before fading (measured: still there at 2000ms, gone by 2500ms).
+  2. **Finding a reliable "current page" signal was the hard part.** PBCalc's print-preview `#pdf` iframe embeds the SAME
+     `chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/` viewer Chrome itself uses, loaded with `#toolbar=0&navpanes=0&view=Fit` (see the
+     big block of comments on this earlier in this file) - but it never shows the badge itself, confirmed directly even with a REAL OS mouse
+     wheel driven at the actual running PBCalc app (same `capture-*.ps1`-style script, retargeted at `electron.exe` + a throwaway launcher
+     instead of `chrome.exe` - hit and fixed a real gotcha along the way: this shell's `ELECTRON_RUN_AS_NODE` env var made `electron.exe` run
+     as plain Node with no `electron` module, exactly the gotcha already documented elsewhere in this file for the packaged exe; fixed by
+     starting the process with that one variable explicitly removed via `ProcessStartInfo.EnvironmentVariables`, not inherited). Reading the
+     viewer's internal `pdf-viewer` element's guessed-at `viewport_.getMostVisiblePage()` property stayed frozen at page 0 even while the
+     visible content genuinely scrolled - looked like proof the internals just don't track page here - **until the same exact check was
+     retried under REAL mouse input instead of Electron's synthetic `sendInputEvent` wheel, and it worked perfectly**, incrementing 1→2→3→4
+     in step with the real scroll. The synthetic-input version was a false negative, not a true one - this codebase already has other
+     documented cases where synthetic input does not reach a privileged/cross-process frame the way real OS input does, and this was another.
+     The actually-reliable signal, confirmed this way: `viewer-page-selector`'s own `.pageNo` property (found inside the viewer's shadow DOM),
+     polled from the main process every 180ms while the dialog is the one attached/visible - never trusted via the toolbar's own rendered
+     UI, which does not even exist with `toolbar=0`.
+  - **Built:** `electron/printPreview.js`'s `startBadgePoll()`/`stopBadgePoll()` (started in `attachEntry`, stopped in `detachCurrent` and
+    `closeDialogKeepHolder` - only the one attached/visible dialog is ever polled, matching the "only the dialog you're looking at" pattern
+    already used for every other per-tab piece of this feature) pushes `print:page-scroll` to the dialog's own page only when the page number
+    actually CHANGES - **the very first reading is deliberately absorbed silently (`badgePollPrimed`), never sent**, because Chrome's real
+    badge does not appear just from opening the dialog on page 1, only once the user actually scrolls; sending that first "1" unconditionally
+    was a real bug caught by the test below before it shipped. `renderer/printpreview/printpreview.{html,css,js}` draw PBCalc's OWN badge
+    (`#page-badge`) from that signal - never Chromium's own, which, again, never appears here at all - shown on each push, faded after
+    2200ms of no further pushes (inside the measured 2000-2500ms window).
+  - **Test:** `scripts/verify-print-preview.js` feeds the dialog the exact IPC push the main-process poller would send
+    (`dlgView().webContents.send("print:page-scroll", {...})`) rather than trying to drive a real scroll - this tests the RENDERER's own
+    contract (hidden until a signal arrives, shows the right page number at the right vertical position, fades on schedule) honestly, since
+    synthetic input cannot exercise the real main-process polling path end to end; the owner confirms the real scroll-to-badge wiring by
+    hand, the same real-OS-pointer limit already noted elsewhere in this file (e.g. the bookmark bar drag test). `verify-leaks.js` (11/11)
+    re-run clean - the polling interval is always cleared on detach/close, never left running against a destroyed entry.
+- **Twelfth round, 2026-10-21 - the badge's own vertical position did not track the real scrollbar thumb.** Owner's own screenshots, by
+  hand: two shots of the SAME page number showed the native scrollbar thumb in two clearly different vertical spots while PBCalc's badge
+  sat in one place. **Root cause:** the first version vertically positioned the badge from `(page-1)/(total-1)` - a stand-in that only
+  moves when the PAGE NUMBER changes - but pages render at different heights, so scrolling further within the same page (very possible,
+  and exactly what the owner's two screenshots caught) moves the real thumb while the page/total stand-in sits still, visibly lagging.
+  **Fixed** by reading the SAME continuous pixel scroll position Chromium's own scrollbar is drawn from: `pdf-viewer`'s internal
+  `viewport_.position.y` (live scrollTop, in content pixels) together with `viewport_.documentDimensions.height` and `viewport_.size.height`
+  - all three enumerated directly off the live element with a one-off property dump (never guessed from memory of Chromium source, the way
+  an earlier, wrong guess at `getMostVisiblePage()`'s sibling properties had been in the prior round) - giving a fraction
+  (`pos.y / (doc.height - size.height)`, clamped 0-1) that matches the thumb's own math exactly. `startBadgePoll()`'s poll interval
+  tightened 180ms -> 100ms for smoother tracking during active scroll, and the "did it change" check now compares this fraction
+  (`Math.abs(frac - last) < 0.002` = no-op) instead of the page number, so a push now fires on ANY further scroll, not just a page
+  crossing. The renderer positions the badge directly from the pushed `frac`, no longer computing one itself from page/total.
+  Test: `scripts/verify-print-preview.js` (113 total) adds the exact regression case - a `frac` change with the SAME page number must
+  still move the badge (the old code provably could not do this); `verify-leaks.js` (11/11) re-run clean for the faster poll interval.
+- **Thirteenth round, 2026-10-21 - the badge stopped showing up AT ALL (owner: "current scroll in print preview but not showing page
+  count").** This was a real bug in the twelfth round's own fix, shipped and caught the same day. **Root cause:** `documentDimensions` on
+  `viewport_` is a METHOD (`getDocumentDimensions()`), not a plain accessor property like `position`/`size` are - the twelfth round's code
+  read it as `vp.documentDimensions` (always `undefined`), so `doc.height` threw on EVERY SINGLE poll tick, `frac` was always `null`, and
+  `startBadgePoll()`'s own guard (`typeof frac !== "number"` -> skip) meant this failed completely silently, no error anywhere, matching
+  the owner's report exactly. The irony: the one-off property dump that found `viewport_.position`/`viewport_.size` in the twelfth round
+  HAD already called `getDocumentDimensions()` correctly AS A METHOD and printed real values from it - the bug was introduced only when
+  translating that into the actual polling code, not in the research itself. **Why the test suite didn't catch it:** the badge's existing
+  test only ever fed the renderer a fake `print:page-scroll` IPC push by hand - it never once called the real `READ_PAGE_INFO` script
+  against a real, live PDF viewer, so a bug INSIDE that script was invisible to it. **Fixed:** `vp.getDocumentDimensions()` called as a
+  method. **Also added, specifically so this class of bug can't ship silently again:** `printPreview.js` exports a test-only
+  `readPageInfoForTest(tabId)` that calls the SAME `READ_PAGE_INFO` the real poller uses against the real live viewer, and
+  `verify-print-preview.js` now asserts its result is a valid `{page, frac}` (both numbers, frac not null) - this check alone reproduced
+  the bug the moment it was added. **Two more of my own mistakes, caught before shipping, same session:** a stray pair of backticks inside
+  an explanatory comment written INSIDE the `READ_PAGE_INFO` template-literal string broke the whole file's syntax (`node --check` caught
+  it immediately - the comment was moved outside the string); and the new `readPageInfoForTest` check first failed on its own timing
+  assumption (the PDF viewer's `viewport_` re-initializes fresh every time the iframe's `src` is replaced for a new render, which the
+  preceding Custom-margins test block does repeatedly, so the very first read right after a render can still be mid-setup) - fixed by
+  polling for a valid result the same way the real poller tolerates a transient bad read, rather than assuming the first one succeeds.
+  Test: `scripts/verify-print-preview.js` (114/114); `verify-leaks.js` (11/11) re-run clean.
+- **Fourteenth round, 2026-10-21 - visual polish, side by side with the owner's own screenshot ("functionality working fine only this
+  tooltip UI make same chrome UI wise").** Cropped and pixel-compared both badges directly: Chrome's sits almost flush against the
+  scrollbar with a chunky, clearly visible triangular tail bridging the last few pixels to it; PBCalc's first version (`right: 24px`,
+  a 7x12px tail) left a visibly wider gap with a tail too small to read at this size. Tightened to `right: 14px`, enlarged the tail to
+  9x16px, and matched Chrome's flatter box proportions (`height: 38px` instead of 40px) - confirmed by screenshotting the actual dialog
+  (not just imagining it) at both an edge (`frac:0`) and a mid-scroll position and cropping tightly for a direct before/after look.
+  The renderer's own vertical-range math (`area - <badge height>`) now reads the badge's live `offsetHeight` instead of a second
+  hardcoded `40` that would otherwise have silently drifted out of sync with the CSS. Test: `scripts/verify-print-preview.js` (114/114).
 ## Screen sharing (`electron/screenShare.js`, `scripts/verify-screenshare.js`, 29 checks)
 Google Meet's "Present now" (any site's `getDisplayMedia()`) said "Can't share your screen" because Electron answers `getDisplayMedia` with
 `NotSupportedError` unless the app installs a display-media handler (measured; PBCalc never did). The picker is a copy of **Chrome 154's own dialog**,

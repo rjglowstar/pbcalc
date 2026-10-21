@@ -214,6 +214,32 @@
         if (s.paper !== prevPaper) later(150);
       });
     }
+    if (api.onPageScroll) api.onPageScroll(({ page, frac }) => showPageBadge(page, frac));
+  }
+
+  // Chrome's scroll-time "page N" badge, replicated here from measurements against a real Chrome print
+  // preview (owner 2026-10-21) since Chromium's own never appears in PBCalc's embedded viewer at all
+  // (confirmed directly, even with real OS mouse-wheel scrolling - see the big comment above
+  // startBadgePoll in electron/printPreview.js, which is what actually drives this via print:page-scroll).
+  // Measured: a dark rgba(0,0,0,.5) rounded box (CSS here), vertically tracking the scroll position,
+  // visible while scrolling and for ~2-2.5s after it stops before fading - timing and position below
+  // match that, not guessed. `frac` is the SAME continuous scroll fraction Chromium's own scrollbar
+  // thumb is drawn from (not a page/total stand-in - that version moved only on a page-number change
+  // and visibly lagged the real thumb whenever further scrolling stayed within one page, caught by the
+  // owner's own screenshots: two shots of the same page number showed the real thumb in two different
+  // spots - see the BUG comment on startBadgePoll in electron/printPreview.js).
+  let badgeFadeTimer = null;
+  function showPageBadge(page, frac) {
+    if (!total || total <= 1) return;   // Chrome shows nothing when there is nothing to scroll
+    const el = $("page-badge");
+    el.textContent = String(page);
+    const area = $("preview").clientHeight;
+    const h = el.offsetHeight || 38;   // matches the CSS #page-badge height, read live rather than duplicating the number
+    const y = Math.round(Math.max(0, Math.min(area - h, frac * (area - h))));
+    el.style.top = y + "px";
+    el.classList.add("show");
+    clearTimeout(badgeFadeTimer);
+    badgeFadeTimer = setTimeout(() => el.classList.remove("show"), 2200);
   }
   start();
 })();

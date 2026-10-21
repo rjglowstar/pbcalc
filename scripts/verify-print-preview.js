@@ -124,6 +124,7 @@ const TSC = "TSC TE244", XPS = "Microsoft XPS Document Writer", ONENOTE = "OneNo
   let u = await ui();
   check("Destination list like Chrome's: the chosen printer, then 'Save as PDF', then the other printers (" + u.dests.length + ")", u.dests[1] === "Save as PDF" && u.dests.length >= 2, JSON.stringify(u.dests));
   check("the Windows default printer is chosen first (" + (winDefault || "none") + ") with a printer icon", (winDefault ? u.dest === winDefault : true) && u.icon === "printer", u.dest);
+  check("'Background graphics' is CHECKED by default on a fresh session (owner 2026-10-21, from the compressnow.com comparison - no sticky choice has been made yet)", await dj(`document.getElementById("background").checked`));
   wc.sendInputEvent({ type: "keyDown", keyCode: "P", modifiers: ["control"] }); await sleep(400);
   check("a second Ctrl+P while it is open does not open another one", state.mainWindow.getBrowserViews().filter((v) => /printpreview/.test(v.webContents.getURL())).length === 1);
 
@@ -173,6 +174,56 @@ const TSC = "TSC TE244", XPS = "Microsoft XPS Document Writer", ONENOTE = "OneNo
     check("...closing the dialog and reopening it still remembers Custom and the typed values (sticky, like the destination)", u.dest === PDF && (await dj(`document.getElementById("margins").value`)) === "custom" && (await dj(`[document.getElementById("margin-top").value, document.getElementById("margin-bottom").value]`)).join() === "0.1,3", JSON.stringify([u.dest, await dj(`document.getElementById("margins").value`)]));
     await set("margins", "default"); await sleep(300);
   }
+
+  console.log("-- the scroll-time 'page N' badge (owner 2026-10-21, measured from real Chrome - Chromium's own never appears in our embedded viewer, even with real OS scrolling, confirmed by hand; print:page-scroll drives our OWN replica, see the big comment in electron/printPreview.js)");
+  {
+    // Calls the REAL poller's own read function (READ_PAGE_INFO) against the live PDF viewer - not the
+    // fake IPC push the rest of this block uses. This is the one check that would have caught the real
+    // bug shipped in this feature (owner 2026-10-21: "scroll in print preview but not showing page
+    // count"): `vp.documentDimensions` was read as a plain property where the real API is the METHOD
+    // `vp.getDocumentDimensions()`, so it threw on every single poll tick and `frac` was always null -
+    // the renderer-only test below never caught it because it feeds `frac` in by hand and never
+    // actually calls this script against a real viewer.
+    // the viewer re-initializes its internals (viewport_ etc.) fresh each time the iframe's src is
+    // replaced for a new render (every settings change in the Custom margins block just above did
+    // that), so poll like the real poller does rather than assuming the very first read is ready.
+    let info = null;
+    await waitFor(async () => { info = await pp.readPageInfoForTest(tab.id); return info && typeof info.page === "number" && info.page > 0 && typeof info.frac === "number"; });
+    check("the real poller's own read function returns a valid page AND a valid numeric frac (not null) against the live viewer - this is what actually broke before, invisibly, with no error anywhere", info && typeof info.page === "number" && typeof info.frac === "number", JSON.stringify(info));
+    // the underlying page-tracking only updates on REAL OS mouse-wheel input (measured - a synthetic
+    // sendInputEvent wheel left it frozen), so this cannot drive a real scroll the way the rest of this
+    // suite drives everything else; instead it feeds the dialog the exact IPC push the main-process
+    // poller would send and checks the RENDERER's own contract (show/position/text/fade) - the owner
+    // confirms the real end-to-end scroll-to-badge wiring by hand, same as this project's other
+    // real-OS-pointer limits (e.g. the bookmark bar drag test).
+    // `frac` is the SAME continuous scroll fraction Chromium's own scrollbar thumb is drawn from
+    // (pdf-viewer's viewport_.position.y / (documentDimensions.height - size.height), read in main -
+    // see startBadgePoll) - NOT a page/total stand-in, which an earlier version used and which visibly
+    // lagged the real thumb whenever scrolling stayed within one page (owner's screenshots: two shots
+    // of the same page number showed the real thumb in two different spots - fixed, see the BUG
+    // comment on startBadgePoll in electron/printPreview.js). The test feeds `frac` directly since it
+    // is simulating the IPC push itself, not a real scroll (see the comment above this block).
+    const badgeShown = () => dj(`(() => { const el = document.getElementById("page-badge"); return { shown: el.classList.contains("show"), text: el.textContent, top: el.style.top }; })()`);
+    check("hidden before any scroll signal", !(await badgeShown()).shown);
+    dlgView().webContents.send("print:page-scroll", { page: 1, frac: 0 });
+    await sleep(100);
+    let b = await badgeShown();
+    check("page 1, frac 0: shows '1' at the top of the preview pane", b.shown && b.text === "1" && parseInt(b.top, 10) <= 2, JSON.stringify(b));
+    dlgView().webContents.send("print:page-scroll", { page: pagesAll, frac: 1 });
+    await sleep(100);
+    b = await badgeShown();
+    const areaH = await dj(`document.getElementById("preview").clientHeight`);
+    check("the last page, frac 1: shows the final page number, positioned at the BOTTOM of the pane (tracks scroll position)", b.shown && b.text === String(pagesAll) && parseInt(b.top, 10) >= areaH - 42, JSON.stringify([b, areaH]));
+    // a frac change WITHIN the same page must still move the badge (this is exactly the bug: the old
+    // page/total version never moved unless the page NUMBER changed)
+    dlgView().webContents.send("print:page-scroll", { page: pagesAll, frac: 0.5 });
+    await sleep(100);
+    const bMid = await badgeShown();
+    check("...and a frac change alone (same page number) still moves it - the actual bug being fixed here", bMid.shown && bMid.text === String(pagesAll) && Math.abs(parseInt(bMid.top, 10) - parseInt(b.top, 10)) > 20, JSON.stringify([bMid, b]));
+    await sleep(2400);
+    check("fades out ~2-2.5s after the last scroll signal (measured against real Chrome: still visible at 2000ms, gone by 2500ms)", !(await badgeShown()).shown);
+  }
+
   if (have(XPS)) {
     u = await pick(XPS);
     check("XPS Writer: Destination, Pages, Layout, Color, Paper size, Pages per sheet, Margins, Scale, Options - no Copies (Chrome: it makes 1 copy)", rowNames(u) === "Destination, Pages, Layout, Color, Paper size, Pages per sheet, Margins, Scale, Options", rowNames(u));
