@@ -127,6 +127,19 @@ const TSC = "TSC TE244", XPS = "Microsoft XPS Document Writer", ONENOTE = "OneNo
   wc.sendInputEvent({ type: "keyDown", keyCode: "P", modifiers: ["control"] }); await sleep(400);
   check("a second Ctrl+P while it is open does not open another one", state.mainWindow.getBrowserViews().filter((v) => /printpreview/.test(v.webContents.getURL())).length === 1);
 
+  console.log("-- opening on a COLD caps cache must not block, like Chrome's own dialog (owner 2026-10-21: 'loading print preview... optimise same as chrome print preview open', reproduced with no antivirus running)");
+  pp.close(); await sleep(200);
+  pp.setCapsForTest(null);
+  const coldT0 = Date.now();
+  u = await openDialog();
+  const coldMs = Date.now() - coldT0;
+  check("the dialog opens and a preview renders fast even with a COLD caps cache (never blocks the whole panel on the ~2-3s PowerShell enumeration)", coldMs < 1500 && !!u.src, coldMs + "ms, src=" + !!u.src);
+  check("...the destination list is already right (sticky/Windows-default printer first, 'Save as PDF' second) using the SAFE FALLBACK caps for the moment", u.dests.length > 0 && u.papers.join("|") === "Legal|Letter|Tabloid|A0|A1|A2|A3|A4|A5", JSON.stringify(u.papers));
+  await sleep(4000);   // printerCaps()'s real PowerShell enumeration has time to finish and push print:caps-updated
+  u = await ui();
+  check("...the REAL per-printer paper list lands a moment later on its own (no reopen needed, the dialog is still the SAME one)", u.papers.join("|") !== "Legal|Letter|Tabloid|A0|A1|A2|A3|A4|A5" && !!dlgView(), JSON.stringify(u.papers));
+  pp.setCapsForTest(realCaps);
+
   console.log("-- which settings show: a WEB PAGE (Chrome's answers, measured)");
   u = await pick(PDF);
   check("Save as PDF: Destination, Pages, Layout, Paper size, Margins, Scale, Options - no Copies / Color (Chrome; Pages per sheet: see differences)", rowNames(u) === "Destination, Pages, Layout, Paper size, Margins, Scale, Options", rowNames(u));

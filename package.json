@@ -1,6 +1,6 @@
 {
   "name": "pbcalc",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "PBCalc Secure Browser",
   "author": "PBCalc",
   "main": "electron/main.js",

@@ -199,6 +199,21 @@
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); api.close(); } });
     $("go").focus();
     render();
+    // the real per-printer caps land a moment later (never blocking the panel above - see the BUG
+    // comment on print:init, electron/printPreview.js): the destination ids/order never change (same
+    // printer names, just better data attached), so the user's own choice of `s.dest` always survives;
+    // re-run write()/layout() to pick up the corrected paper/dpi/margins lists, and only re-render the
+    // preview if that correction actually changed something that affects the printed page (the paper
+    // size, most likely - a cold cache meant the dialog briefly assumed a fallback default paper).
+    if (api.onCapsUpdated) {
+      api.onCapsUpdated(({ dests }) => {
+        if (!init) return;
+        init.dests = dests;
+        const prevPaper = s.paper;
+        write(); layout();
+        if (s.paper !== prevPaper) later(150);
+      });
+    }
   }
   start();
 })();

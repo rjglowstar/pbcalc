@@ -9,4 +9,7 @@ contextBridge.exposeInMainWorld("printAPI", {
   sticky: (settings, moreOpen) => ipcRenderer.invoke("print:sticky", settings, moreOpen),
   system: () => ipcRenderer.invoke("print:system"),
   close: () => ipcRenderer.send("print:close"),
+  // the real per-printer caps, pushed in once the ~2-3s PowerShell enumeration finishes - init() itself
+  // never waits for this (see the BUG comment on print:init in electron/printPreview.js)
+  onCapsUpdated: (cb) => ipcRenderer.on("print:caps-updated", (_e, data) => cb(data)),
 });

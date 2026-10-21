@@ -1426,6 +1426,76 @@ Odd / Even / Custom become page ranges counted on the job AS PRINTED. **Save as 
     changed. **Not verified end to end against a real physical printer** - this machine has none connected; the owner is building the
     installer to test on Chetan's system, which does. If "no physical output" still reproduces there, the native error box should now
     show Windows' own stated reason - that is the next real diagnostic signal to get, not this project's guess.
+- **Eighth round, 2026-10-21 - the HOLDER-DESTROY-TIMING bug above also affects iframe-captured prints specifically, and the dialog
+  itself opened slowly even with NO antivirus running.** Two more real bugs, each root-caused by comparison/direct measurement, not guessed:
+  1. **The holder window (openForFrame's throwaway BrowserWindow, used ONLY for the ERP's "Big Print" hidden-iframe pattern) was still
+     being destroyed too early** - the fix above (round 7) closed the DIALOG before `target.print()`'s callback fired, but for a
+     holder-backed print `target` IS `entry.holder.webContents`, and `destroyEntry()` destroyed `entry.holder` immediately too, tearing
+     the print job out from under itself mid-negotiation (two real repros, both on mfg.pb.diamonds's Jangads "Big Print": a shared
+     network printer AND "Microsoft Print to PDF", both failing with the same generic "failed" reason). Root-caused by comparing against
+     the sibling PBERP-EXE-Barcode project's own `printManager.js` (same shape of problem - printing captured HTML from a hidden
+     BrowserWindow): it destroys that window ONLY inside the print() callback, specifically to avoid this. **Fixed:** `destroyEntry()`
+     split into `closeDialogKeepHolder()` (closes the dialog UI at once, Chrome-style) + a deferred `holder.destroy()` that now runs only
+     inside `target.print(opts, cb)`'s own callback, in both `print:go` and `systemDialog`. Verified by a live trace showing the destroy
+     call executing from inside the real callback, not before `.print()` was invoked.
+  2. **The dialog's whole settings panel was blocked on `printerCaps()`'s ~2-3s PowerShell enumeration on every cold-cache hit (owner:
+     "loading print preview... optimise same as chrome print preview open" - reproduced on a PC with NO antivirus, so the earlier warm-up
+     alone was not enough).** `renderer/printpreview/printpreview.js`'s `start()` keeps `$("rows").hidden` true until `api.init()`
+     resolves, and `print:init` used to `await Promise.all([printerCaps(), defaultPrinter()])` before answering at all - the 60s cache TTL
+     means any real session of testing many sites/printers hits this cold path constantly. Real Chrome's own dialog appears AT ONCE and
+     fills in exact per-printer detail (paper list, resolutions...) a moment later; it never makes the whole dialog wait on that. **Fixed:**
+     `print:init` now answers immediately with whatever is already cached (every printer not yet known gets the same safe fallback caps
+     already used elsewhere in this file - `PDF_PAPERS`, `copies:1`, etc.), kicks off the real `printerCaps()` in the background only if it
+     was cold, and pushes the corrected destination/paper/DPI list to the already-open dialog via a new `print:caps-updated` channel
+     (`preloads/printpreview-preload.js`'s `onCapsUpdated`) instead of blocking on it. `defaultPrinter()` (a cheap registry read, never the
+     slow part) stays awaited so the correct printer is still picked first even on a cold cache. The renderer merges the update in place
+     (`write(); layout();`) and only re-renders the preview if the correction actually changed something that affects the printed page
+     (the paper size, most likely - destination ids never change, so the user's own choice always survives the patch).
+  - Test: the "opening on a COLD caps cache must not block" block of `scripts/verify-print-preview.js` (107/107 total) - measures the
+    dialog appears and renders in well under 1.5s even with `setCapsForTest(null)`, confirms the fallback paper list shows immediately,
+    then confirms the real per-printer list lands on its own without reopening. `verify-leaks.js` (11/11) re-run clean (the new background
+    `printerCaps()` call and `print:caps-updated` listener add no leak).
+- **Ninth round, 2026-10-21 - a REAL SITE's content renders blank below the header (owner's own side-by-side screenshot: real Chrome's
+  preview of `antigravity.google/download` shows the full page; PBCalc's shows only the heading, then white space, same page/sheet
+  count).** Investigated step by step, each candidate cause measured directly before being ruled in or out (NOT guessed, and NOT caused
+  by the round-eight speed fix above - the first thing ruled out was timing itself):
+  1. Timing/race: an IMMEDIATE `printToPDF()` right after `did-finish-load` produced byte-for-byte IDENTICAL output to one taken 3
+     seconds later - ruled out.
+  2. Scroll state (IntersectionObserver-gated reveal animations never firing for off-screen content): scripted a full scroll-through of
+     the entire page before printing - still blank in the same place - ruled out (though it did change SOME page bytes elsewhere).
+  3. A CSS responsive breakpoint at the print page's content width: printed at a 20-inch-wide page (no margins) - the missing content
+     stayed missing even though the page is now far wider than any plausible breakpoint (header and footer, which sit OUTSIDE the
+     affected wrapper, rendered their full desktop layout correctly at this width) - ruled out.
+  4. `beforeprint`/`afterprint` window events never firing during `printToPDF()` (a real, documented gap in some Electron versions that
+     would stop site-side print-compatibility JS from running): armed listeners on the live page and called `printToPDF()` - both fired.
+     Ruled out.
+  5. **Root cause, found by walking the missing content's full ancestor chain and reading every element's computed `position`/`overflow`/
+     `height`: the site is built on GSAP ScrollSmoother** (confirmed - `#smooth-wrapper` / `#smooth-content` is that library's own exact
+     default markup, not a guess), which fakes smooth scrolling by wrapping the ENTIRE page body in `#smooth-wrapper { position: fixed;
+     overflow: hidden; height: 100vh }` and sliding its child (`#smooth-content`, the real, full page height) around with a CSS
+     `transform` instead of real document scrolling - real Chrome's *native* print pipeline evidently has special handling for this
+     pattern where Electron's CDP-based `printToPDF()` does not, clipping/dropping the wrapper's contents instead of letting them flow
+     across print pages. Content structurally OUTSIDE that wrapper (the fixed top banner, the footer) prints fine, exactly matching what
+     was seen.
+  - **This is a genuine Chromium/Electron `printToPDF` limitation with "virtual-scroll" wrapper libraries (GSAP ScrollSmoother, and
+    likely Lenis / Locomotive Scroll sites would hit the same thing) - not a PBCalc bug, and not something any of the `print:go`/
+    `makePdf`/`pdfOptions` code controls.** A heuristic fix was considered (temporarily neutralizing viewport-filling `position:fixed` +
+    `overflow:hidden` wrappers right before generating the preview/PDF, restoring after) and explicitly NOT built: it would also have to
+    touch OTHER sites' legitimate fixed headers/footers, with a real risk of making THEM print wrong instead (duplicated or misplaced
+    content) in exchange for fixing this narrower case - the owner's call (asked directly, per this project's standing rule on judgment
+    calls with real trade-offs), and the decision was to document it here rather than risk that regression. If this becomes a bigger
+    problem (more sites hit this), the narrower version of that fix - detecting specifically `#smooth-wrapper`/`#smooth-content` IDs, or
+    the general `position:fixed + overflow:hidden + height≈100vh` shape, only inside the print code path - is the next thing to try, with
+    the owner testing the result against several real sites before it ships.
+- **Tenth round, 2026-10-21 - a site's background colour (compressnow.com's orange header) missing from the print, compared side by side
+  with real Chrome.** Reproduced directly: with "Background graphics" unchecked, the header's `background-color` (confirmed via
+  `getComputedStyle` - a plain, unconditional, non-scroll-dependent `rgb(255, 164, 58)`, nothing JS-driven) is stripped from the output
+  exactly as shown; checking the box renders it identically to Chrome. **Not a bug - a deliberate difference already documented above
+  ("Remembered for the run, in MEMORY only"):** PBCalc's print sticky settings (destination, margins, background, scale...) reset to
+  their defaults every restart, by the same no-persistence design as the rest of the app, while real Chrome saves this checkbox to the
+  user's profile FOREVER the first time they ever check it - the owner's own Chrome had it on from some earlier session; a fresh PBCalc
+  launch starts at the same factory default (unchecked) a brand-new Chrome profile would. Asked the owner whether to start persisting
+  sticky print settings to disk (a small, deliberate exception to the in-memory-only design) - **declined; left as in-memory only.**
 
 ## Screen sharing (`electron/screenShare.js`, `scripts/verify-screenshare.js`, 29 checks)
 Google Meet's "Present now" (any site's `getDisplayMedia()`) said "Can't share your screen" because Electron answers `getDisplayMedia` with

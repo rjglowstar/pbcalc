@@ -136,19 +136,32 @@ function attachEntry(tabId) {
 
 // Fully end a tab's preview (tab closed, Cancel/Esc/Print done/system dialog, or the page navigated/was destroyed). Detaches first if it was
 // the visible one, then destroys the view and removes the listeners put on the printed page.
-function destroyEntry(tabId) {
+// Closes the DIALOG's own UI (detaches/closes entry.view, same as Chrome - the dialog goes the
+// instant Print is pressed) but does NOT touch entry.holder, the throwaway window an iframe-captured
+// print (openForFrame) actually prints FROM. Returns the entry (or null) so a caller with a pending
+// print job can hang onto entry.holder and destroy it only once that job is actually done - see the
+// BUG comment on print:go's real-printer branch for why that matters. Ordinary callers that have no
+// print in flight (Cancel/Esc, closing the tab...) should use destroyEntry() below instead, which
+// destroys the holder immediately - there's nothing pending to protect in those cases.
+function closeDialogKeepHolder(tabId) {
   const entry = previews.get(tabId);
-  if (!entry) return;
+  if (!entry) return null;
   previews.delete(tabId);
   const wasAttached = attachedTabId === tabId;
   if (wasAttached) { attachedTabId = null; try { if (state.mainWindow && !state.mainWindow.isDestroyed()) require("./viewHost").detach(state.mainWindow, entry.view); } catch (_) {} }
   try { entry.unhook(); } catch (_) {}
   try { if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close(); } catch (_) {}
-  // the throwaway holder window (an iframe's own print() captured its content - see openForFrame) has nothing else keeping it alive
-  try { if (entry.holder && !entry.holder.isDestroyed()) entry.holder.destroy(); } catch (_) {}
   if (wasAttached) { try { const a = tm().getActiveTab(); if (a && a.view && a.view.webContents && !a.view.webContents.isDestroyed()) a.view.webContents.focus(); } catch (_) {} }
   // the dot on a background tab's favicon must disappear as soon as its preview ends (navigation/destroy can happen with nobody looking at it)
   try { tm().notifyTabs(); } catch (_) {}
+  return entry;
+}
+
+function destroyEntry(tabId) {
+  const entry = closeDialogKeepHolder(tabId);
+  if (!entry) return;
+  // the throwaway holder window (an iframe's own print() captured its content - see openForFrame) has nothing else keeping it alive
+  try { if (entry.holder && !entry.holder.isDestroyed()) entry.holder.destroy(); } catch (_) {}
 }
 
 // Cancel / Esc / print done / "Print using system dialog": end whichever preview is currently ON SCREEN (only an attached, visible one can
@@ -461,11 +474,48 @@ function titleOf(tabId, entry) {
 function systemDialog(tabId) {
   const entry = previews.get(tabId);
   const target = entry && entry.src;
-  destroyEntry(tabId);
-  if (target && !target.isDestroyed()) target.print({ printBackground: true });
+  // Same destroy-before-print ordering bug as print:go's real-printer branch (see its big comment) -
+  // this path can print from a holder too (openForFrame), so the holder must stay alive until
+  // Windows' own system dialog is actually answered and the job (or its cancellation) is done.
+  const entryRef = closeDialogKeepHolder(tabId);
+  const holder = entryRef && entryRef.holder;
+  if (target && !target.isDestroyed()) {
+    target.print({ printBackground: true }, () => {
+      try { if (holder && !holder.isDestroyed()) holder.destroy(); } catch (_) {}
+    });
+  } else {
+    try { if (holder && !holder.isDestroyed()) holder.destroy(); } catch (_) {}
+  }
+}
+
+// Build the destination list (printer names + whatever caps are on hand right now) the same way both
+// times init is answered: immediately, with best-effort data, and again once the real caps are in.
+function buildDests(names, caps, def) {
+  const printers = names.map((p) => {
+    const c = caps.find((x) => x.name === p.name);
+    return { id: p.name, label: p.label, kind: "printer", caps: c || { copies: 1, collate: false, color: true, duplex: false, dpis: [], papers: PDF_PAPERS, defPaper: "A4" } };
+  });
+  // Chrome's list: the chosen printer, Save as PDF, then the rest
+  const first = printers.find((p) => p.id === (sticky && sticky.dest)) || printers.find((p) => p.id === def) || printers[0];
+  const dests = [...(first ? [first] : []), { id: PDF_DEST, label: "Save as PDF", kind: "pdf", caps: PDF_CAPS }, ...printers.filter((p) => p !== first)];
+  return { dests, first };
 }
 
 function register() {
+  // BUG found 2026-10-21 (owner: "loading print preview... optimise same as chrome print preview open" -
+  // reproduced on a PC with NO antivirus too, so the earlier warm-up alone was not enough): `start()` in
+  // printpreview.js keeps the WHOLE settings panel hidden (`$("rows").hidden = false` only runs after
+  // `api.init()` resolves) and this handler used to `await Promise.all([printerCaps(), defaultPrinter()])`
+  // before answering at all - so EVERY cold cache hit (first Ctrl+P after the 60s TTL expires, which a
+  // session of real testing across many sites/printers hits constantly) froze the dialog's settings panel
+  // for the full ~2-3s PowerShell enumeration, with nothing visible to the user meanwhile. Real Chrome's
+  // own dialog appears AT ONCE and fills in exact per-printer detail (paper list, resolutions...) a moment
+  // later - it never makes the whole dialog wait on that. Fix: answer with whatever is ALREADY cached
+  // (instant; every printer not yet known gets the same safe fallback caps already used elsewhere in this
+  // file), kick off the real printerCaps() in the background if it was not already warm, and push the
+  // corrected destination list to the dialog once it lands (`print:caps-updated`) instead of making the
+  // first render wait for it. `defaultPrinter()` stays awaited here (a plain registry read, not the slow
+  // part) so the correct printer is still picked first even on a cold caps cache.
   ipcMain.handle("print:init", async (e) => {
     const found = entryBySender(e);
     if (!found) return null;
@@ -473,18 +523,21 @@ function register() {
     const page = entry.src;
     let names = [];
     try { names = (await page.getPrintersAsync()).map((p) => ({ name: p.name, label: p.displayName || p.name })); } catch (_) {}
-    const [caps, def] = await Promise.all([printerCaps(), defaultPrinter()]);
+    const def = await defaultPrinter();
     if (!previews.has(tabId) || previews.get(tabId) !== entry) return null;   // closed meanwhile
-    const printers = names.map((p) => {
-      const c = caps.find((x) => x.name === p.name);
-      return { id: p.name, label: p.label, kind: "printer", caps: c || { copies: 1, collate: false, color: true, duplex: false, dpis: [], papers: PDF_PAPERS, defPaper: "A4" } };
-    });
-    // Chrome's list: the chosen printer, Save as PDF, then the rest
-    const first = printers.find((p) => p.id === (sticky && sticky.dest)) || printers.find((p) => p.id === def) || printers[0];
-    entry.dests = [...(first ? [first] : []), { id: PDF_DEST, label: "Save as PDF", kind: "pdf", caps: PDF_CAPS }, ...printers.filter((p) => p !== first)];
+    const capsNow = (capsCache && Date.now() - capsCache.at < CAPS_TTL_MS) ? capsCache.list : [];
+    const { dests, first } = buildDests(names, capsNow, def);
+    entry.dests = dests;
     const base = sticky || {};
     const destId = base.dest && entry.dests.some((d) => d.id === base.dest) ? base.dest : (first ? first.id : PDF_DEST);
     const { s } = clean(entry, { headers: true, collate: true, ...base, dest: destId, pages: "all", custom: "", copies: 1, pps: 1 }, 2);
+    if (!capsNow.length) {
+      printerCaps().then((caps) => {
+        if (!previews.has(tabId) || previews.get(tabId) !== entry || entry.view.webContents.isDestroyed()) return;   // closed/replaced meanwhile
+        entry.dests = buildDests(names, caps, def).dests;
+        try { entry.view.webContents.send("print:caps-updated", { dests: entry.dests }); } catch (_) {}
+      }).catch(() => {});
+    }
     return { dests: entry.dests, doc: entry.doc, pps: PPS, restricted: !!state.restricted, settings: s, moreOpen: !!base.moreOpen };
   });
 
@@ -555,19 +608,28 @@ function register() {
     // the big comment above pdfOptions, which the preview/Save-as-PDF path already follows.
     if (s.headers) { opts.header = title; }
     const destName = s.dest;
-    destroyEntry(tabId);   // Chrome closes the preview as soon as the job is handed over
-    // BUG found 2026-10-20, the one that actually matches "physical print, no output, no error": the
-    // dialog (and the whole renderer page awaiting this IPC call) is ALREADY destroyed by the line
-    // above, BEFORE target.print()'s callback can ever fire - confirmed by forcing an ok:false callback
-    // here and finding the dialog already gone by then. So a real failure (printer offline, wrong
-    // driver, out of paper...) had NOWHERE to go: the old code resolved {ok, reason} back to a renderer
-    // page that no longer existed to read it, and even the renderer's own success-path code only ever
-    // checked a DIFFERENT field (`r.error`) that this path never set, so a visible dialog would not
-    // have helped either. A native error box works regardless of which page is on screen by the time
-    // the OS actually answers. The IPC call itself no longer waits for that answer (same as Chrome,
-    // which does not block its UI on the physical job either) - it resolves the moment the job is
-    // handed to Windows, like print:go's other paths already do as soon as their own work is done.
+    // BUG found 2026-10-21 (owner: real prints kept failing - "Couldn't print... failed" - on BOTH a
+    // network printer and the always-available "Microsoft Print to PDF", only on mfg.pb.diamonds's
+    // Jangads "Big Print"): destroyEntry(tabId) used to run BEFORE target.print(), and for an
+    // iframe-captured print (openForFrame) target IS entry.holder.webContents - the throwaway window
+    // being printed FROM. Destroying that window while Windows is still negotiating the actual print
+    // job tears the job out from under itself mid-flight, failing it with a generic, printer-agnostic
+    // reason regardless of which destination was picked - exactly matching both screenshots showing
+    // the SAME bare "failed" for two completely different printers. Root-caused by comparing against
+    // the sibling PBERP-EXE-Barcode project's own printManager.js (same shape of problem: printing
+    // captured HTML from a hidden BrowserWindow) - it destroys that window ONLY inside the print()
+    // callback, once success/failure is already known, specifically to avoid this. Confirmed on THIS
+    // codebase too: a live repro with every webContents.print() call hooked showed `isDestroyed()`
+    // was NOT yet true at the exact moment .print() was invoked (the destroy had only just been
+    // requested, not completed) - consistent with a destroy that was still in flight catching the
+    // real print operation mid-negotiation rather than beating it outright.
+    // Fix: close the DIALOG's own UI immediately (closeDialogKeepHolder - Chrome does the same the
+    // instant Print is pressed), but keep entry.holder (if any) alive until the print() callback
+    // actually fires, THEN destroy it - never while a job might still be using it.
+    const entryRef = closeDialogKeepHolder(tabId);
+    const holder = entryRef && entryRef.holder;
     target.print(opts, (ok, reason) => {
+      try { if (holder && !holder.isDestroyed()) holder.destroy(); } catch (_) {}
       if (!ok) {
         try {
           dialog.showErrorBox("Couldn't print", `Windows could not print this page${reason ? ":\n\n" + reason : "."}\n\nCheck that "${destName}" is connected, turned on and ready, then try printing again.`);
