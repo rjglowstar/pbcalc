@@ -42,6 +42,19 @@ function versionCmp(a, b) {
   return 0;
 }
 
+// Owner's rule 2026-10-21: the AUTOMATIC check (on open) stays exactly as documented - a failure
+// (including "can't reach the server at all") is silent, no message, nothing shown, ever. The MANUAL
+// check (Settings > Version > "Check for update") is different: a genuine CONNECTIVITY failure there
+// should tell the user plainly, since they pressed a button and are waiting for an answer - "reached
+// the server but got a wrong/garbled file" (e.g. a missing pbcalc.yml answered with a web page) is a
+// SEPARATE failure mode and stays silent either way, matching the existing, already-tested rule.
+// Measured directly (not guessed) which electron-updater error strings a genuinely unreachable
+// server produces: net::ERR_CONNECTION_TIMED_OUT (the common case - the IP exists on no reachable
+// network) after a real ~21-22s OS-level connect timeout; the same class covers the other ways a
+// server can simply not be there (DNS failure, refused, no route).
+const NET_ERROR_RE = /ERR_CONNECTION|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_ADDRESS_UNREACHABLE|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|EAI_AGAIN/i;
+const isConnError = (err) => NET_ERROR_RE.test(String((err && err.message) || err || ""));
+
 const TITLE = "PBCalc update";
 const detailFor = () =>
   "If you update now, PBCalc restarts: all your open tabs are closed and are NOT restored. When the update is finished, PBCalc opens again.\n\n" +
@@ -63,9 +76,20 @@ function setup(opts = {}) {
   autoUpdater.allowPrerelease = false;
   autoUpdater.logger = null;
   if (opts.feedUrl) { autoUpdater.forceDevUpdateConfig = true; autoUpdater.setFeedURL({ provider: "generic", url: opts.feedUrl, channel: CHANNEL }); }
-  if (opts.currentVersion) autoUpdater.currentVersion = opts.currentVersion;
+  // electron-updater's own constructor always stores currentVersion as a semver.SemVer object (AppUpdater.js: "this.currentVersion =
+  // semver.parse(app.version)"), never a plain string - its "already up to date" log line calls this.currentVersion.format(), which a
+  // bare string does not have. Found by the "manual same" test: autoUpdater emitted "error" ("this.currentVersion.format is not a
+  // function") instead of "update-not-available", which is why checkNow()'s upToDate flag never came back true. A first fix parsed it
+  // with the top-level semver package - WRONG, and worse than the original bug: electron-updater bundles its OWN copy of semver
+  // (node_modules/electron-updater/node_modules/semver), a SEPARATE class from the top-level one, and semver's own SemVer constructor
+  // rejects an object that isn't a string AND isn't `instanceof` its OWN SemVer ("Invalid version. Must be a string. Got type
+  // object") - so a top-level-semver object broke EVERY check, not just the same-version one. Must parse with electron-updater's own
+  // bundled semver so the result passes its internal `instanceof` checks. Only opts.currentVersion (tests only - production never sets
+  // it, so this never affected real users) needs this.
+  if (opts.currentVersion) autoUpdater.currentVersion = require("electron-updater/node_modules/semver").parse(opts.currentVersion);
 
   let announced = false;
+  let lastUpToDate = false;                     // set by "update-not-available"; read (and reset) by checkNow() only
   let progress = null;                          // the "Updating PBCalc" window (updateProgress.js), once an update is really starting
   let startup = null;                           // { finish(handled) } while the main window is held back at start (startupInstall)
   let manual = false;                           // the user pressed "Check for update" in Settings: this answer is asked for, never skipped
@@ -104,7 +128,7 @@ function setup(opts = {}) {
     log("update available, downloading quietly: " + info.version);
     if (startup) startup.longer();
   });
-  autoUpdater.on("update-not-available", (info) => { log("up to date (" + info.version + ")"); if (startup) startup.finish(false); });
+  autoUpdater.on("update-not-available", (info) => { lastUpToDate = true; log("up to date (" + info.version + ")"); if (startup) startup.finish(false); });
   autoUpdater.on("download-progress", ({ percent }) => {
     if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.setProgressBar(percent / 100);
   });
@@ -135,20 +159,56 @@ function setup(opts = {}) {
     try { declined.set(info.version); } catch (_) {}
     log("postponed by the user: installs when PBCalc is closed");
   });
-  autoUpdater.on("error", (err) => { try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.setProgressBar(-1); } catch (_) {} log("error (ignored): " + (err && err.message ? err.message.split("\n")[0] : err)); if (startup) startup.finish(false); });
+  let lastErr = null;
+  autoUpdater.on("error", (err) => { lastErr = err; try { if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.setProgressBar(-1); } catch (_) {} log("error (ignored): " + (err && err.message ? err.message.split("\n")[0] : err)); if (startup) startup.finish(false); });
 
   // With autoDownload electron-updater starts the download itself and hands back its promise; a damaged / interrupted download rejects it
   // in addition to the "error" event above, and a rejection nobody handles can end as an error dialog in the main process (measured with a
   // wrong checksum) - so that promise is handled here too.
-  const quiet = (err) => log("failed (ignored): " + (err && err.message ? err.message.split("\n")[0] : err));
+  const quiet = (err) => { lastErr = err; log("failed (ignored): " + (err && err.message ? err.message.split("\n")[0] : err)); };
   const check = () => autoUpdater.checkForUpdates().then((res) => { if (res && res.downloadPromise) res.downloadPromise.catch(quiet); }).catch(quiet);
   const timer = setTimeout(check, opts.delayMs == null ? CHECK_DELAY_MS : opts.delayMs);
   if (timer.unref && !opts.keepAlive) timer.unref();
   // (kept for the tests and for a caller that wants "install now"; nothing in the app calls it since the browser closing quits PBCalc)
   const installIfPending = () => { if (!pending) return false; const i = pending; pending = null; install(i); return true; };
   // Settings > Version > "Check for update": the same check, now. A newer version is downloaded and the usual popup comes when it is ready
-  // (asked again even if it was declined before); no newer version = nothing at all is shown. Resolves when the CHECK is over, not the download.
-  const checkNow = () => { manual = true; announced = false; return check(); };
+  // (asked again even if it was declined before); no newer version = nothing at all is shown (the owner's rule, unchanged). Resolves
+  // when the CHECK is over, not the download. Owner 2026-10-21: a genuine CONNECTIVITY failure here (can't reach the update server at
+  // all) should tell the user plainly, since this is the one path with someone actually waiting on an answer - so this (and only this
+  // path) reports `{ offline: true }` for that one class of failure; anything else (a reachable server answering with garbage) still
+  // reports `{ offline: false }`, matching the existing silent behaviour.
+  // BUG caught before shipping: `manual` must NOT be reset here. `check()`'s own promise resolves once
+  // the download STARTS, not once "update-downloaded" fires later - resetting `manual` right after
+  // `check()` raced ahead of that event and reset it before `update-downloaded`'s own `wasManual` read,
+  // silently auto-installing a declined version instead of asking again (caught by the existing "a
+  // version declined earlier is ASKED again on a button press" test). `manual` is reset exactly where
+  // it always was (inside `update-downloaded`), unchanged; this only reads `lastErr`, nothing else.
+  // owner 2026-10-21, same round: when connected and already on the latest version, say so plainly too
+  // (a deliberate exception to the "no result text" rule above, for the MANUAL button only - the owner
+  // asked for it directly, same as the offline message).
+  // BUG caught before shipping, same shape as the one above: `update-not-available` ALSO fires after
+  // `checkForUpdates()`'s own promise resolves, not before - awaiting `check()` and then reading
+  // `lastUpToDate` read it one tick too early, always false (measured: a same-version check reported
+  // `{upToDate:false}` every time). Fixed by waiting for whichever of the three events that can end a
+  // check (update-available / update-not-available / error) actually fires first, instead of trusting
+  // checkForUpdates()'s own promise timing for anything.
+  const checkNow = () => new Promise((resolve) => {
+    manual = true; announced = false; lastErr = null; lastUpToDate = false;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      autoUpdater.removeListener("update-not-available", f1);
+      autoUpdater.removeListener("update-available", f2);
+      autoUpdater.removeListener("error", f3);
+      resolve({ offline: isConnError(lastErr), upToDate: lastUpToDate });
+    };
+    const f1 = finish, f2 = finish, f3 = finish;
+    autoUpdater.once("update-not-available", f1);
+    autoUpdater.once("update-available", f2);
+    autoUpdater.once("error", f3);
+    check();   // the existing global handlers above still set lastErr/lastUpToDate exactly as before
+  });
   // An update the user postponed (Cancel) is waiting: its version is saved, and it is newer than the running one.
   const startupPending = () => {
     let was = ""; try { was = declined.get(); } catch (_) {}
@@ -184,7 +244,11 @@ function installIfPending() { return current ? current.installIfPending() : fals
 function startupPending() { return current ? current.startupPending() : false; }
 function startupInstall() { return current ? current.startupInstall() : Promise.resolve(false); }
 
-// Settings button; false when updates are not running (a development copy)
-async function checkNow() { if (!current) return false; await current.checkNow(); return true; }
+// Settings button. { ran:false } when updates are not running (a development copy); otherwise
+// { ran:true, offline, upToDate } - offline is true only for a genuine "could not reach the server at
+// all" failure, upToDate true when it WAS reached and this is already the newest version (see
+// isConnError/checkNow above) - the only two cases the Settings page says anything about; a FOUND
+// update stays silent here (the usual popup appears on its own once the quiet download finishes).
+async function checkNow() { if (!current) return { ran: false }; const { offline, upToDate } = await current.checkNow(); return { ran: true, offline, upToDate }; }
 
 module.exports = { setup, installIfPending, checkNow, startupPending, startupInstall, versionCmp, CHANNEL, TITLE, detailFor };

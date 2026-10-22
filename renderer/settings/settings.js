@@ -50,12 +50,29 @@
     if (s) render(s);
   });
 
-  // Version > Check for update: nothing is reported back; a newer version shows the update popup by itself.
+  // Version > Check for update: a found update shows the update popup by itself, same as always - nothing
+  // extra here for that (the popup only appears once the quiet download finishes, after this call has
+  // already resolved). Owner 2026-10-21: an off-network PC can take ~20s to time out reaching the update
+  // server, and the button used to just sit disabled with no feedback for that whole time (looked stuck) -
+  // now it says "Checking..." meanwhile. Two results get a message (a deliberate, explicit exception to
+  // the "no result text" rule for everything else, both requested by the owner directly): a genuine
+  // CONNECTIVITY failure (never a reachable-but-broken server, which stays silent as before) names who to
+  // contact; reaching the server and already being on the newest version says so plainly too.
   const checkBtn = document.getElementById("check-update");
+  const checkBtnLabel = checkBtn.textContent;
   checkBtn.addEventListener("click", async () => {
     checkBtn.disabled = true;
-    try { await api.checkUpdate(); } catch (_) {}
+    checkBtn.textContent = "Checking...";
+    try {
+      const r = await api.checkUpdate();
+      if (r && r.offline) {
+        PBToast.error("Could not connect to the PBCalc update server. Please contact whoever installed PBCalc on your system - tell them your current version (see above) and they can give you the latest version manually if one is available.");
+      } else if (r && r.upToDate) {
+        PBToast.success("You're on the latest version.");
+      }
+    } catch (_) {}
     checkBtn.disabled = false;
+    checkBtn.textContent = checkBtnLabel;
   });
 
   memorySw.addEventListener("click", () => {

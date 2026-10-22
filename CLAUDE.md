@@ -1134,6 +1134,64 @@ and is baked into the installed app as `resources/app-update.yml`. A release = r
   (a version declined earlier is asked AGAIN on a button press instead of being installed at once - `manual` flag); no newer version, a server error or a web page instead of `pbcalc.yml` = NOTHING is shown (owner's
   rule: no result text). The button is disabled only while the check runs. A development copy has no updater, so the button does nothing there. Tests: the "checkNow" and wiring blocks of `verify-updater.js` (37).
   A periodic re-check while PBCalc stays open was offered to the owner and NOT built (ask first).
+- **Off-network behaviour, measured directly 2026-10-21 (owner: "if any use out of our network then my given update version how can we notifyed, also... he face any issue like crash or something"),
+  not assumed.** A real connectivity failure (server genuinely unreachable - a closed port gives `net::ERR_CONNECTION_REFUSED` fast, a
+  non-routable address gives `net::ERR_CONNECTION_TIMED_OUT` after a real OS-level **~21-22 second** timeout) was driven directly against
+  all three paths: **no crash, no error dialog, in any case** - confirmed. The AUTOMATIC check (5s after the window shows) fails silently
+  exactly as documented, invisible to the user since nothing depends on it. **`startupInstall()` (the pre-window-creation path, a postponed
+  update waiting)** resolves in ~250ms-6s even when the server is unreachable - its own `STARTUP_WAIT_MS` safety-net timeout wins the race
+  against the slow connection timeout, so an off-network PC never has its *launch* held up by this. **The Settings "Check for update" button
+  was the one real gap**: it also silently took the full ~21s with the button just disabled and no feedback - looked stuck. **Fixed, owner's
+  exact wording**: the automatic check stays exactly as silent as before (no change); the MANUAL button now shows "Checking..." while it
+  runs, and on a genuine connectivity failure (never on a reachable-but-broken server, which still stays silent) shows a toast: "Could not
+  connect to the PBCalc update server. Please contact whoever installed PBCalc on your system - tell them your current version... and they
+  can give you the latest version manually if one is available." `electron/updater.js`'s `isConnError()` classifies which error strings
+  count (ERR_CONNECTION*, ENOTFOUND, ETIMEDOUT, ECONNREFUSED...); `checkNow()` reports `{ offline }` through the IPC and preload bridge to
+  `renderer/settings/settings.js`. **A real regression was caught by the existing test suite before shipping**: resetting the `manual` flag
+  inside `checkNow()` itself raced ahead of the asynchronous `update-downloaded` event (which does its own, later `wasManual` read) and
+  silently auto-installed a previously-declined version instead of asking again on a manual check - fixed by leaving `manual`'s reset exactly
+  where it always was. Test: `scripts/verify-updater.js` (52 total) - drives a real closed local port for a fast, reliable
+  `ERR_CONNECTION_REFUSED` (the real ~21s non-routable-address case was measured by hand once, not re-run on every test - same failure
+  class, just slower). **The architectural fact behind the "how is he ever notified" half of the question - not a bug, a decision left to
+  the owner:** the update server lives on the company LAN (`192.168.0.8:9995`, a private address); a PC that is NEVER on that network will
+  NEVER reach it, automatically or manually - there is no code fix for that, only a distribution decision (host the feed somewhere publicly
+  reachable too, or update such machines by hand). Asked the owner directly; **left out of scope for now** - revisit if a genuinely
+  always-remote installation comes up.
+- **Owner's follow-up, same round: "if he connected in network this latest version, checking.. something like this"** - the owner wanted a
+  SUCCESS message too, not just the offline failure one, and asked that everything built this round be tested thoroughly since they could
+  not test the offline case themselves (connected to the LAN while working on this). `renderer/settings/settings.js`'s button handler now
+  also shows a green toast, "You're on the latest version.", when `checkNow()` resolves `{ upToDate: true }` - the same deliberate exception
+  to "no result text" as the offline message, both requested directly by the owner. `electron/updater.js`'s `checkNow()` tracks this with a
+  module-level `lastUpToDate` flag, set by the existing `update-not-available` handler, reset at the start of each manual check, and read by
+  `checkNow()`'s own promise.
+  **Two real bugs found and fixed while wiring this up, both caught by the test suite before being called done - same discipline as every
+  round above, nothing shipped on a guess:**
+  1. **The same async-timing bug as `manual`/`lastErr`, this time for `upToDate`.** The first version of `checkNow()` did
+     `await check(); return { upToDate: lastUpToDate }` - but `update-not-available` fires asynchronously relative to
+     `checkForUpdates()`'s own returned promise resolving (documented elsewhere in this file for the exact same shape of bug), so reading
+     `lastUpToDate` right after `await check()` read it one tick too early, always `false`. Fixed by making `checkNow()` wait for
+     whichever of the three events that can end a check (`update-available` / `update-not-available` / `error`) actually fires, via
+     `autoUpdater.once(...)`, instead of trusting `checkForUpdates()`'s own promise timing for anything.
+  2. **A second, unrelated bug the test then still failed on, root-caused by adding temporary debug logging rather than guessing again:**
+     `setup()`'s line `if (opts.currentVersion) autoUpdater.currentVersion = opts.currentVersion;` (test-only - production never sets this
+     option, so real users were never affected) assigned a plain STRING, but electron-updater's own constructor always stores
+     `currentVersion` as a parsed `semver.SemVer` OBJECT (`this.currentVersion = semver.parse(app.version)`), and its "already up to date"
+     log line calls `this.currentVersion.format()`, which a bare string does not have. The debug log showed `autoUpdater` emitting `error`
+     ("this.currentVersion.format is not a function") instead of `update-not-available` for the exact "manual, same version" case -
+     confirming this was never reachable by `update-not-available` at all for that scenario, independent of fix #1 above.
+     **A first attempt at this fix (parsing the string with the top-level `semver` package) was WORSE than the original bug** - it broke
+     EVERY check in the suite (22 of 55 failed, not just the one same-version case), because electron-updater bundles its OWN separate copy
+     of `semver` (`node_modules/electron-updater/node_modules/semver`) as a different class from the top-level one, and semver's own
+     `SemVer` constructor rejects a value that is neither a string NOR `instanceof` its OWN `SemVer` class ("Invalid version. Must be a
+     string. Got type object") - so handing electron-updater a SemVer object built by a DIFFERENT copy of the same-named package is exactly
+     as wrong as a bare string, just differently wrong. Caught immediately by rerunning the full suite rather than only the one test being
+     fixed (the project's own standing rule on retesting broadly after a change, re-applied here to a case that otherwise would have shipped
+     a worse regression). Fixed by parsing with electron-updater's OWN bundled `semver`
+     (`require("electron-updater/node_modules/semver").parse(...)`), so the resulting object passes the module's internal `instanceof`
+     checks exactly like the one its real constructor produces.
+  Test: `scripts/verify-updater.js` (55 total, re-run clean 2x to rule out a flaky redirect that once truncated a background run's output
+  before any real failure); `scripts/verify-leaks.js` (11/11) re-run clean since this round touched `autoUpdater`'s own event-listener
+  lifecycle inside `checkNow()`.
 - Limits to say plainly: the build is unsigned, so the only integrity check is the sha512 in `pbcalc.yml` (a server that is taken over can serve a malicious installer; use https and a trusted
   folder in production); a differential download needs the previous version's blockmap on the server (otherwise the full file is fetched - works, just bigger).
 

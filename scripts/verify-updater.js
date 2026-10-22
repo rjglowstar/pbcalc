@@ -46,7 +46,7 @@ process.on("exit", cleanup);
     async function run(name, files, opts = {}) {
       folder = files; hits.length = 0; state.quitting = false;
       const store = { v: opts.declinedBefore || "" };
-      const seen = { notified: [], installed: [], logs: [], declined: store, progress: [], progressClosed: 0, startup: undefined };
+      const seen = { notified: [], installed: [], logs: [], declined: store, progress: [], progressClosed: 0, startup: undefined, checkResult: undefined };
       const u = updater.setup({
         feedUrl, delayMs: 3600000, currentVersion: opts.current || "0.1.5",
         showProgress: (o) => { seen.progress.push(o); return { close: () => { seen.progressClosed++; } }; },   // never a real window in a test
@@ -56,7 +56,8 @@ process.on("exit", cleanup);
         declined: { get: () => store.v, set: (v) => { store.v = v; } },
       });
       if (opts.startup) { seen.pending = u.startupPending(); if (seen.pending) seen.startup = await u.startupInstall(); }
-      else await (opts.manual ? u.checkNow() : u.check());
+      else if (opts.manual) { seen.checkResult = await u.checkNow(); }
+      else await u.check();
       await sleep(opts.waitMs || 2500);
       u.autoUpdater.removeAllListeners();
       return { seen, hits: hits.slice(), u };
@@ -89,12 +90,34 @@ process.on("exit", cleanup);
     console.log("\n-- Settings > Version > Check for update (checkNow)");
     r = await run("manual newer", yml("0.2.0"), { manual: true });
     check("a newer version: the popup comes (once, for 0.2.0) with no restart of PBCalc", r.seen.notified.join() === "0.2.0" && r.seen.installed.join() === "0.2.0", JSON.stringify(r.seen));
+    check("...checkNow() does NOT claim 'up to date' here (a newer version was found, the popup is what says so)", r.seen.checkResult && r.seen.checkResult.upToDate === false, JSON.stringify(r.seen.checkResult));
     r = await run("manual declined", yml("0.2.0"), { manual: true, declinedBefore: "0.2.0", answer: "cancel" });
     check("a version declined earlier is ASKED again on a button press (not installed behind the user's back)", r.seen.notified.join() === "0.2.0" && !r.seen.installed.length, JSON.stringify(r.seen));
     r = await run("manual same", yml("0.1.5"), { manual: true });
     check("no newer version: nothing at all is shown or installed", r.hits.includes("pbcalc.yml") && !r.hits.includes(NAME) && !r.seen.notified.length && !r.seen.installed.length, JSON.stringify({ hits: r.hits, seen: r.seen }));
+    // owner 2026-10-21: on a MANUAL check, reaching the server and finding nothing newer now reports { upToDate: true } (a deliberate
+    // exception to "no result text", requested directly - Settings shows "You're on the latest version" for this) - never for an
+    // AUTOMATIC check (that stays silent, untouched - checkNow()/{upToDate} is only ever read by the manual path).
+    check("...checkNow() reports { offline:false, upToDate:true } so Settings can say so", r.seen.checkResult && r.seen.checkResult.offline === false && r.seen.checkResult.upToDate === true, JSON.stringify(r.seen.checkResult));
     r = await run("manual web page", { "pbcalc.yml": { body: "<!doctype html><html></html>", type: "text/html" } }, { manual: true });
     check("a server that answers with a web page: still nothing shown, no crash", !r.seen.notified.length && !r.seen.installed.length);
+    check("...and this does NOT count as 'up to date' either (the server did not actually answer with a real version file)", r.seen.checkResult && r.seen.checkResult.upToDate === false && r.seen.checkResult.offline === false, JSON.stringify(r.seen.checkResult));
+
+    console.log("\n-- owner 2026-10-21: a genuine CONNECTIVITY failure on a MANUAL check (off-network) is reported, so Settings can tell the user - the AUTOMATIC check stays exactly as silent as the case just above");
+    {
+      // a closed local port gives a real, fast net::ERR_CONNECTION_REFUSED (measured directly - a non-routable address like a real
+      // off-network IP gives the same ERR_CONNECTION class but takes a genuine ~21s OS-level timeout, confirmed by hand; this port
+      // is the same failure MODE without waiting 21s in every test run)
+      const offFeedUrl = "http://127.0.0.1:59999/assets/";
+      fs.writeFileSync(DEV_YML, ["provider: generic", "url: " + offFeedUrl, "channel: pbcalc", "updaterCacheDirName: pbcalc-updater", ""].join("\n"));
+      const offLogs = [];
+      const offU = require("../electron/updater").setup({ feedUrl: offFeedUrl, delayMs: 3600000, currentVersion: "0.1.5", log: (m) => offLogs.push(m) });
+      const offR = await offU.checkNow();
+      check("a MANUAL check against an unreachable server reports { offline: true }", offR && offR.offline === true, JSON.stringify(offR));
+      check("...it is logged as an ignored error, same as every other failure (nothing new shown anywhere else)", offLogs.some((l) => /error \(ignored\)/.test(l)));
+      // put the real test server's feed back for the rest of the suite
+      fs.writeFileSync(DEV_YML, ["provider: generic", "url: " + feedUrl, "channel: pbcalc", "updaterCacheDirName: pbcalc-updater", ""].join("\n"));
+    }
     r = await run("start after manual", yml("0.2.0"), { declinedBefore: "0.2.0" });
     check("the start rule is unchanged: a declined version still installs at the next START without asking", !r.seen.notified.length && r.seen.installed.join() === "0.2.0", JSON.stringify(r.seen));
 
@@ -168,9 +191,12 @@ process.on("exit", cleanup);
     console.log("\n-- wiring");
     const rd = (f) => fs.readFileSync(path.join(__dirname, "..", f), "utf8");
     check("Settings page has the button in the Version row", /id="app-version"[\s\S]{0,200}id="check-update"/.test(rd("renderer/settings/settings.html")));
-    check("the button calls settingsAPI.checkUpdate and writes no result text", /checkUpdate\(\)/.test(rd("renderer/settings/settings.js")) && !/check-update[\s\S]{0,300}textContent/.test(rd("renderer/settings/settings.js")));
+    // owner 2026-10-21: found a result is STILL never reported as text (unchanged rule) - but the button now shows "Checking..." while
+    // the check runs (an off-network PC can take ~20s to time out, and the button used to just look stuck for all of that with no
+    // feedback), and a genuine CONNECTIVITY failure (not a reachable-but-broken server, which stays silent as before) gets a toast.
+    check("the button calls settingsAPI.checkUpdate, shows 'Checking...' meanwhile, and a toast for a connectivity failure OR already-up-to-date (never writes a found-update result as text - the popup handles that on its own)", /checkUpdate\(\)/.test(rd("renderer/settings/settings.js")) && /Checking\.\.\./.test(rd("renderer/settings/settings.js")) && /r\.offline/.test(rd("renderer/settings/settings.js")) && /r\.upToDate/.test(rd("renderer/settings/settings.js")) && !/textContent\s*=\s*r\./.test(rd("renderer/settings/settings.js")));
     check("the preload exposes it on the settings bridge only", /"settingsAPI"[\s\S]{0,900}checkUpdate: \(\) => ipcRenderer\.invoke\("settings:check-update"\)/.test(rd("preloads/tab-preload.js")));
-    check("main answers settings:check-update only for the settings page", /"settings:check-update", async \(e\) => \{\s*if \(!fromSettingsPage\(e\)\) return false;/.test(rd("electron/ipc/registerIpcHandlers.js")));
+    check("main answers settings:check-update only for the settings page", /"settings:check-update", async \(e\) => \{\s*if \(!fromSettingsPage\(e\)\) return \{ ran: false \};/.test(rd("electron/ipc/registerIpcHandlers.js")));
     const mainSrc = fs.readFileSync(path.join(__dirname, "..", "electron", "main.js"), "utf8");
     check("main.js starts the updater only for the installed program (app.isPackaged)", /app\.isPackaged[^\n]*require\("\.\/updater"\)\.setup\(\)/.test(mainSrc));
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));

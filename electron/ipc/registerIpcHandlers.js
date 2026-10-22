@@ -135,10 +135,12 @@ function registerIpcHandlers() {
     if (!fromSettingsPage(e)) return null;
     return tabManager.settingsSnapshot();
   });
-  // Settings > Version > "Check for update" (see updater.checkNow): answers nothing about the result - a newer version shows the update popup.
+  // Settings > Version > "Check for update" (see updater.checkNow): answers nothing about a found/missing UPDATE - a newer version
+  // shows the update popup by itself, same as always. It DOES answer whether the server could be reached at all, so the Settings
+  // page can tell the user plainly on a genuine connectivity failure (owner 2026-10-21) instead of leaving the button looking stuck.
   ipcMain.handle("settings:check-update", async (e) => {
-    if (!fromSettingsPage(e)) return false;
-    try { return await require("../updater").checkNow(); } catch (_) { return false; }
+    if (!fromSettingsPage(e)) return { ran: false };
+    try { return await require("../updater").checkNow(); } catch (_) { return { ran: false }; }
   });
   // Settings > Support > "Send report...": opens the report box (reportDialog.js); nothing is collected or sent until the user presses Send there.
   ipcMain.handle("settings:send-report", (e) => {
